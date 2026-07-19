@@ -533,6 +533,8 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"textureSize\":").Append(_renderer.TextureSize.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"pixelSize\":").Append(JsonWriter.Number(WorldMapRenderer.PixelSize));
         json.Append(",\"worldRadius\":").Append(WorldMapRenderer.WorldRadius.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"baseZoom\":").Append(_renderer.BaseMaximumZoom.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"maxZoom\":").Append(_renderer.MaximumZoom.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"fog\":{");
         json.Append("\"mode\":").Append(JsonWriter.Quote(fogMode));
         json.Append(",\"revision\":").Append(fogRevision.ToString(CultureInfo.InvariantCulture));
@@ -1073,6 +1075,22 @@ internal sealed class LiveMapHttpServer
         if (zoom > _renderer.MaximumZoom || x < 0 || y < 0 || x >= tilesAcross || y >= tilesAcross)
         {
             WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
+        if (zoom > _renderer.BaseMaximumZoom)
+        {
+            // Detail zooms render lazily on the shared worker; this waits briefly
+            // for a fresh tile and serves the cached file afterwards.
+            if (_renderer.TryGetDetailTile(zoom, x, y, out string detailPath))
+            {
+                ServePngFile(response, detailPath);
+            }
+            else
+            {
+                WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            }
+
             return;
         }
 

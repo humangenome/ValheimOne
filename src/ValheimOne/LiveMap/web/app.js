@@ -1088,7 +1088,14 @@
             return;
         }
 
-        var maximumZoom = calculateMaximumZoom(textureSize);
+        var overviewZoom = Number(statusMap.baseZoom);
+        if (!Number.isFinite(overviewZoom) || overviewZoom < 0) {
+            overviewZoom = calculateMaximumZoom(textureSize);
+        }
+        var maximumZoom = Number(statusMap.maxZoom);
+        if (!Number.isFinite(maximumZoom) || maximumZoom < overviewZoom) {
+            maximumZoom = overviewZoom;
+        }
         mapMetrics = {
             textureSize: textureSize,
             pixelSize: pixelSize,
@@ -1125,7 +1132,7 @@
         tileLayer.addTo(map);
         initialiseDataLayers();
         createLayersControl();
-        map.setView(worldToLatLng(0, 0), Math.max(0, maximumZoom - 1));
+        map.setView(worldToLatLng(0, 0), Math.max(0, overviewZoom - 1));
         map.on("dragstart", clearFollow);
         map.on("zoomend", renderPoiLayers);
         syncLayerVisibility();

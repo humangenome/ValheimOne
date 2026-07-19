@@ -14,11 +14,11 @@ internal sealed class WorldMapRenderer
 {
     public const float PixelSize = 12f;
     public const int WorldRadius = 10500;
-    public const int RendererVersion = 2;
+    public const int RendererVersion = 3;
 
-    private const float WaterLevel = 30f;
-    private static readonly MapColor DeepWater = new MapColor(0.102f, 0.165f, 0.267f);
-    private static readonly MapColor ShallowWater = new MapColor(0.243f, 0.361f, 0.541f);
+    // Deepest zoom served through on-demand detail tiles (about 1.5 m/px for a
+    // 2048 base at 12 m/px).
+    public const int DetailZoomTarget = 6;
 
     private readonly WorldGenerator _generator;
     private readonly int _seed;
@@ -26,6 +26,7 @@ internal sealed class WorldMapRenderer
     private readonly string _worldName;
     private readonly string _gameVersion;
     private readonly ModLogger _log;
+    private readonly DetailTileRenderer _detailRenderer;
     private Thread? _thread;
     private volatile bool _stopRequested;
     private int _state;
@@ -46,17 +47,30 @@ internal sealed class WorldMapRenderer
         _worldName = worldName;
         _gameVersion = gameVersion;
         TextureSize = textureSize;
-        MaximumZoom = CalculateMaximumZoom(textureSize);
+        BaseMaximumZoom = CalculateMaximumZoom(textureSize);
+        MaximumZoom = Math.Max(BaseMaximumZoom, DetailZoomTarget);
         _log = log;
 
         string mapRoot = Path.Combine(Paths.ConfigPath, "ValheimOne", "map");
         CacheDirectory = Path.Combine(mapRoot, SanitizeWorldName(worldName));
+        _detailRenderer = new DetailTileRenderer(
+            generator,
+            CacheDirectory,
+            textureSize,
+            BaseMaximumZoom,
+            MaximumZoom,
+            () => IsReady,
+            log);
     }
 
     public string CacheDirectory { get; }
 
     public int TextureSize { get; }
 
+    // Deepest zoom whose tiles come from the pre-rendered base pyramid.
+    public int BaseMaximumZoom { get; }
+
+    // Deepest zoom served overall, including on-demand detail tiles.
     public int MaximumZoom { get; }
 
     public string StateName
@@ -118,6 +132,7 @@ internal sealed class WorldMapRenderer
             Volatile.Write(ref _completedRows, TextureSize);
             Volatile.Write(ref _state, 1);
             _log.Info($"[LiveMap] using cached world render for {_worldName} ({TextureSize}x{TextureSize}).");
+            _detailRenderer.Start();
             return;
         }
 
@@ -128,11 +143,13 @@ internal sealed class WorldMapRenderer
             Priority = System.Threading.ThreadPriority.BelowNormal,
         };
         _thread.Start();
+        _detailRenderer.Start();
     }
 
     public void Stop()
     {
         _stopRequested = true;
+        _detailRenderer.Stop();
         Thread? thread = _thread;
         if (thread != null && thread.IsAlive && !ReferenceEquals(Thread.CurrentThread, thread))
         {
@@ -140,6 +157,12 @@ internal sealed class WorldMapRenderer
         }
 
         _thread = null;
+    }
+
+    // Called from HTTP worker threads for zooms beyond the base pyramid.
+    public bool TryGetDetailTile(int zoom, int x, int y, out string path)
+    {
+        return _detailRenderer.TryGetTile(zoom, x, y, out path);
     }
 
     private void Render()
@@ -163,7 +186,7 @@ internal sealed class WorldMapRenderer
                 CacheDirectory,
                 pixels,
                 TextureSize,
-                MaximumZoom,
+                BaseMaximumZoom,
                 IsStopping);
 
             ThrowIfStopping();
@@ -202,50 +225,15 @@ internal sealed class WorldMapRenderer
                 int pixelIndex = (py * TextureSize) + px;
                 heights[pixelIndex] = height;
 
-                MapColor landColor = BiomePalette.Get(biome, height);
-                bool isLand = height >= WaterLevel;
+                bool isLand = height >= MapShading.WaterLevel;
                 land[pixelIndex] = isLand;
-                MapColor color = isLand
-                    ? ApplyForest(landColor, biome, worldX, worldZ, px, py)
-                    : ApplyWater(landColor, height);
+                float lavaMask = biome == Heightmap.Biome.AshLands ? mask.a : 0f;
+                MapColor color = MapShading.Compose(biome, height, lavaMask, worldX, worldZ);
                 color.WriteRgba(pixels, pixelIndex * 4);
             }
 
             Volatile.Write(ref _completedRows, py + 1);
         }
-    }
-
-    private static MapColor ApplyWater(MapColor landColor, float height)
-    {
-        float depth = Math.Max(0f, Math.Min(1f, (WaterLevel - height) / 40f));
-        MapColor water = MapColor.Lerp(ShallowWater, DeepWater, depth);
-        float shoreAmount = Math.Max(0f, Math.Min(1f, (WaterLevel - height) / 3f));
-        shoreAmount = shoreAmount * shoreAmount * (3f - (2f * shoreAmount));
-        return MapColor.Lerp(landColor, water, shoreAmount);
-    }
-
-    private static MapColor ApplyForest(
-        MapColor color,
-        Heightmap.Biome biome,
-        float worldX,
-        float worldZ,
-        int pixelX,
-        int pixelY)
-    {
-        if (biome != Heightmap.Biome.Meadows && biome != Heightmap.Biome.Plains)
-        {
-            return color;
-        }
-
-        var position = new Vector3(worldX, 0f, worldZ);
-        float forestFactor = WorldGenerator.GetForestFactor(position);
-        if (!WorldGenerator.InForest(position) && forestFactor >= 1.15f)
-        {
-            return color;
-        }
-
-        int stipple = unchecked((pixelX * 73856093) ^ (pixelY * 19349663));
-        return color.Multiply((stipple & 3) == 0 ? 0.91f : 0.82f);
     }
 
     private void ApplyRelief(float[] heights, bool[] land, byte[] pixels)

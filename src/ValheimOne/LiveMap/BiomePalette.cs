@@ -55,15 +55,19 @@ internal readonly struct MapColor
 
 internal static class BiomePalette
 {
-    private static readonly MapColor Meadows = new MapColor(0.573f, 0.655f, 0.361f);
-    private static readonly MapColor BlackForest = new MapColor(0.420f, 0.455f, 0.247f);
-    private static readonly MapColor Swamp = new MapColor(0.639f, 0.447f, 0.345f);
-    private static readonly MapColor Plains = new MapColor(0.906f, 0.671f, 0.470f);
-    private static readonly MapColor Ashlands = new MapColor(0.690f, 0.192f, 0.192f);
-    private static readonly MapColor Mistlands = new MapColor(0.360f, 0.220f, 0.400f);
+    // Tints matched to the composed in-game map look; the biome switch mirrors the
+    // game's own minimap biome-to-color mapping.
+    private static readonly MapColor Meadows = new MapColor(0.573f, 0.664f, 0.404f);
+    private static readonly MapColor BlackForest = new MapColor(0.276f, 0.323f, 0.261f);
+    private static readonly MapColor Swamp = new MapColor(0.442f, 0.398f, 0.328f);
+    private static readonly MapColor Plains = new MapColor(0.784f, 0.702f, 0.463f);
+    private static readonly MapColor Ashlands = new MapColor(0.602f, 0.208f, 0.163f);
+    private static readonly MapColor Mistlands = new MapColor(0.482f, 0.475f, 0.500f);
     private static readonly MapColor MountainLow = new MapColor(0.72f, 0.76f, 0.78f);
-    private static readonly MapColor MountainHigh = new MapColor(0.96f, 0.97f, 0.98f);
-    private static readonly MapColor Ocean = new MapColor(0.102f, 0.165f, 0.267f);
+    private static readonly MapColor MountainHigh = new MapColor(0.97f, 0.97f, 0.98f);
+    private static readonly MapColor DeepNorthLow = new MapColor(0.82f, 0.85f, 0.88f);
+    private static readonly MapColor DeepNorthHigh = new MapColor(0.98f, 0.98f, 1.00f);
+    private static readonly MapColor Ocean = new MapColor(0.088f, 0.140f, 0.240f);
     private static readonly MapColor Unknown = new MapColor(0.42f, 0.45f, 0.40f);
 
     public static MapColor Get(Heightmap.Biome biome, float height)
@@ -83,8 +87,9 @@ internal static class BiomePalette
             case Heightmap.Biome.Mistlands:
                 return Mistlands;
             case Heightmap.Biome.Mountain:
-            case Heightmap.Biome.DeepNorth:
                 return MapColor.Lerp(MountainLow, MountainHigh, (height - 55f) / 100f);
+            case Heightmap.Biome.DeepNorth:
+                return MapColor.Lerp(DeepNorthLow, DeepNorthHigh, (height - 40f) / 100f);
             case Heightmap.Biome.Ocean:
                 return Ocean;
             default:
