@@ -168,17 +168,6 @@
             tileSize: TILE_SIZE
         });
 
-        // Renderer row zero is the south edge. Reverse tile rows here; app.css
-        // flips the pixels inside each tile, completing the north-up reflection.
-        tileLayer.getTileUrl = function (coordinates) {
-            var reversedY = (Math.pow(2, coordinates.z) - 1) - coordinates.y;
-            return L.Util.template(this._url, {
-                x: coordinates.x,
-                y: reversedY,
-                z: coordinates.z
-            });
-        };
-
         tileLayer.addTo(map);
         map.setView(worldToLatLng(0, 0), Math.max(0, maximumZoom - 1));
         map.on("dragstart", clearFollow);
@@ -190,10 +179,10 @@
             return L.latLng(0, 0);
         }
 
-        var pixelX = (worldX / mapMetrics.pixelSize) + (mapMetrics.textureSize / 2);
-        var pixelY = (worldZ / mapMetrics.pixelSize) + (mapMetrics.textureSize / 2);
+        var pixelX = worldX / mapMetrics.pixelSize + mapMetrics.textureSize / 2;
+        var pixelYFromNorth = mapMetrics.textureSize / 2 - worldZ / mapMetrics.pixelSize;
         return L.latLng(
-            -(mapMetrics.textureSize - pixelY) * mapMetrics.unitsPerPixel,
+            -pixelYFromNorth * mapMetrics.unitsPerPixel,
             pixelX * mapMetrics.unitsPerPixel
         );
     }

@@ -14,7 +14,7 @@ internal sealed class WorldMapRenderer
 {
     public const float PixelSize = 12f;
     public const int WorldRadius = 10500;
-    public const int RendererVersion = 1;
+    public const int RendererVersion = 2;
 
     private const float WaterLevel = 30f;
     private static readonly MapColor DeepWater = new MapColor(0.102f, 0.165f, 0.267f);
@@ -193,7 +193,7 @@ internal sealed class WorldMapRenderer
         for (int py = 0; py < TextureSize; py++)
         {
             ThrowIfStopping();
-            float worldZ = ((py - half) * PixelSize) + (PixelSize / 2f);
+            float worldZ = ((half - py) * PixelSize) - (PixelSize / 2f);
             for (int px = 0; px < TextureSize; px++)
             {
                 float worldX = ((px - half) * PixelSize) + (PixelSize / 2f);
@@ -270,8 +270,8 @@ internal sealed class WorldMapRenderer
                 int nextX = Math.Min(TextureSize - 1, x + 1);
                 float slopeX = (heights[(y * TextureSize) + nextX] -
                                 heights[(y * TextureSize) + previousX]) / (2f * PixelSize);
-                float slopeZ = (heights[(nextY * TextureSize) + x] -
-                                heights[(previousY * TextureSize) + x]) / (2f * PixelSize);
+                float slopeZ = (heights[(previousY * TextureSize) + x] -
+                                heights[(nextY * TextureSize) + x]) / (2f * PixelSize);
                 float normalX = -slopeX;
                 float normalY = 1f;
                 float normalZ = -slopeZ;

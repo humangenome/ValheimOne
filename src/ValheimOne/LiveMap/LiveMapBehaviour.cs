@@ -9,6 +9,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
 {
     private LiveMapConfig? _config;
     private ModLogger? _log;
+    private Func<bool>? _enabledCheck;
     private WorldMapRenderer? _renderer;
     private LiveMapHttpServer? _httpServer;
     private volatile LiveMapSnapshot _snapshot = LiveMapSnapshot.Empty;
@@ -19,18 +20,33 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
 
     public static LiveMapBehaviour? Instance { get; private set; }
 
-    public static void Initialize(GameObject host, LiveMapConfig config, ModLogger log)
+    public static void Initialize(
+        GameObject host,
+        LiveMapConfig config,
+        ModLogger log,
+        Func<bool> enabledCheck)
     {
         var behaviour = host.AddComponent<LiveMapBehaviour>();
         behaviour._config = config;
         behaviour._log = log;
+        behaviour._enabledCheck = enabledCheck;
         Instance = behaviour;
     }
 
     private void Update()
     {
-        if (_stopped || _config == null || _log == null)
+        if (_stopped || _config == null || _log == null || _enabledCheck == null)
         {
+            return;
+        }
+
+        if (!_enabledCheck())
+        {
+            if (_started)
+            {
+                StopServices(false);
+            }
+
             return;
         }
 
@@ -49,29 +65,41 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
 
     private void TryStart()
     {
-        ZNet? network = ZNet.instance;
-        WorldGenerator? generator = WorldGenerator.instance;
-        if (network == null || generator == null || !network.IsServer() || ZNet.m_world == null)
+        LiveMapConfig? config = _config;
+        ModLogger? log = _log;
+        if (config == null || log == null)
         {
             return;
         }
 
-        World world = ZNet.m_world;
+        ZNet? network = ZNet.instance;
+        WorldGenerator? generator = WorldGenerator.instance;
+        if (network == null || generator == null || !network.IsServer())
+        {
+            return;
+        }
+
+        World? world = GameAccess.GetWorld();
+        if (world == null)
+        {
+            return;
+        }
+
         _worldName = string.IsNullOrWhiteSpace(world.m_name) ? "world" : world.m_name;
         string seedName = world.m_seedName ?? string.Empty;
-        string gameVersion = GameVersionDetector.TryDetect(_log) ?? "unknown";
-        int textureSize = WorldMapRenderer.NormalizeTextureSize(_config.TextureSize);
-        if (textureSize != _config.TextureSize)
+        string gameVersion = GameVersionDetector.TryDetect(log) ?? "unknown";
+        int textureSize = WorldMapRenderer.NormalizeTextureSize(config.TextureSize);
+        if (textureSize != config.TextureSize)
         {
-            _log.Warning(
-                $"[LiveMap] TextureSize {_config.TextureSize} is invalid; using {textureSize}. " +
+            log.Warning(
+                $"[LiveMap] TextureSize {config.TextureSize} is invalid; using {textureSize}. " +
                 "Choose a power of two at least 256.");
         }
 
-        int port = _config.Port;
+        int port = config.Port;
         if (port < 1 || port > 65535)
         {
-            _log.Warning($"[LiveMap] Port {port} is invalid; using 8790.");
+            log.Warning($"[LiveMap] Port {port} is invalid; using 8790.");
             port = 8790;
         }
 
@@ -82,21 +110,21 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             _worldName,
             gameVersion,
             textureSize,
-            _log);
+            log);
         _renderer.Start();
 
         RefreshSnapshot();
         _httpServer = new LiveMapHttpServer(
             port,
-            _config.BindIp,
-            _config.AccessToken,
-            _config.AdminSeesAll,
+            config.BindIp,
+            config.AccessToken,
+            config.AdminSeesAll,
             () => _snapshot,
             _renderer,
-            _log);
+            log);
         _httpServer.Start();
 
-        _nextPlayerUpdate = Time.realtimeSinceStartup + Math.Max(0.25f, _config.PlayerUpdateSeconds);
+        _nextPlayerUpdate = Time.realtimeSinceStartup + Math.Max(0.25f, config.PlayerUpdateSeconds);
         _started = true;
     }
 
@@ -109,7 +137,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         }
 
         var players = new List<LiveMapPlayerSnapshot>();
-        List<ZNetPeer> peers = network.m_peers;
+        List<ZNetPeer> peers = GameAccess.GetPeers(network);
         for (int index = 0; index < peers.Count; index++)
         {
             ZNetPeer peer = peers[index];
@@ -148,29 +176,30 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
 
     private void OnApplicationQuit()
     {
-        StopServices();
+        StopServices(true);
     }
 
     private void OnDestroy()
     {
-        StopServices();
+        StopServices(true);
         if (ReferenceEquals(Instance, this))
         {
             Instance = null;
         }
     }
 
-    private void StopServices()
+    private void StopServices(bool permanently)
     {
         if (_stopped)
         {
             return;
         }
 
-        _stopped = true;
+        _stopped = permanently;
         _httpServer?.Stop();
         _httpServer = null;
         _renderer?.Stop();
         _renderer = null;
+        _started = false;
     }
 }

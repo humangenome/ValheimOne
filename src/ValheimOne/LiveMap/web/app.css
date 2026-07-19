@@ -359,14 +359,6 @@ input {
     color: #484f58;
 }
 
-/* The source raster is south-first. app.js reverses tile rows and this
-   independent scale flips each tile's pixels without disturbing Leaflet's
-   positioning transform. */
-.world-map-layer .leaflet-tile {
-    transform-origin: center;
-    scale: 1 -1;
-}
-
 .leaflet-tooltip.player-tooltip {
     padding: 3px 7px;
     border: 1px solid rgb(48 54 61 / 88%);

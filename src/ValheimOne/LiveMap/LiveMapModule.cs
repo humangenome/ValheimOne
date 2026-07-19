@@ -73,7 +73,7 @@ public sealed class LiveMapModule : IFeatureModule
             hideFlags = HideFlags.HideAndDontSave,
         };
         UnityEngine.Object.DontDestroyOnLoad(host);
-        LiveMapBehaviour.Initialize(host, _config, _log);
+        LiveMapBehaviour.Initialize(host, _config, _log, () => _feature.Enabled.Value);
     }
 
     private void BindStringSettings(
@@ -89,13 +89,31 @@ public sealed class LiveMapModule : IFeatureModule
         try
         {
             // Temporary seam until the configuration framework grows typed string-key support.
-            FieldInfo? configField = typeof(FeatureRegistry).GetField(
-                "_config",
-                BindingFlags.Instance | BindingFlags.NonPublic);
-            var configFile = configField?.GetValue(registry) as ConfigFile;
+            ConfigFile? configFile = null;
+            try
+            {
+                FieldInfo? settingsField = typeof(FeatureRegistry).GetField(
+                    "_settings",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                var settings = settingsField?.GetValue(registry) as ValheimOneConfig;
+                configFile = settings?.File;
+            }
+            catch (Exception)
+            {
+                // Fall through to the legacy FeatureRegistry shape.
+            }
+
             if (configFile == null)
             {
-                throw new InvalidOperationException("FeatureRegistry._config was not available.");
+                FieldInfo? configField = typeof(FeatureRegistry).GetField(
+                    "_config",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+                configFile = configField?.GetValue(registry) as ConfigFile;
+            }
+
+            if (configFile == null)
+            {
+                throw new InvalidOperationException("FeatureRegistry configuration was not available.");
             }
 
             bindIp = configFile.Bind(
