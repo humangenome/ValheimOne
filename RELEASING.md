@@ -75,3 +75,19 @@ gh release create v<version> --draft --title "ValheimOne <version>" \
 ```
 
 Release notes are hand-written for users (what changed, upgrade notes, config additions); `CHANGELOG.md` is the internal engineering log, not a paste source.
+
+## Post-game-update contract test (mandatory)
+
+After every Valheim update, run the deterministic contract test before releasing:
+
+```bash
+tools/contract-test.sh
+```
+
+`CONTRACT PASS` means the pinned world's worldgen fingerprint, Harmony patch contract, and module registration contract still match the checked-in golden fingerprint. `CONTRACT DRIFT` requires review: a worldgen hash change means map caches must be invalidated and worldgen changes reviewed; patch drift reports broken patch points in `failed=`; and module-count drift indicates registration changes.
+
+After reviewing an intentional change, re-baseline and check in the updated golden fingerprint with:
+
+```bash
+tools/contract-test.sh --bless
+```
