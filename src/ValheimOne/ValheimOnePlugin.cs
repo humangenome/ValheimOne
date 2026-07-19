@@ -47,6 +47,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
             new FermenterModule(settings.Features),
             new SapCollectorModule(settings.Features),
             new ProductionSpeedsModule(settings.Features, _log),
+            new ContainerSizesModule(settings.Features, _log),
             new WardsModule(settings.Features),
             new PortalsModule(settings.Features),
             new CraftFromChestModule(settings.Features),
