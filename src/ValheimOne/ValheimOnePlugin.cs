@@ -49,6 +49,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
             new PortalsModule(settings.Features),
             new CraftFromChestModule(settings.Features),
             new StationAutomationModule(settings.Features),
+            new CookingStationModule(settings.Features),
             new ExperienceRatesModule(settings.Features),
             new DeathPenaltyModule(settings.Features),
             mapSharingModule,
