@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Net;
@@ -15,6 +16,7 @@ internal sealed class LiveMapHttpServer
     private readonly string _accessToken;
     private readonly bool _adminSeesAll;
     private readonly Func<LiveMapSnapshot> _getSnapshot;
+    private readonly Func<PoiCatalog> _getPoiCatalog;
     private readonly WorldMapRenderer _renderer;
     private readonly ModLogger _log;
     private HttpListener? _listener;
@@ -27,6 +29,7 @@ internal sealed class LiveMapHttpServer
         string accessToken,
         bool adminSeesAll,
         Func<LiveMapSnapshot> getSnapshot,
+        Func<PoiCatalog> getPoiCatalog,
         WorldMapRenderer renderer,
         ModLogger log)
     {
@@ -35,6 +38,7 @@ internal sealed class LiveMapHttpServer
         _accessToken = accessToken;
         _adminSeesAll = adminSeesAll;
         _getSnapshot = getSnapshot;
+        _getPoiCatalog = getPoiCatalog;
         _renderer = renderer;
         _log = log;
     }
@@ -212,6 +216,10 @@ internal sealed class LiveMapHttpServer
             {
                 ServePlayers(response);
             }
+            else if (path == "/api/pois")
+            {
+                ServePois(response);
+            }
             else if (path.StartsWith("/tiles/", StringComparison.Ordinal))
             {
                 ServeTile(response, path.Substring("/tiles/".Length));
@@ -370,6 +378,32 @@ internal sealed class LiveMapHttpServer
             json.Append(",\"z\":").Append(JsonWriter.Number(player.Z));
             json.Append('}');
             needsComma = true;
+        }
+
+        json.Append("]}");
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private void ServePois(HttpListenerResponse response)
+    {
+        IReadOnlyList<PoiSnapshot> pois = _getPoiCatalog().ServedPois;
+        var json = new StringBuilder(16 + (pois.Count * 96));
+        json.Append("{\"pois\":[");
+        for (int index = 0; index < pois.Count; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            PoiSnapshot poi = pois[index];
+            json.Append('{');
+            json.Append("\"name\":").Append(JsonWriter.Quote(poi.Name));
+            json.Append(",\"group\":").Append(JsonWriter.Quote(poi.Group));
+            json.Append(",\"x\":").Append(JsonWriter.NumberOneDecimal(poi.X));
+            json.Append(",\"z\":").Append(JsonWriter.NumberOneDecimal(poi.Z));
+            json.Append(",\"placed\":").Append(poi.Placed ? "true" : "false");
+            json.Append('}');
         }
 
         json.Append("]}");

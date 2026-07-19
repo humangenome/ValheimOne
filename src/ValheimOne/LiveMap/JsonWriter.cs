@@ -66,4 +66,11 @@ internal static class JsonWriter
             ? "0"
             : value.ToString("0.######", CultureInfo.InvariantCulture);
     }
+
+    public static string NumberOneDecimal(double value)
+    {
+        return double.IsNaN(value) || double.IsInfinity(value)
+            ? "0.0"
+            : value.ToString("0.0", CultureInfo.InvariantCulture);
+    }
 }

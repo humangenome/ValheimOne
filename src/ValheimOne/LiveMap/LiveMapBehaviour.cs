@@ -13,8 +13,10 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private WorldMapRenderer? _renderer;
     private LiveMapHttpServer? _httpServer;
     private volatile LiveMapSnapshot _snapshot = LiveMapSnapshot.Empty;
+    private volatile PoiCatalog _poiCatalog = PoiCatalog.Empty;
     private string _worldName = string.Empty;
     private float _nextPlayerUpdate;
+    private bool _poiCatalogBuilt;
     private bool _started;
     private bool _stopped;
 
@@ -74,7 +76,9 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
 
         ZNet? network = ZNet.instance;
         WorldGenerator? generator = WorldGenerator.instance;
-        if (network == null || generator == null || !network.IsServer())
+        ZoneSystem? zoneSystem = ZoneSystem.instance;
+        if (network == null || generator == null || zoneSystem == null ||
+            !network.IsServer() || !zoneSystem.LocationsGenerated)
         {
             return;
         }
@@ -103,6 +107,16 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             port = 8790;
         }
 
+        if (!_poiCatalogBuilt)
+        {
+            PoiCatalog poiCatalog = PoiCatalog.Build(zoneSystem);
+            _poiCatalog = poiCatalog;
+            _poiCatalogBuilt = true;
+            log.Info(
+                $"[LiveMap] POI catalog: {poiCatalog.TotalLocations} locations, " +
+                $"{poiCatalog.ServedPois.Count} served");
+        }
+
         _renderer = new WorldMapRenderer(
             generator,
             world.m_seed,
@@ -120,6 +134,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             config.AccessToken,
             config.AdminSeesAll,
             () => _snapshot,
+            () => _poiCatalog,
             _renderer,
             log);
         _httpServer.Start();
