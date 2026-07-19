@@ -4,6 +4,8 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-19
+
 ### Added
 
 - Initial `net472` BepInEx plugin scaffold for Valheim 0.221.12.

@@ -18,7 +18,7 @@ _ValheimOne is a community project and is not affiliated with or endorsed by Iro
 
 > **Official Hosting:** [SurvivalServers.com](https://www.survivalservers.com/services/game_servers/valheim/?utm_source=github&utm_medium=readme&utm_campaign=valheim_one) offers managed Valheim dedicated servers with BepInEx support for ValheimOne.
 
-**Status — unreleased / in development.** The server enforcement chassis, eighteen default-off gameplay modules, and the Live Map (world render, players, POIs, pins, fog-of-war, admin and public views) are implemented; the web console and standalone query endpoint remain in development. There is no packaged release yet. Gameplay features are disabled by default; the `[Server]` transport infrastructure is enabled by default but does not alter gameplay on its own.
+**Status — unreleased / in development.** The server enforcement chassis, twenty-six default-off gameplay modules, the Live Map (world render, players, POIs, pins, fog-of-war, admin and public views), and the web admin console are implemented; the standalone query responder remains in development (the always-on `/api/status` JSON endpoint already covers panel queries). There is no public release yet. Gameplay features are disabled by default; the `[Server]` transport infrastructure is enabled by default but does not alter gameplay on its own.
 
 ---
 
@@ -48,9 +48,7 @@ Map generation and runtime data stay on the server. Players join with fully vani
 
 ### Web Admin Console
 
-🚧 **In development.**
-
-Provides an authenticated dashboard for remote server administration. Operators can inspect server and player status, run commands, follow command output, and review or update the live ValheimOne configuration from one browser session.
+Adds a Console tab to the Live Map dashboard (opt-in via `ConsoleEnabled`, admin token required): a live server log with severity colors and resume-scroll, a command input with history and autocomplete that executes whitelisted commands through the game's own console path (`ConsoleWhitelist`, or `AllowAllCommands`), player kick/ban/unban with confirm dialogs, a world-save button, and a stats readout backed by `/api/stats` (uptime, players, ZDOs, Mono heap, frame timings).
 
 ### Server-Enforced Settings
 
@@ -78,6 +76,14 @@ Features use three modes: **server-authoritative** logic runs under server owner
 - `ExperienceRates` (`[Experience]`) — applies global and per-skill experience multipliers. **Mode:** synced.
 - `DeathPenalty` (`[DeathPenalty]`) — scales death skill loss or preserves inventory without a tombstone. **Mode:** synced.
 - `MapSharing` (`[MapSharing]`) — forces compatible clients to share positions and synchronizes their combined explored-map area. **Mode:** synced.
+- `ProductionSpeeds` (`[ProductionSpeeds]`) — overrides production time, queue size, and fuel capacity across smelters, blast furnaces, kilns, windmills, spinning wheels, and eitr refineries. **Mode:** synced.
+- `CookingStation` (`[CookingStation]`) — scales cook speed, optionally bypasses the fire requirement, and auto-feeds fuel and raw food from nearby containers. **Mode:** synced.
+- `FireSource` (`[FireSource]`) — makes torches and fires infinite. **Mode:** synced.
+- `StructuralIntegrity` (`[StructuralIntegrity]`) — disables weather damage and reduces support loss by material. **Mode:** synced.
+- `ContainerSizes` (`[ContainerSizes]`) — overrides chest, cart, karve, and longship grid sizes with an item-safe shrink guard. **Mode:** synced.
+- `Tames` (`[Tames]`) — applies taming, growth, and procreation rate modifiers. **Mode:** synced.
+- `WorldEvents` (`[Events]`) — controls raid chance and interval, disables raids, and overrides guardian-power duration and cooldown. **Mode:** server-authoritative.
+- `Trader` (`[Trader]`) — multiplies trader buy prices. **Mode:** synced.
 
 **Client-only:** n/a; no current gameplay module uses this mode.
 
@@ -87,7 +93,7 @@ Features use three modes: **server-authoritative** logic runs under server owner
 
 Adds a compact status endpoint for server browsers, uptime monitors, and operator tooling. The response reports server identity, game and ValheimOne versions, availability, player counts, uptime, and the active feature set without requiring a game connection.
 
-The Live Map's embedded HTTP server already exposes `/api/status` and `/api/players` when that module is enabled; this feature is the standalone query responder that works without the map.
+The Live Map's embedded HTTP server already exposes `/api/status` and `/api/players` when that module is enabled — and `/api/status` stays available without a token by default (`StatusPublic`) for hosting-panel queries; see [docs/query.md](docs/query.md). This feature is the standalone query responder that works without the map.
 
 ---
 
