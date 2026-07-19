@@ -50,11 +50,19 @@ Map generation and runtime data stay on the server. Players join with fully vani
 
 Adds a Console tab to the Live Map dashboard (opt-in via `ConsoleEnabled`, admin token required): a live server log with severity colors and resume-scroll, a command input with history and autocomplete that executes whitelisted commands through the game's own console path (`ConsoleWhitelist`, or `AllowAllCommands`), player kick/ban/unban with confirm dialogs, a world-save button, and a stats readout backed by `/api/stats` (uptime, players, ZDOs, Mono heap, frame timings).
 
+![ValheimOne Web Admin Console](docs/screenshots/console-tab.png)
+
+The command input autocompletes against the server's whitelist as you type:
+
+![ValheimOne console command autocomplete](docs/screenshots/console-autocomplete.png)
+
 ### Server-Enforced Settings
 
 Uses one `BepInEx/config/valheimone.cfg` file as the server ruleset. Typed sections keep Boolean, integer, float, and percentage settings explicit; every feature has its own `Enabled = false` gate, so installing ValheimOne changes nothing until an operator opts in.
 
 The enforcement chassis exchanges `VO_Hello`, `VO_Config`, and `VO_Ack` over routed RPC. In `[Server]`, `EnforceMod = false` permits vanilla clients; setting it to `true` kicks vanilla or mismatched clients after `HandshakeGraceSeconds`. `SyncConfig = true` sends compatible clients a chunked, acknowledgement-gated ruleset. Clients apply it as a data-only in-memory overlay, clear it on disconnect, and never receive `ClientOnly` sections. Compatible clients can therefore be hot-enabled by a server config push without installing new patches.
+
+![ValheimOne server log: enforced ruleset and live config hot-reload](docs/screenshots/enforced-settings.png)
 
 Features use three modes: **server-authoritative** logic runs under server ownership and can support vanilla clients; **synced** logic requires a compatible client and receives the server overlay; **client-only** settings stay local and are never pushed. The current gameplay modules are:
 
@@ -94,6 +102,8 @@ Features use three modes: **server-authoritative** logic runs under server owner
 Adds a compact status endpoint for server browsers, uptime monitors, and operator tooling. The response reports server identity, game and ValheimOne versions, availability, player counts, uptime, and the active feature set without requiring a game connection.
 
 The Live Map's embedded HTTP server already exposes `/api/status` and `/api/players` when that module is enabled — and `/api/status` stays available without a token by default (`StatusPublic`) for hosting-panel queries; see [docs/query.md](docs/query.md). This feature is the standalone query responder that works without the map.
+
+![ValheimOne /api/status JSON response](docs/screenshots/api-status.png)
 
 ---
 
