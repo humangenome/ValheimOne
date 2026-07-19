@@ -123,6 +123,11 @@ public sealed class ConfigEntryPercent : IConfigEntry
 
         int guaranteedValue = (int)adjustedValue;
         float fractionalChance = adjustedValue - guaranteedValue;
+        if (fractionalChance <= 0f)
+        {
+            return guaranteedValue;
+        }
+
         return UnityEngine.Random.value < fractionalChance
             ? guaranteedValue + 1
             : guaranteedValue;

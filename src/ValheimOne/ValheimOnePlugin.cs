@@ -35,6 +35,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
             new PlayerCarryWeightModule(settings.Features),
             new PlayerStaminaModule(settings.Features),
             new FoodDurationModule(settings.Features),
+            new ItemDropMultiplierModule(settings.Features),
             new ValheimOne.LiveMap.LiveMapModule(settings.Features),
         };
 
