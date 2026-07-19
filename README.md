@@ -36,7 +36,7 @@ _ValheimOne is a community project and is not affiliated with or endorsed by Iro
 
 ### Live Map
 
-Builds a procedural world render directly from the server seed, then cuts it into a zoomable Leaflet tile pyramid cached on disk for fast browser navigation. Live player positions (honoring in-game position privacy), points of interest read from world locations, shared map pins, and fog-of-war all update over the generated terrain, with a toggleable Layers panel.
+Builds a procedural world render directly from the server seed, then cuts it into a zoomable Leaflet tile pyramid cached on disk for fast browser navigation. Live player positions (honoring in-game position privacy), points of interest read from world locations, shared map pins, and fog-of-war all update over the generated terrain, with a toggleable Layers panel and low-zoom POI clustering. Updates stream over an `/api/events` Server-Sent-Events feed (with automatic polling fallback), and an opt-in entity layer adds ships, carts, portals, and a pulsing ring for active raid events.
 
 ![ValheimOne Live Map — admin view](docs/screenshots/livemap-admin.png)
 
@@ -143,7 +143,7 @@ MegingjordBuff = 200
 
 `BaseMaximumWeight` is the absolute unmodified carry limit; `MegingjordBuff` is the absolute bonus applied when the belt is active. Their Valheim defaults are 300 and 150 respectively.
 
-The current development build detects configuration-file changes, but feature patches are applied at startup. Restart the dedicated server after an edit.
+Configuration edits hot-reload: saving `valheimone.cfg` applies changed values live (debounced, with a per-key diff logged), and server-pushed overlay values keep precedence. Only changes that alter patch topology still require a restart.
 
 ---
 
