@@ -65,12 +65,29 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
         settings.WriteDefaultsIfNeeded();
 
         _harmony = new Harmony(PluginGuid);
+        List<string>? contractFailures = ContractDiagnostics.IsEnabled
+            ? new List<string>()
+            : null;
+        int successfulModules = 0;
         foreach (IFeatureModule module in modules)
         {
-            module.ApplyPatches(_harmony);
-            string state = module.IsEnabled ? "enabled" : "disabled";
-            _log.Info(
-                $"Feature patches ready: {module.Section} ({module.Classification}, {state}).");
+            try
+            {
+                module.ApplyPatches(_harmony);
+                successfulModules++;
+                string state = module.IsEnabled ? "enabled" : "disabled";
+                _log.Info(
+                    $"Feature patches ready: {module.Section} ({module.Classification}, {state}).");
+            }
+            catch (Exception exception)
+            {
+                string failure = ContractDiagnostics.DescribePatchFailure(module, exception);
+                contractFailures?.Add(failure);
+                _log.Error(
+                    $"Feature patch application failed: {failure} " +
+                    $"({exception.GetType().Name}: {ContractDiagnostics.SingleLineMessage(exception)}). " +
+                    "Continuing with remaining modules.");
+            }
         }
 
         _versionHandshake = new VersionHandshake(
@@ -79,6 +96,16 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
             _log,
             new IVersionHandshakeExtension[] { mapSharingModule });
         _versionHandshake.Initialize(_harmony);
+
+        if (ContractDiagnostics.IsEnabled)
+        {
+            ContractDiagnostics.Initialize(
+                _harmony,
+                _log,
+                modules,
+                successfulModules,
+                contractFailures!);
+        }
 
         _configWatcher = new ConfigHotReloadWatcher(configPath, _log);
         _configWatcher.Start();
