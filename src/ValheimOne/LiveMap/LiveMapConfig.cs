@@ -1,3 +1,4 @@
+using System;
 using ValheimOne.Configuration;
 
 namespace ValheimOne.LiveMap;
@@ -42,5 +43,21 @@ internal sealed class LiveMapConfig
 
     public string AccessToken => _accessToken.Value;
 
-    public string FogMode => _fogMode.Value;
+    public string FogMode
+    {
+        get
+        {
+            string value = (_fogMode.Value ?? string.Empty).Trim().ToLowerInvariant();
+            switch (value)
+            {
+                case "trails":
+                case "explored":
+                    return value;
+                case "full":
+                case "off":
+                default:
+                    return "off";
+            }
+        }
+    }
 }

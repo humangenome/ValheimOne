@@ -17,10 +17,15 @@ internal sealed class LiveMapHttpServer
     private readonly bool _adminSeesAll;
     private readonly Func<LiveMapSnapshot> _getSnapshot;
     private readonly Func<PoiCatalog> _getPoiCatalog;
+    private readonly Func<string> _getFogMode;
+    private readonly FogTracker _fogTracker;
     private readonly WorldMapRenderer _renderer;
     private readonly ModLogger _log;
+    private readonly object _fogPngLock = new object();
     private HttpListener? _listener;
     private Thread? _listenerThread;
+    private byte[]? _fogPng;
+    private long _fogPngRevision = -1;
     private volatile bool _stopping;
 
     public LiveMapHttpServer(
@@ -30,6 +35,8 @@ internal sealed class LiveMapHttpServer
         bool adminSeesAll,
         Func<LiveMapSnapshot> getSnapshot,
         Func<PoiCatalog> getPoiCatalog,
+        Func<string> getFogMode,
+        FogTracker fogTracker,
         WorldMapRenderer renderer,
         ModLogger log)
     {
@@ -39,6 +46,8 @@ internal sealed class LiveMapHttpServer
         _adminSeesAll = adminSeesAll;
         _getSnapshot = getSnapshot;
         _getPoiCatalog = getPoiCatalog;
+        _getFogMode = getFogMode;
+        _fogTracker = fogTracker;
         _renderer = renderer;
         _log = log;
     }
@@ -228,6 +237,10 @@ internal sealed class LiveMapHttpServer
             {
                 ServeBaseImage(response);
             }
+            else if (path == "/fog.png")
+            {
+                ServeFogImage(response);
+            }
             else
             {
                 WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
@@ -348,7 +361,14 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"textureSize\":").Append(_renderer.TextureSize.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"pixelSize\":").Append(JsonWriter.Number(WorldMapRenderer.PixelSize));
         json.Append(",\"worldRadius\":").Append(WorldMapRenderer.WorldRadius.ToString(CultureInfo.InvariantCulture));
-        json.Append("}}");
+        string fogMode = _getFogMode();
+        FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
+        long fogRevision = fogMode == "off" ? 0 : fogSnapshot.Revision;
+        json.Append(",\"fog\":{");
+        json.Append("\"mode\":").Append(JsonWriter.Quote(fogMode));
+        json.Append(",\"revision\":").Append(fogRevision.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"size\":").Append(FogTracker.Size.ToString(CultureInfo.InvariantCulture));
+        json.Append("}}}");
         WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
 
@@ -442,6 +462,83 @@ internal sealed class LiveMapHttpServer
         }
 
         ServePngFile(response, Path.Combine(_renderer.CacheDirectory, "base.png"));
+    }
+
+    private void ServeFogImage(HttpListenerResponse response)
+    {
+        if (_getFogMode() == "off")
+        {
+            WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
+        FogMaskSnapshot snapshot = _fogTracker.Snapshot;
+        byte[] png;
+        lock (_fogPngLock)
+        {
+            if (_fogPng == null || _fogPngRevision != snapshot.Revision)
+            {
+                _fogPng = BuildFogPng(snapshot.Mask);
+                _fogPngRevision = snapshot.Revision;
+            }
+
+            png = _fogPng;
+        }
+
+        WriteBytes(
+            response,
+            HttpStatusCode.OK,
+            "image/png",
+            png,
+            "no-store");
+    }
+
+    private static byte[] BuildFogPng(byte[] mask)
+    {
+        int expectedLength = FogTracker.Size * FogTracker.Size;
+        if (mask.Length != expectedLength)
+        {
+            throw new InvalidOperationException("Fog mask dimensions do not match its length.");
+        }
+
+        const byte darkRed = 0x0d;
+        const byte darkGreen = 0x11;
+        const byte darkBlue = 0x17;
+        const int unrevealedAlpha = 235;
+        var rgba = new byte[expectedLength * 4];
+        for (int y = 0; y < FogTracker.Size; y++)
+        {
+            int minimumY = Math.Max(0, y - 1);
+            int maximumY = Math.Min(FogTracker.Size - 1, y + 1);
+            for (int x = 0; x < FogTracker.Size; x++)
+            {
+                int minimumX = Math.Max(0, x - 1);
+                int maximumX = Math.Min(FogTracker.Size - 1, x + 1);
+                int alphaTotal = 0;
+                int samples = 0;
+                for (int sampleY = minimumY; sampleY <= maximumY; sampleY++)
+                {
+                    int row = sampleY * FogTracker.Size;
+                    for (int sampleX = minimumX; sampleX <= maximumX; sampleX++)
+                    {
+                        if (mask[row + sampleX] == 0)
+                        {
+                            alphaTotal += unrevealedAlpha;
+                        }
+
+                        samples++;
+                    }
+                }
+
+                int offset = ((y * FogTracker.Size) + x) * 4;
+                rgba[offset] = darkRed;
+                rgba[offset + 1] = darkGreen;
+                rgba[offset + 2] = darkBlue;
+                rgba[offset + 3] = (byte)((alphaTotal + (samples / 2)) / samples);
+            }
+        }
+
+        return PngEncoder.EncodeRgba(rgba, FogTracker.Size, FogTracker.Size);
     }
 
     private static void ServePngFile(HttpListenerResponse response, string path)

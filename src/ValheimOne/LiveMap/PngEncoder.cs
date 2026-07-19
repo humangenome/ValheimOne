@@ -21,31 +21,14 @@ internal static class PngEncoder
         int height,
         Func<bool>? shouldStop = null)
     {
-        if (width <= 0 || height <= 0 || rgba.Length != checked(width * height * 4))
-        {
-            throw new ArgumentException("RGBA buffer dimensions do not match its length.", nameof(rgba));
-        }
+        ValidateRgba(rgba, width, height);
 
         string temporaryPath = path + ".tmp";
         try
         {
             using (var output = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None))
             {
-                output.Write(Signature, 0, Signature.Length);
-
-                var ihdr = new byte[13];
-                WriteUInt32BigEndian(ihdr, 0, (uint)width);
-                WriteUInt32BigEndian(ihdr, 4, (uint)height);
-                ihdr[8] = 8;
-                ihdr[9] = 6;
-                ihdr[10] = 0;
-                ihdr[11] = 0;
-                ihdr[12] = 0;
-                WriteChunk(output, "IHDR", ihdr);
-
-                byte[] idat = CompressImage(rgba, width, height, shouldStop);
-                WriteChunk(output, "IDAT", idat);
-                WriteChunk(output, "IEND", Array.Empty<byte>());
+                WritePng(output, rgba, width, height, shouldStop);
             }
 
             if (File.Exists(path))
@@ -60,6 +43,52 @@ internal static class PngEncoder
             TryDelete(temporaryPath);
             throw;
         }
+    }
+
+    public static byte[] EncodeRgba(
+        byte[] rgba,
+        int width,
+        int height,
+        Func<bool>? shouldStop = null)
+    {
+        ValidateRgba(rgba, width, height);
+        using (var output = new MemoryStream())
+        {
+            WritePng(output, rgba, width, height, shouldStop);
+            return output.ToArray();
+        }
+    }
+
+    private static void ValidateRgba(byte[] rgba, int width, int height)
+    {
+        if (width <= 0 || height <= 0 || rgba.Length != checked(width * height * 4))
+        {
+            throw new ArgumentException("RGBA buffer dimensions do not match its length.", nameof(rgba));
+        }
+    }
+
+    private static void WritePng(
+        Stream output,
+        byte[] rgba,
+        int width,
+        int height,
+        Func<bool>? shouldStop)
+    {
+        output.Write(Signature, 0, Signature.Length);
+
+        var ihdr = new byte[13];
+        WriteUInt32BigEndian(ihdr, 0, (uint)width);
+        WriteUInt32BigEndian(ihdr, 4, (uint)height);
+        ihdr[8] = 8;
+        ihdr[9] = 6;
+        ihdr[10] = 0;
+        ihdr[11] = 0;
+        ihdr[12] = 0;
+        WriteChunk(output, "IHDR", ihdr);
+
+        byte[] idat = CompressImage(rgba, width, height, shouldStop);
+        WriteChunk(output, "IDAT", idat);
+        WriteChunk(output, "IEND", Array.Empty<byte>());
     }
 
     private static byte[] CompressImage(

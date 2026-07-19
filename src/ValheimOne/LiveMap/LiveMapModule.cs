@@ -43,8 +43,9 @@ public sealed class LiveMapModule : IFeatureModule
             "Optional token required as ?token= or X-LiveMap-Token on every HTTP request.");
         ConfigEntryString fogMode = _feature.String(
             "FogMode",
-            "full",
-            "Reserved fog-of-war mode. P1 renders the full map.");
+            "off",
+            "Fog of war for the map view: off (full map), trails (areas players have traveled), " +
+            "explored (trails now; cartography-table data in a later update).");
         _config = new LiveMapConfig(
             port,
             textureSize,

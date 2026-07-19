@@ -302,11 +302,33 @@ internal sealed class WorldMapRenderer
                 return true;
             }
 
-            Directory.Delete(CacheDirectory, recursive: true);
+            DeleteMapCacheArtifacts(metadataPath);
         }
 
         Directory.CreateDirectory(CacheDirectory);
         return false;
+    }
+
+    private void DeleteMapCacheArtifacts(string metadataPath)
+    {
+        DeleteFile(metadataPath);
+        DeleteFile(metadataPath + ".tmp");
+        DeleteFile(Path.Combine(CacheDirectory, "base.png"));
+        DeleteFile(Path.Combine(CacheDirectory, "base.png.tmp"));
+
+        string tilesDirectory = Path.Combine(CacheDirectory, "tiles");
+        if (Directory.Exists(tilesDirectory))
+        {
+            Directory.Delete(tilesDirectory, recursive: true);
+        }
+    }
+
+    private static void DeleteFile(string path)
+    {
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+        }
     }
 
     private bool MetadataMatches(string metadata)

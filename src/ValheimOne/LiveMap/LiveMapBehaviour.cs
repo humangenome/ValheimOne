@@ -11,12 +11,16 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private ModLogger? _log;
     private Func<bool>? _enabledCheck;
     private WorldMapRenderer? _renderer;
+    private FogTracker? _fogTracker;
     private LiveMapHttpServer? _httpServer;
     private volatile LiveMapSnapshot _snapshot = LiveMapSnapshot.Empty;
     private volatile PoiCatalog _poiCatalog = PoiCatalog.Empty;
+    private volatile string _fogMode = "off";
     private string _worldName = string.Empty;
     private float _nextPlayerUpdate;
+    private float _nextFogUpdate;
     private bool _poiCatalogBuilt;
+    private bool _exploredWarningLogged;
     private bool _started;
     private bool _stopped;
 
@@ -52,16 +56,25 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             return;
         }
 
+        RefreshFogMode();
+
         if (!_started)
         {
             TryStart();
             return;
         }
 
-        if (Time.realtimeSinceStartup >= _nextPlayerUpdate)
+        float now = Time.realtimeSinceStartup;
+        if (now >= _nextPlayerUpdate)
         {
             RefreshSnapshot();
-            _nextPlayerUpdate = Time.realtimeSinceStartup + Math.Max(0.25f, _config.PlayerUpdateSeconds);
+            _nextPlayerUpdate = now + Math.Max(0.25f, _config.PlayerUpdateSeconds);
+        }
+
+        if (now >= _nextFogUpdate)
+        {
+            _fogTracker?.Tick(_snapshot.Players);
+            _nextFogUpdate = now + 2f;
         }
     }
 
@@ -126,8 +139,10 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             textureSize,
             log);
         _renderer.Start();
+        _fogTracker = new FogTracker(_renderer.CacheDirectory, log);
 
         RefreshSnapshot();
+        _fogTracker.Tick(_snapshot.Players);
         _httpServer = new LiveMapHttpServer(
             port,
             config.BindIp,
@@ -135,12 +150,36 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             config.AdminSeesAll,
             () => _snapshot,
             () => _poiCatalog,
+            () => _fogMode,
+            _fogTracker,
             _renderer,
             log);
         _httpServer.Start();
 
-        _nextPlayerUpdate = Time.realtimeSinceStartup + Math.Max(0.25f, config.PlayerUpdateSeconds);
+        float now = Time.realtimeSinceStartup;
+        _nextPlayerUpdate = now + Math.Max(0.25f, config.PlayerUpdateSeconds);
+        _nextFogUpdate = now + 2f;
         _started = true;
+    }
+
+    private void RefreshFogMode()
+    {
+        LiveMapConfig? config = _config;
+        ModLogger? log = _log;
+        if (config == null || log == null)
+        {
+            return;
+        }
+
+        string mode = config.FogMode;
+        _fogMode = mode;
+        if (mode == "explored" && !_exploredWarningLogged)
+        {
+            _exploredWarningLogged = true;
+            log.Warning(
+                "[LiveMap] FogMode 'explored' cartography decode not yet active; " +
+                "using trails accumulation.");
+        }
     }
 
     private void RefreshSnapshot()
@@ -213,6 +252,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _stopped = permanently;
         _httpServer?.Stop();
         _httpServer = null;
+        _fogTracker?.Stop();
+        _fogTracker = null;
         _renderer?.Stop();
         _renderer = null;
         _started = false;
