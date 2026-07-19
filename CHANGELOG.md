@@ -26,3 +26,4 @@ All notable changes to ValheimOne will be documented in this file. This project 
 - Runtime-visibility hardening for Unity 6 Mono: verified public game APIs where available and cached reflection delegates for vanilla-private members.
 - Build script, project documentation, contribution guidance, and MIT license.
 - Opt-in `LiveMap` module: background seed-to-tiles world render (north-up Leaflet tile pyramid cached on disk), embedded HTTP server with `/api/status` and `/api/players` (honoring in-game position privacy), and a dark self-contained live map page with player markers and day/time readout.
+- LiveMap P2: POI layer from world locations with a toggleable Layers panel, fog-of-war (`off`/`trails`/`explored` incl. vanilla cartography-table decode), shared map pins, and a token-gated admin view with a read-only fogged public view.
