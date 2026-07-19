@@ -36,6 +36,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
             new PlayerStaminaModule(settings.Features),
             new BuildingQoLModule(settings.Features),
             new FoodDurationModule(settings.Features),
+            new ItemTweaksModule(settings.Features),
             new ItemDropMultiplierModule(settings.Features),
             new GatheringModule(settings.Features),
             new DayNightLengthModule(settings.Features),
