@@ -17,6 +17,7 @@ internal sealed class ChestScanner
     private readonly HashSet<Inventory> _seenInventories = new HashSet<Inventory>();
 
     private Player? _cachedPlayer;
+    private Vector3 _cachedCenter;
     private float _cachedRange;
     private bool _cachedIgnoreWardedChests;
     private float _refreshAt;
@@ -27,17 +28,34 @@ internal sealed class ChestScanner
         bool ignoreWardedChests,
         float cacheSeconds)
     {
+        return GetInventories(
+            player,
+            player.transform.position,
+            range,
+            ignoreWardedChests,
+            cacheSeconds);
+    }
+
+    public IReadOnlyList<Inventory> GetInventories(
+        Player player,
+        Vector3 center,
+        float range,
+        bool ignoreWardedChests,
+        float cacheSeconds)
+    {
         float clampedRange = Math.Max(1f, Math.Min(50f, range));
         float clampedCacheSeconds = Math.Max(1f, cacheSeconds);
         float now = Time.realtimeSinceStartup;
 
         if (!ReferenceEquals(_cachedPlayer, player) ||
+            _cachedCenter != center ||
             _cachedRange != clampedRange ||
             _cachedIgnoreWardedChests != ignoreWardedChests ||
             now >= _refreshAt)
         {
             Refresh(
                 player,
+                center,
                 clampedRange,
                 ignoreWardedChests,
                 now + clampedCacheSeconds);
@@ -49,6 +67,7 @@ internal sealed class ChestScanner
 
     private void Refresh(
         Player player,
+        Vector3 center,
         float range,
         bool ignoreWardedChests,
         float refreshAt)
@@ -56,7 +75,6 @@ internal sealed class ChestScanner
         _cachedContainers.Clear();
 
         float rangeSquared = range * range;
-        Vector3 playerPosition = player.transform.position;
         foreach (Container container in UnityEngine.Object.FindObjectsByType<Container>(
                      FindObjectsSortMode.None))
         {
@@ -65,7 +83,7 @@ internal sealed class ChestScanner
                 continue;
             }
 
-            Vector3 offset = container.transform.position - playerPosition;
+            Vector3 offset = container.transform.position - center;
             if (offset.sqrMagnitude <= rangeSquared)
             {
                 _cachedContainers.Add(container);
@@ -73,6 +91,7 @@ internal sealed class ChestScanner
         }
 
         _cachedPlayer = player;
+        _cachedCenter = center;
         _cachedRange = range;
         _cachedIgnoreWardedChests = ignoreWardedChests;
         _refreshAt = refreshAt;

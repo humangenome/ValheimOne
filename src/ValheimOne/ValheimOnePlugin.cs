@@ -37,6 +37,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
             new FoodDurationModule(settings.Features),
             new ItemDropMultiplierModule(settings.Features),
             new CraftFromChestModule(settings.Features),
+            new StationAutomationModule(settings.Features),
             new ValheimOne.LiveMap.LiveMapModule(settings.Features),
         };
 
