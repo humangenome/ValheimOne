@@ -10,15 +10,15 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![BepInEx 5.4.x](https://img.shields.io/badge/BepInEx-5.4.x-2f80ed.svg)](https://github.com/BepInEx/BepInEx)
 [![Valheim — Dedicated Server](https://img.shields.io/badge/Valheim-Dedicated_Server-1b2838.svg?logo=steam&logoColor=white)](https://store.steampowered.com/app/892970/)
-[![Client Mods: Not Required](https://img.shields.io/badge/Client_Mods-Not_Required-brightgreen.svg)](#features)
+[![Client Mods: Optional](https://img.shields.io/badge/Client_Mods-Optional-brightgreen.svg)](#features)
 
-Everything your Valheim dedicated server is missing: a live map, a web console, server-enforced settings, and a server query endpoint — delivered server-side with no client mods required.
+Everything your Valheim dedicated server is missing: a live map, a web console, server-enforced settings, and a server query endpoint — with vanilla-compatible server features and synchronized client features where game ownership requires them.
 
 _ValheimOne is a community project and is not affiliated with or endorsed by Iron Gate Studio._
 
 > **Official Hosting:** [SurvivalServers.com](https://www.survivalservers.com/services/game_servers/valheim/?utm_source=github&utm_medium=readme&utm_campaign=valheim_one) offers managed Valheim dedicated servers with BepInEx support for ValheimOne.
 
-**Status — unreleased / in development.** The configuration foundation and first gameplay module are implemented; the live map, web console, and status endpoint are in development. There is no packaged release yet. Gameplay features are disabled by default; the `[Server]` transport infrastructure is enabled by default but does not alter gameplay on its own.
+**Status — unreleased / in development.** The server enforcement chassis and ten default-off gameplay modules are implemented; the web console and status endpoint remain in development. There is no packaged release yet. Gameplay features are disabled by default; the `[Server]` transport infrastructure is enabled by default but does not alter gameplay on its own.
 
 ---
 
@@ -56,9 +56,22 @@ Provides an authenticated dashboard for remote server administration. Operators 
 
 Uses one `BepInEx/config/valheimone.cfg` file as the server ruleset. Typed sections keep Boolean, integer, float, and percentage settings explicit; every feature has its own `Enabled = false` gate, so installing ValheimOne changes nothing until an operator opts in.
 
-The first module exists today: `[Player]` controls base carry weight and the Megingjord bonus. The server owns the configured values, and additional modules follow the same isolated, default-off contract.
+The enforcement chassis exchanges `VO_Hello`, `VO_Config`, and `VO_Ack` over routed RPC. In `[Server]`, `EnforceMod = false` permits vanilla clients; setting it to `true` kicks vanilla or mismatched clients after `HandshakeGraceSeconds`. `SyncConfig = true` sends compatible clients a chunked, acknowledgement-gated ruleset. Clients apply it as a data-only in-memory overlay, clear it on disconnect, and never receive `ClientOnly` sections. Compatible clients can therefore be hot-enabled by a server config push without installing new patches.
 
-The `[Server]` section controls the enforcement chassis. `EnforceMod = false` allows vanilla clients by default, `SyncConfig = true` pushes effective non-client-only settings to compatible ValheimOne clients, and `HandshakeGraceSeconds = 15` sets the wait before a client is classified as vanilla. Setting `EnforceMod = true` requires compatible ValheimOne clients.
+Features use three modes: **server-authoritative** logic runs under server ownership and can support vanilla clients; **synced** logic requires a compatible client and receives the server overlay; **client-only** settings stay local and are never pushed. The current gameplay modules are:
+
+- `PlayerCarryWeight` (`[Player]`) — sets base carry weight and the Megingjord bonus. **Mode:** server-authoritative.
+- `PlayerStamina` (`[Stamina]`) — scales stamina regeneration, delay, movement drains, and action costs. **Mode:** synced.
+- `FoodDuration` (`[Food]`) — scales food duration and can hold benefits at full strength until expiry. **Mode:** synced.
+- `ItemDropMultiplier` (`[Drops]`) — scales destructible, creature, and pickable yields. **Mode:** server-authoritative.
+- `CraftFromChest` (`[CraftFromChest]`) — consumes crafting and optional build costs from nearby accessible containers. **Mode:** synced.
+- `StationAutomation` (`[StationAutomation]`) — pulls fuel and processable items from nearby containers for smelter-based stations and fireplaces. **Mode:** synced.
+- `DayNightLength` (`[Time]`) — scales or absolutely overrides the full day/night cycle length. **Mode:** synced.
+- `Portals` (`[Portals]`) — disables portal travel or permits normally restricted inventory. **Mode:** synced.
+- `ExperienceRates` (`[Experience]`) — applies global and per-skill experience multipliers. **Mode:** synced.
+- `DeathPenalty` (`[DeathPenalty]`) — scales death skill loss or preserves inventory without a tombstone. **Mode:** synced.
+
+**Client-only:** n/a; no current gameplay module uses this mode.
 
 ![ValheimOne Server-Enforced Settings](docs/screenshots/server-enforced-settings.png)
 
@@ -104,7 +117,7 @@ Start the dedicated server normally. ValheimOne loads through BepInEx and create
 3. Enable only the feature sections you want and set their typed values.
 4. Start the server again to apply the ruleset.
 
-Every gameplay section is opt-in. The `[Server]` infrastructure section is the sole default-on exception. This `[Player]` example raises base carry weight to 450 and changes the Megingjord bonus to 200:
+Every gameplay section is opt-in. The `[Server]` infrastructure section is the sole default-on exception. Sections include `[Player]` for carry weight, `[Stamina]` for stamina regeneration and costs, and `[Time]` for day/night length. This `[Player]` example raises base carry weight to 450 and changes the Megingjord bonus to 200:
 
 ```ini
 [Player]
