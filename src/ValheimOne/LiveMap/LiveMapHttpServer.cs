@@ -17,6 +17,7 @@ internal sealed class LiveMapHttpServer
     private readonly bool _adminSeesAll;
     private readonly Func<LiveMapSnapshot> _getSnapshot;
     private readonly Func<PoiCatalog> _getPoiCatalog;
+    private readonly Func<MapTableSnapshot> _getMapTableSnapshot;
     private readonly Func<string> _getFogMode;
     private readonly FogTracker _fogTracker;
     private readonly WorldMapRenderer _renderer;
@@ -35,6 +36,7 @@ internal sealed class LiveMapHttpServer
         bool adminSeesAll,
         Func<LiveMapSnapshot> getSnapshot,
         Func<PoiCatalog> getPoiCatalog,
+        Func<MapTableSnapshot> getMapTableSnapshot,
         Func<string> getFogMode,
         FogTracker fogTracker,
         WorldMapRenderer renderer,
@@ -46,6 +48,7 @@ internal sealed class LiveMapHttpServer
         _adminSeesAll = adminSeesAll;
         _getSnapshot = getSnapshot;
         _getPoiCatalog = getPoiCatalog;
+        _getMapTableSnapshot = getMapTableSnapshot;
         _getFogMode = getFogMode;
         _fogTracker = fogTracker;
         _renderer = renderer;
@@ -228,6 +231,10 @@ internal sealed class LiveMapHttpServer
             else if (path == "/api/pois")
             {
                 ServePois(response);
+            }
+            else if (path == "/api/pins")
+            {
+                ServePins(response);
             }
             else if (path.StartsWith("/tiles/", StringComparison.Ordinal))
             {
@@ -423,6 +430,34 @@ internal sealed class LiveMapHttpServer
             json.Append(",\"x\":").Append(JsonWriter.NumberOneDecimal(poi.X));
             json.Append(",\"z\":").Append(JsonWriter.NumberOneDecimal(poi.Z));
             json.Append(",\"placed\":").Append(poi.Placed ? "true" : "false");
+            json.Append('}');
+        }
+
+        json.Append("]}");
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private void ServePins(HttpListenerResponse response)
+    {
+        MapTablePin[] pins = _getMapTableSnapshot().Pins;
+        var json = new StringBuilder(16 + (pins.Length * 128));
+        json.Append("{\"pins\":[");
+        for (int index = 0; index < pins.Length; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            MapTablePin pin = pins[index];
+            json.Append('{');
+            json.Append("\"name\":").Append(JsonWriter.Quote(pin.Name));
+            json.Append(",\"x\":").Append(JsonWriter.Number(pin.X));
+            json.Append(",\"z\":").Append(JsonWriter.Number(pin.Z));
+            json.Append(",\"type\":").Append(pin.Type.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"icon\":").Append(JsonWriter.Quote(pin.Icon));
+            json.Append(",\"author\":").Append(JsonWriter.Quote(pin.Author));
+            json.Append(",\"checked\":").Append(pin.IsChecked ? "true" : "false");
             json.Append('}');
         }
 

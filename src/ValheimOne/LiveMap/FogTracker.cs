@@ -76,6 +76,39 @@ internal sealed class FogTracker
         }
     }
 
+    public void OrExternalMask(byte[] externalMask)
+    {
+        if (_stopped)
+        {
+            return;
+        }
+
+        if (externalMask.Length != CellCount)
+        {
+            _log.Warning(
+                $"[LiveMap] ignored external fog mask with invalid size {externalMask.Length}; " +
+                $"expected {CellCount} bytes.");
+            return;
+        }
+
+        bool changed = false;
+        for (int index = 0; index < externalMask.Length; index++)
+        {
+            if (externalMask[index] != 0 && _mask[index] == 0)
+            {
+                _mask[index] = byte.MaxValue;
+                changed = true;
+            }
+        }
+
+        if (changed)
+        {
+            _revision++;
+            _dirty = true;
+            Volatile.Write(ref _snapshot, new FogMaskSnapshot((byte[])_mask.Clone(), _revision));
+        }
+    }
+
     public void Stop()
     {
         if (_stopped)

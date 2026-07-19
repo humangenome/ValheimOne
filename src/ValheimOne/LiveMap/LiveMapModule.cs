@@ -45,7 +45,7 @@ public sealed class LiveMapModule : IFeatureModule
             "FogMode",
             "off",
             "Fog of war for the map view: off (full map), trails (areas players have traveled), " +
-            "explored (trails now; cartography-table data in a later update).");
+            "explored (player trails plus cartography-table exploration data).");
         _config = new LiveMapConfig(
             port,
             textureSize,

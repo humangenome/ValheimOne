@@ -12,6 +12,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private Func<bool>? _enabledCheck;
     private WorldMapRenderer? _renderer;
     private FogTracker? _fogTracker;
+    private MapTableReader? _mapTableReader;
     private LiveMapHttpServer? _httpServer;
     private volatile LiveMapSnapshot _snapshot = LiveMapSnapshot.Empty;
     private volatile PoiCatalog _poiCatalog = PoiCatalog.Empty;
@@ -20,7 +21,6 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private float _nextPlayerUpdate;
     private float _nextFogUpdate;
     private bool _poiCatalogBuilt;
-    private bool _exploredWarningLogged;
     private bool _started;
     private bool _stopped;
 
@@ -65,6 +65,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         }
 
         float now = Time.realtimeSinceStartup;
+        _mapTableReader?.Tick(now, _fogMode == "explored");
         if (now >= _nextPlayerUpdate)
         {
             RefreshSnapshot();
@@ -140,6 +141,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             log);
         _renderer.Start();
         _fogTracker = new FogTracker(_renderer.CacheDirectory, log);
+        _mapTableReader = new MapTableReader(_fogTracker, log);
+        _mapTableReader.Start();
 
         RefreshSnapshot();
         _fogTracker.Tick(_snapshot.Players);
@@ -150,6 +153,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             config.AdminSeesAll,
             () => _snapshot,
             () => _poiCatalog,
+            () => _mapTableReader?.Snapshot ?? MapTableSnapshot.Empty,
             () => _fogMode,
             _fogTracker,
             _renderer,
@@ -165,21 +169,12 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private void RefreshFogMode()
     {
         LiveMapConfig? config = _config;
-        ModLogger? log = _log;
-        if (config == null || log == null)
+        if (config == null)
         {
             return;
         }
 
-        string mode = config.FogMode;
-        _fogMode = mode;
-        if (mode == "explored" && !_exploredWarningLogged)
-        {
-            _exploredWarningLogged = true;
-            log.Warning(
-                "[LiveMap] FogMode 'explored' cartography decode not yet active; " +
-                "using trails accumulation.");
-        }
+        _fogMode = config.FogMode;
     }
 
     private void RefreshSnapshot()
@@ -252,6 +247,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _stopped = permanently;
         _httpServer?.Stop();
         _httpServer = null;
+        _mapTableReader?.Stop();
+        _mapTableReader = null;
         _fogTracker?.Stop();
         _fogTracker = null;
         _renderer?.Stop();
