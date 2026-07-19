@@ -18,7 +18,7 @@ _ValheimOne is a community project and is not affiliated with or endorsed by Iro
 
 > **Official Hosting:** [SurvivalServers.com](https://www.survivalservers.com/services/game_servers/valheim/?utm_source=github&utm_medium=readme&utm_campaign=valheim_one) offers managed Valheim dedicated servers with BepInEx support for ValheimOne.
 
-**Status — unreleased / in development.** The server enforcement chassis and eighteen default-off gameplay modules are implemented; the web console and status endpoint remain in development. There is no packaged release yet. Gameplay features are disabled by default; the `[Server]` transport infrastructure is enabled by default but does not alter gameplay on its own.
+**Status — unreleased / in development.** The server enforcement chassis, eighteen default-off gameplay modules, and the Live Map (world render, players, POIs, pins, fog-of-war, admin and public views) are implemented; the web console and standalone query endpoint remain in development. There is no packaged release yet. Gameplay features are disabled by default; the `[Server]` transport infrastructure is enabled by default but does not alter gameplay on its own.
 
 ---
 
@@ -36,21 +36,21 @@ _ValheimOne is a community project and is not affiliated with or endorsed by Iro
 
 ### Live Map
 
-🚧 **In development.**
+Builds a procedural world render directly from the server seed, then cuts it into a zoomable Leaflet tile pyramid cached on disk for fast browser navigation. Live player positions (honoring in-game position privacy), points of interest read from world locations, shared map pins, and fog-of-war all update over the generated terrain, with a toggleable Layers panel.
 
-Builds a Sea-Chart-grade procedural world render directly from the server seed, then cuts it into a zoomable tile pyramid for fast browser navigation. Live player positions, points of interest, map pins, and explored fog-of-war update over the generated terrain.
+![ValheimOne Live Map — admin view](docs/screenshots/livemap-admin.png)
+
+The embedded HTTP server serves two views: a token-gated admin view with every layer available, and a read-only public view governed by a configurable fog mode — `off`, `trails`, or `explored`, the latter decoding vanilla cartography-table data so the public map reveals exactly what players have charted. Server status and player data are also available as JSON at `/api/status` and `/api/players`.
+
+![ValheimOne Live Map — public view with explored fog](docs/screenshots/livemap-public-fog.png)
 
 Map generation and runtime data stay on the server. Players join with fully vanilla clients; the browser map does not require a Valheim client mod.
-
-![ValheimOne Live Map](docs/screenshots/live-map.png)
 
 ### Web Admin Console
 
 🚧 **In development.**
 
 Provides an authenticated dashboard for remote server administration. Operators can inspect server and player status, run commands, follow command output, and review or update the live ValheimOne configuration from one browser session.
-
-![ValheimOne Web Admin Console](docs/screenshots/web-admin-console.png)
 
 ### Server-Enforced Settings
 
@@ -81,15 +81,13 @@ Features use three modes: **server-authoritative** logic runs under server owner
 
 **Client-only:** n/a; no current gameplay module uses this mode.
 
-![ValheimOne Server-Enforced Settings](docs/screenshots/server-enforced-settings.png)
-
 ### Server Query / Status
 
 🚧 **In development.**
 
 Adds a compact status endpoint for server browsers, uptime monitors, and operator tooling. The response reports server identity, game and ValheimOne versions, availability, player counts, uptime, and the active feature set without requiring a game connection.
 
-![ValheimOne Server Query Status](docs/screenshots/server-query-status.png)
+The Live Map's embedded HTTP server already exposes `/api/status` and `/api/players` when that module is enabled; this feature is the standalone query responder that works without the map.
 
 ---
 
@@ -102,6 +100,8 @@ ValheimOne is unreleased, so build it from source for now:
 ```bash
 ./build.sh
 ```
+
+Release zips (a plugin-only package and a full BepInEx-bundled package) are produced by `tools/package-release.sh`; see [RELEASING.md](RELEASING.md).
 
 The build produces `src/ValheimOne/bin/Release/net472/ValheimOne.dll`. Copy that file into the dedicated server's `BepInEx/plugins/` directory:
 
