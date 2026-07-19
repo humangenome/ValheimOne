@@ -17,6 +17,8 @@ internal sealed class DetailTileRenderer
 {
     private const int RequestTimeoutMilliseconds = 10000;
     private const float OceanMargin = 500f;
+    private const long DetailTileCacheMaximumBytes = 512L * 1024L * 1024L;
+    private const long DetailTileCacheEvictionTargetBytes = DetailTileCacheMaximumBytes * 9L / 10L;
 
     private readonly WorldGenerator _generator;
     private readonly string _cacheDirectory;
@@ -32,6 +34,8 @@ internal sealed class DetailTileRenderer
     private Thread? _worker;
     private volatile bool _stopping;
     private bool _prerenderQueued;
+    private bool _detailCacheSizeInitialized;
+    private long _detailCacheSizeBytes;
 
     public DetailTileRenderer(
         WorldGenerator generator,
@@ -110,6 +114,7 @@ internal sealed class DetailTileRenderer
 
         if (File.Exists(path))
         {
+            RefreshCacheRecency(path);
             return true;
         }
 
@@ -198,12 +203,14 @@ internal sealed class DetailTileRenderer
 
             try
             {
+                EnsureDetailCacheSizeInitialized();
                 string path = TilePath(key.Zoom, key.X, key.Y);
                 if (!File.Exists(path))
                 {
                     var stopwatch = Stopwatch.StartNew();
                     RenderTile(key.Zoom, key.X, key.Y, path);
                     stopwatch.Stop();
+                    TrackNewDetailTile(path);
                     if (isDemand)
                     {
                         _log.Debug(
@@ -331,6 +338,153 @@ internal sealed class DetailTileRenderer
         }
 
         PngEncoder.WriteRgba(path, pixels, tileSize, tileSize, () => _stopping);
+    }
+
+    private void EnsureDetailCacheSizeInitialized()
+    {
+        if (_detailCacheSizeInitialized)
+        {
+            return;
+        }
+
+        long totalBytes = 0;
+        foreach (string path in EnumerateDetailTilePaths())
+        {
+            try
+            {
+                totalBytes += new FileInfo(path).Length;
+            }
+            catch (IOException)
+            {
+                // A stale file can disappear while the cache is being inspected.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Keep rendering even if an individual stale cache file is inaccessible.
+            }
+        }
+
+        _detailCacheSizeBytes = totalBytes;
+        _detailCacheSizeInitialized = true;
+    }
+
+    private void TrackNewDetailTile(string path)
+    {
+        _detailCacheSizeBytes += new FileInfo(path).Length;
+        if (_detailCacheSizeBytes > DetailTileCacheMaximumBytes)
+        {
+            EvictDetailTileCache();
+        }
+    }
+
+    private void EvictDetailTileCache()
+    {
+        var tiles = new List<CachedTile>();
+        long totalBytes = 0;
+        foreach (string path in EnumerateDetailTilePaths())
+        {
+            try
+            {
+                var file = new FileInfo(path);
+                long size = file.Length;
+                tiles.Add(new CachedTile(path, size, file.LastWriteTimeUtc));
+                totalBytes += size;
+            }
+            catch (IOException)
+            {
+                // The cache is best effort; skip files that disappear during the scan.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // An inaccessible file cannot be safely evicted.
+            }
+        }
+
+        _detailCacheSizeBytes = totalBytes;
+        tiles.Sort(static (left, right) =>
+        {
+            int comparison = left.LastWriteTimeUtc.CompareTo(right.LastWriteTimeUtc);
+            return comparison != 0
+                ? comparison
+                : string.CompareOrdinal(left.Path, right.Path);
+        });
+
+        int evictedTiles = 0;
+        long evictedBytes = 0;
+        foreach (CachedTile tile in tiles)
+        {
+            if (_detailCacheSizeBytes <= DetailTileCacheEvictionTargetBytes)
+            {
+                break;
+            }
+
+            try
+            {
+                File.Delete(tile.Path);
+                _detailCacheSizeBytes -= tile.Size;
+                evictedTiles++;
+                evictedBytes += tile.Size;
+            }
+            catch (IOException)
+            {
+                // Leave failed deletions in the running total.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Leave failed deletions in the running total.
+            }
+        }
+
+        _log.Info(
+            $"[LiveMap] detail tile cache evicted {evictedTiles} tiles " +
+            $"({evictedBytes.ToString(CultureInfo.InvariantCulture)} bytes)");
+    }
+
+    private IEnumerable<string> EnumerateDetailTilePaths()
+    {
+        string tilesDirectory = Path.Combine(_cacheDirectory, "tiles");
+        if (!Directory.Exists(tilesDirectory))
+        {
+            yield break;
+        }
+
+        foreach (string zoomDirectory in Directory.EnumerateDirectories(tilesDirectory))
+        {
+            string zoomName = Path.GetFileName(zoomDirectory);
+            if (!int.TryParse(
+                    zoomName,
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out int zoom) ||
+                zoom <= BaseZoom)
+            {
+                continue;
+            }
+
+            foreach (string path in Directory.EnumerateFiles(
+                         zoomDirectory,
+                         "*.png",
+                         SearchOption.TopDirectoryOnly))
+            {
+                yield return path;
+            }
+        }
+    }
+
+    private static void RefreshCacheRecency(string path)
+    {
+        try
+        {
+            File.SetLastWriteTimeUtc(path, DateTime.UtcNow);
+        }
+        catch (IOException)
+        {
+            // Cache recency updates are best effort.
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Cache recency updates are best effort.
+        }
     }
 
     private static void ApplyReliefPixel(
@@ -481,5 +635,21 @@ internal sealed class DetailTileRenderer
         {
             return unchecked((Zoom * 397) ^ (X * 31) ^ Y);
         }
+    }
+
+    private readonly struct CachedTile
+    {
+        public CachedTile(string path, long size, DateTime lastWriteTimeUtc)
+        {
+            Path = path;
+            Size = size;
+            LastWriteTimeUtc = lastWriteTimeUtc;
+        }
+
+        public string Path { get; }
+
+        public long Size { get; }
+
+        public DateTime LastWriteTimeUtc { get; }
     }
 }

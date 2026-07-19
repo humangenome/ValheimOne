@@ -8,7 +8,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 - Opt-in standalone `[Query]` A2S UDP responder for server browsers, monitoring tools, and hosting panels, including crossplay servers, with per-client challenge flow, A2S_INFO and A2S_PLAYER responses, player-name privacy via `PublicPlayerNames`, and an automatic game-port-plus-4 default.
 - LiveMap palette fidelity: biome tints now match the in-game map look (light-green Meadows, gray-green Black Forest, murky Swamp, tan Plains, gray Mistlands with dark forest specks, red Ashlands with a contained southern lava sea, pale Deep North, crisp ocean depth ramp), with forest stipple following the game's own per-biome forest-factor rules; renderer cache version bumped.
-- LiveMap true zoom depth: tiles beyond the base overview render lazily at each tile's own world resolution (down to about 1.5 m/px at zoom 6) on a single background worker with request coalescing, disk caching, a flat-ocean fast path outside the world edge, and background pre-rendering of the first detail zoom.
+- LiveMap true zoom depth: tiles beyond the base overview render lazily at each tile's own world resolution (down to about 0.375 m/px at zoom 8) on a single background worker with request coalescing, bounded LRU disk caching, a flat-ocean fast path outside the world edge, and background pre-rendering of the first detail zoom.
 
 ### Fixed
 

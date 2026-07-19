@@ -16,9 +16,9 @@ internal sealed class WorldMapRenderer
     public const int WorldRadius = 10500;
     public const int RendererVersion = 3;
 
-    // Deepest zoom served through on-demand detail tiles (about 1.5 m/px for a
-    // 2048 base at 12 m/px).
-    public const int DetailZoomTarget = 6;
+    // Deepest zoom served through on-demand detail tiles (about 0.375 m/px for a
+    // 2048 base at 12 m/px, providing sub-meter detail).
+    public const int DetailZoomTarget = 8;
 
     private readonly WorldGenerator _generator;
     private readonly int _seed;
