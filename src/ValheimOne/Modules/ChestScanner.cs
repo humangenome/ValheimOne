@@ -1,11 +1,17 @@
 using System;
 using System.Collections.Generic;
+using HarmonyLib;
 using UnityEngine;
 
 namespace ValheimOne.Modules;
 
 internal sealed class ChestScanner
 {
+    private static readonly Func<Container, long, bool> CheckContainerAccess =
+        AccessTools.MethodDelegate<Func<Container, long, bool>>(
+            AccessTools.Method(typeof(Container), "CheckAccess", new[] { typeof(long) })
+            ?? throw new MissingMethodException(nameof(Container), "CheckAccess"));
+
     private readonly List<Container> _cachedContainers = new List<Container>();
     private readonly List<Inventory> _accessibleInventories = new List<Inventory>();
     private readonly HashSet<Inventory> _seenInventories = new HashSet<Inventory>();
@@ -104,7 +110,10 @@ internal sealed class ChestScanner
                 continue;
             }
 
-            if (!HasContainerAccess(container, playerId))
+            // Container.CheckAccess is private in the runtime assembly. Resolve its open-instance
+            // delegate once so access checks retain vanilla privacy semantics without emitting a
+            // direct private-member call that Unity 6 Mono would reject.
+            if (!CheckContainerAccess(container, playerId))
             {
                 continue;
             }
@@ -122,20 +131,5 @@ internal sealed class ChestScanner
         return container.m_rootObjectOverride != null
             ? container.m_rootObjectOverride
             : container.GetComponent<ZNetView>();
-    }
-
-    private static bool HasContainerAccess(Container container, long playerId)
-    {
-        switch (container.m_privacy)
-        {
-            case Container.PrivacySetting.Public:
-                return true;
-            case Container.PrivacySetting.Private:
-                Piece? piece = container.GetComponent<Piece>();
-                return piece != null && piece.GetCreator() == playerId;
-            case Container.PrivacySetting.Group:
-            default:
-                return false;
-        }
     }
 }

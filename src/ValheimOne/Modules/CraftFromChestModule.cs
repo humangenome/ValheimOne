@@ -9,6 +9,14 @@ namespace ValheimOne.Modules;
 
 public sealed class CraftFromChestModule : IFeatureModule
 {
+    private static readonly Func<Player, string, int, bool> KnowsStationLevel =
+        AccessTools.MethodDelegate<Func<Player, string, int, bool>>(
+            AccessTools.Method(
+                typeof(Player),
+                "KnowStationLevel",
+                new[] { typeof(string), typeof(int) })
+            ?? throw new MissingMethodException(nameof(Player), "KnowStationLevel"));
+
     private static CraftFromChestModule? _active;
 
     private readonly FeatureDefinition _feature;
@@ -180,13 +188,25 @@ public sealed class CraftFromChestModule : IFeatureModule
             return;
         }
 
-        if (piece.m_craftingStation != null &&
-            CraftingStation.HaveBuildStationInRange(
-                piece.m_craftingStation.m_name,
-                __instance.transform.position) == null &&
-            !ZoneSystem.instance.GetGlobalKey(GlobalKeys.NoWorkbench))
+        if (piece.m_craftingStation != null)
         {
-            return;
+            if (mode == Player.RequirementMode.CanAlmostBuild)
+            {
+                // Vanilla only requires this station to be known in CanAlmostBuild mode.
+                // KnowStationLevel is private at runtime, so use the cached open-instance
+                // delegate rather than a direct call through the publicized compile assembly.
+                if (!KnowsStationLevel(__instance, piece.m_craftingStation.m_name, 0))
+                {
+                    return;
+                }
+            }
+            else if (CraftingStation.HaveBuildStationInRange(
+                         piece.m_craftingStation.m_name,
+                         __instance.transform.position) == null &&
+                     !ZoneSystem.instance.GetGlobalKey(GlobalKeys.NoWorkbench))
+            {
+                return;
+            }
         }
 
         if (piece.m_dlc.Length > 0 && !DLCMan.instance.IsDLCInstalled(piece.m_dlc))
