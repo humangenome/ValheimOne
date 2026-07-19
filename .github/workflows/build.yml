@@ -1,0 +1,248 @@
+name: Build
+
+'on':
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BEPINEX_VERSION: 5.4.2333
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.x
+
+      - name: Resolve Valheim dedicated-server build ID
+        id: game-build
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          response_file="$(mktemp)"
+          trap 'rm -f "${response_file}"' EXIT
+
+          build_id=""
+          if curl \
+            --fail \
+            --silent \
+            --show-error \
+            --location \
+            --retry 4 \
+            --retry-all-errors \
+            --retry-delay 5 \
+            --max-time 30 \
+            --output "${response_file}" \
+            https://api.steamcmd.net/v1/info/896660; then
+            build_id="$(
+              jq -er \
+                '.data["896660"].depots.branches.public.buildid | tostring | select(test("^[0-9]+$"))' \
+                "${response_file}" 2>/dev/null || true
+            )"
+          fi
+
+          if [[ -n "${build_id}" ]]; then
+            cache_version="${build_id}"
+            echo "Valheim public-branch build ID: ${build_id}"
+          else
+            # During an API outage, use a stable key prefix plus the UTC date.
+            # This reuses same-day downloads but forces a fresh SteamCMD check daily.
+            date_stamp="$(date -u +%F)"
+            build_id="unavailable"
+            cache_version="steam-api-fallback-v1-${date_stamp}"
+            echo "::warning::SteamCMD API unavailable or returned no public build ID; using daily fallback cache key ${cache_version}."
+          fi
+
+          {
+            echo "buildid=${build_id}"
+            echo "cache-version=${cache_version}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Restore Valheim server and publicized assemblies
+        id: game-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/valheim-modding/server
+            ~/valheim-modding/publicized
+          key: ${{ runner.os }}-valheim-server-publicized-${{ steps.game-build.outputs.cache-version }}
+
+      - name: Restore BepInEx pack
+        id: bepinex-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/valheim-modding/bepinex/BepInExPack_Valheim
+          key: ${{ runner.os }}-bepinex-valheim-${{ env.BEPINEX_VERSION }}
+
+      - name: Download BepInEx pack
+        if: steps.bepinex-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          archive="${RUNNER_TEMP}/bepinex-valheim-${BEPINEX_VERSION}.zip"
+          extract_root="${RUNNER_TEMP}/bepinex-valheim-extracted"
+          target_root="${HOME}/valheim-modding/bepinex"
+
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --location \
+            --retry 4 \
+            --retry-all-errors \
+            --retry-delay 5 \
+            --output "${archive}" \
+            "https://thunderstore.io/package/download/denikson/BepInExPack_Valheim/${BEPINEX_VERSION}/"
+
+          # Inspect the archive before extraction, then locate its actual pack root.
+          unzip -l "${archive}"
+          mkdir -p "${extract_root}" "${target_root}"
+          unzip -q "${archive}" -d "${extract_root}"
+
+          core_dir="$(
+            find "${extract_root}" -type d \
+              -path '*/BepInExPack_Valheim/BepInEx/core' \
+              -print -quit
+          )"
+          if [[ -z "${core_dir}" ]]; then
+            echo "BepInExPack_Valheim/BepInEx/core was not found in the downloaded archive." >&2
+            exit 1
+          fi
+
+          pack_dir="${core_dir%/BepInEx/core}"
+          if [[ -e "${target_root}/BepInExPack_Valheim" ]]; then
+            echo "Unexpected existing BepInEx target on a cache miss." >&2
+            exit 1
+          fi
+          mv "${pack_dir}" "${target_root}/BepInExPack_Valheim"
+
+          test -f "${target_root}/BepInExPack_Valheim/BepInEx/core/BepInEx.dll"
+
+      - name: Verify BepInEx layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "${HOME}/valheim-modding/bepinex/BepInExPack_Valheim/BepInEx/core/BepInEx.dll"
+          test -f "${HOME}/valheim-modding/bepinex/BepInExPack_Valheim/BepInEx/core/0Harmony.dll"
+
+      - name: Install Valheim dedicated server
+        if: steps.game-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sudo apt-get update
+          sudo apt-get install --yes lib32gcc-s1
+
+          steamcmd_dir="${HOME}/valheim-modding/steamcmd"
+          steamcmd_archive="${RUNNER_TEMP}/steamcmd_linux.tar.gz"
+          mkdir -p "${steamcmd_dir}"
+
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --location \
+            --retry 4 \
+            --retry-all-errors \
+            --retry-delay 5 \
+            --output "${steamcmd_archive}" \
+            https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz
+          tar -xzf "${steamcmd_archive}" -C "${steamcmd_dir}"
+
+          "${steamcmd_dir}/steamcmd.sh" \
+            +force_install_dir "${HOME}/valheim-modding/server" \
+            +login anonymous \
+            +app_update 896660 validate \
+            +quit
+
+      - name: Verify Valheim managed assemblies
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "${HOME}/valheim-modding/server/valheim_server_Data/Managed/assembly_valheim.dll"
+
+      - name: Publicize Valheim assemblies
+        if: steps.game-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DOTNET_ROLL_FORWARD=LatestMajor
+
+          dotnet tool install --global BepInEx.AssemblyPublicizer.CLI --version 0.4.3
+          mkdir -p "${HOME}/valheim-modding/publicized"
+          cd "${HOME}/valheim-modding/server/valheim_server_Data/Managed"
+
+          for f in assembly_valheim assembly_utils assembly_guiutils assembly_googleanalytics assembly_lux assembly_postprocessing assembly_simplemeshcombine assembly_sunshafts; do
+            "${HOME}/.dotnet/tools/assembly-publicizer" \
+              "${f}.dll" \
+              --output "${HOME}/valheim-modding/publicized/${f}_publicized.dll"
+          done
+
+      - name: Verify publicized assemblies
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in assembly_valheim assembly_utils assembly_guiutils assembly_googleanalytics assembly_lux assembly_postprocessing assembly_simplemeshcombine assembly_sunshafts; do
+            test -f "${HOME}/valheim-modding/publicized/${f}_publicized.dll"
+          done
+
+      - name: Build ValheimOne
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./build.sh
+          test -f src/ValheimOne/bin/Release/net472/ValheimOne.dll
+
+      - name: Upload ValheimOne DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: ValheimOne-${{ steps.game-build.outputs.cache-version }}
+          path: |
+            src/ValheimOne/bin/Release/net472/ValheimOne.dll
+            tools/golden-fingerprint.txt
+          if-no-files-found: error
+
+      - name: Write build summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version_file="src/ValheimOne/Networking/VersionInfo.cs"
+          plugin_version="unavailable"
+          if [[ -f "${version_file}" ]]; then
+            detected_version="$(
+              grep -E 'public const string PluginVersion = "[^"]+";' "${version_file}" \
+                | head -n 1 \
+                | sed -E 's/.*PluginVersion = "([^"]+)";.*/\1/' \
+                || true
+            )"
+            if [[ -n "${detected_version}" ]]; then
+              plugin_version="${detected_version}"
+            fi
+          fi
+
+          {
+            echo "## ValheimOne build"
+            echo
+            echo "- Valheim dedicated-server build ID: ${{ steps.game-build.outputs.buildid || 'unavailable' }}"
+            echo "- ValheimOne plugin version: ${plugin_version}"
+          } >> "${GITHUB_STEP_SUMMARY}"
