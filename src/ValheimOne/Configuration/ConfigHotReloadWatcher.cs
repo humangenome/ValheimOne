@@ -9,7 +9,7 @@ public sealed class ConfigHotReloadWatcher : IDisposable
 {
     private readonly FileSystemWatcher _watcher;
     private readonly ModLogger _log;
-    private int _changeObserved;
+    private long _lastChangeTickPlusOne;
     private bool _disposed;
 
     public ConfigHotReloadWatcher(string configPath, ModLogger log)
@@ -30,7 +30,7 @@ public sealed class ConfigHotReloadWatcher : IDisposable
         _watcher.Renamed += OnConfigFileRenamed;
     }
 
-    public bool ChangeObserved => Volatile.Read(ref _changeObserved) != 0;
+    public bool ChangeObserved => Volatile.Read(ref _lastChangeTickPlusOne) != 0;
 
     public void Start()
     {
@@ -40,7 +40,33 @@ public sealed class ConfigHotReloadWatcher : IDisposable
         }
 
         _watcher.EnableRaisingEvents = true;
-        _log.Debug("Config file watcher started; live value application is reserved for a later phase.");
+        _log.Debug("Config file watcher started.");
+    }
+
+    public bool TryConsumeChange(int debounceMilliseconds)
+    {
+        if (debounceMilliseconds < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(debounceMilliseconds));
+        }
+
+        long observedTickPlusOne = Volatile.Read(ref _lastChangeTickPlusOne);
+        if (observedTickPlusOne == 0)
+        {
+            return false;
+        }
+
+        int observedTick = unchecked((int)(uint)(observedTickPlusOne - 1));
+        uint elapsedMilliseconds = unchecked((uint)(Environment.TickCount - observedTick));
+        if (elapsedMilliseconds < (uint)debounceMilliseconds)
+        {
+            return false;
+        }
+
+        return Interlocked.CompareExchange(
+            ref _lastChangeTickPlusOne,
+            0,
+            observedTickPlusOne) == observedTickPlusOne;
     }
 
     public void Dispose()
@@ -60,10 +86,8 @@ public sealed class ConfigHotReloadWatcher : IDisposable
 
     private void OnConfigFileChanged(object sender, FileSystemEventArgs args)
     {
-        Volatile.Write(ref _changeObserved, 1);
-
-        // TODO: Debounce editor write bursts, validate a replacement snapshot, and swap values on the Unity thread.
-        // TODO: Reload validated local values; installed patches already consult effective accessors.
+        long tickPlusOne = (long)(uint)Environment.TickCount + 1;
+        Volatile.Write(ref _lastChangeTickPlusOne, tickPlusOne);
     }
 
     private void OnConfigFileRenamed(object sender, RenamedEventArgs args)

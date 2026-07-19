@@ -13,6 +13,8 @@ namespace ValheimOne;
 [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
 public sealed class ValheimOnePlugin : BaseUnityPlugin
 {
+    private const int ConfigReloadDebounceMilliseconds = 750;
+
     public const string PluginGuid = "com.humangenome.valheimone";
     public const string PluginName = "ValheimOne";
     public const string PluginVersion = VersionInfo.PluginVersion;
@@ -20,6 +22,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
     private Harmony? _harmony;
     private ConfigHotReloadWatcher? _configWatcher;
     private IVersionHandshake? _versionHandshake;
+    private ValheimOneConfig? _settings;
     private ModLogger? _log;
 
     private void Awake()
@@ -29,6 +32,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
 
         string configPath = Path.Combine(Paths.ConfigPath, "valheimone.cfg");
         var settings = new ValheimOneConfig(configPath);
+        _settings = settings;
         var serverConfig = new ServerConfig(settings.Features);
         var mapSharingModule = new MapSharingModule(settings.Features, _log);
         IReadOnlyList<IFeatureModule> modules = new IFeatureModule[]
@@ -112,16 +116,89 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
         _log.Info($"Configuration: {configPath}");
     }
 
+    private void Update()
+    {
+        ConfigHotReloadWatcher? watcher = _configWatcher;
+        ValheimOneConfig? settings = _settings;
+        ModLogger? log = _log;
+        if (watcher == null || settings == null || log == null ||
+            !watcher.TryConsumeChange(ConfigReloadDebounceMilliseconds))
+        {
+            return;
+        }
+
+        Dictionary<IConfigEntry, string> beforeValues = SnapshotEffectiveValues(settings.Features);
+        try
+        {
+            settings.File.Reload();
+        }
+        catch (Exception exception)
+        {
+            log.Warning(
+                "Config hot-reload failed; effective values were not reapplied: " +
+                $"{exception.GetType().Name}: {ContractDiagnostics.SingleLineMessage(exception)}");
+            return;
+        }
+
+        Dictionary<IConfigEntry, string> afterValues = SnapshotEffectiveValues(settings.Features);
+        bool anyChanged = false;
+        foreach (FeatureDefinition feature in settings.Features.Features)
+        {
+            foreach (IConfigEntry entry in feature.Keys)
+            {
+                string beforeValue = beforeValues[entry];
+                string afterValue = afterValues[entry];
+                if (string.Equals(beforeValue, afterValue, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                anyChanged = true;
+                string featureGateNote = ReferenceEquals(entry, feature.Enabled)
+                    ? " (feature gate — patches stay installed; enabling/disabling applies live, " +
+                      "new patch topology requires restart)"
+                    : string.Empty;
+                log.Info(
+                    $"Config hot-reload: [{entry.Definition.Section}] {entry.Definition.Name}: " +
+                    $"{beforeValue} -> {afterValue} (applied live){featureGateNote}");
+            }
+        }
+
+        if (anyChanged)
+        {
+            settings.Features.NotifyEffectiveValuesChanged();
+        }
+        else
+        {
+            log.Debug("Config hot-reload: config file touched; no effective changes");
+        }
+    }
+
     private void OnDestroy()
     {
         _configWatcher?.Dispose();
         _configWatcher = null;
+        _settings = null;
 
         _versionHandshake?.Shutdown();
         _versionHandshake = null;
 
         _harmony?.UnpatchSelf();
         _harmony = null;
+    }
+
+    private static Dictionary<IConfigEntry, string> SnapshotEffectiveValues(FeatureRegistry registry)
+    {
+        var values = new Dictionary<IConfigEntry, string>();
+        foreach (FeatureDefinition feature in registry.Features)
+        {
+            foreach (IConfigEntry entry in feature.Keys)
+            {
+                values.Add(entry, entry.GetSerializedValue());
+            }
+        }
+
+        return values;
     }
 
     private static void LogStartupBanner(ModLogger log)

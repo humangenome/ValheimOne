@@ -41,6 +41,10 @@ All notable changes to ValheimOne will be documented in this file. This project 
 - LiveMap P3 web admin console (opt-in via `ConsoleEnabled`, admin token required): whitelisted console command execution through the game's own console path (`ConsoleWhitelist` / `AllowAllCommands`), cursor-polled server-log ring buffer (`ConsoleLogLines`), kick/ban/unban/banlist and world-save endpoints, and a `/api/stats` health snapshot (uptime, players, ZDOs, Mono heap, frame timings).
 - Dashboard Console tab: live server log with severity colors and resume-scroll, command input with history and whitelist autocomplete, player kick/ban and banned-list unban with confirm dialogs, stats readout, and a save-world button — same dark self-contained page, admin view only.
 - `StatusPublic` config key (default on): `/api/status` stays available without a token for hosting-panel queries even when the map is token-locked; see `docs/query.md`.
+- LiveMap `/api/events` Server-Sent-Events stream (players, status deltas, and console log lines for admin tokens) with automatic front-end fallback to polling and exponential SSE retry.
+- Opt-in LiveMap entity layer (`EntityLayer`): ships, carts, and portals served from ZDO scans as toggleable admin map layers, plus an active raid event exposed on the admin status feed and rendered as a pulsing map ring with a sidebar badge.
+- LiveMap front-end polish: low-zoom POI grid clustering and a collapsible layers legend.
+- Live config hot-reload: editing `valheimone.cfg` on disk now applies changed values without a restart (debounced, main-thread reload with a per-key diff logged; server-pushed overlay values keep precedence; new patch topology still requires a restart).
 - Opt-in `[ProductionSpeeds]` module for production time and queue or fuel capacity overrides across smelters, blast furnaces, kilns, windmills, spinning wheels, and eitr refineries.
 - Opt-in `[CookingStation]` module for cook speed, optional fire bypass, and automatic fuel and nearby-container raw-food feeding.
 - Opt-in `[FireSource]` module for infinite torches and fires.

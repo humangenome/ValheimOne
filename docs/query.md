@@ -56,6 +56,15 @@ With `[LiveMap] ConsoleEnabled = true` **and** a non-empty `AccessToken`, the sa
 | `/api/admin/save` | POST | Trigger a world + profile save. Returns `alreadySaving` when a save was in flight. |
 | `/api/stats` | GET | Uptime, player/peer counts, ZDO count, Mono heap, frame avg/max ms, world day/time. |
 
+## Streaming and map-data endpoints
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/api/events` | GET (SSE) | Server-Sent-Events stream. Map-view auth (admin or public token rules). Named events with the same JSON shapes as the polling endpoints: `players`, `status` (change-detected), and — for console-authorized admin tokens only — `log` (incremental, cursor-carrying). Sends `retry: 5000`; capped at 8 concurrent streams (`409` beyond). |
+| `/api/entities` | GET | Admin view + `EntityLayer = true` only. Ship/cart/portal positions from ZDO scans (5 s refresh, 500-entity cap) plus the active raid `event` object. |
+
+Admins also get an `"event"` raid object (`{name,x,z,radius,elapsed,duration}` or `null`) on `/api/status` regardless of `EntityLayer`.
+
 Notes:
 
 - POST bodies are JSON, max 8 KB. Send a `Content-Length` header (an empty body with `Content-Length: 0` is fine for `/api/admin/save`; `curl` needs `-d ''`).
