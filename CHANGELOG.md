@@ -2,13 +2,24 @@
 
 All notable changes to ValheimOne will be documented in this file. This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and intends to use [Semantic Versioning](https://semver.org/spec/v2.0.0.html) after its first release.
 
+## [Unreleased]
+
+### Added
+
+- LiveMap deep zoom now reaches zoom 8 (about 0.375 m/px on the default 2048 texture), with the on-demand detail tile cache bounded by a 512 MB LRU disk cap (least-recently-served tiles are evicted; evictions are logged).
+- Official ValheimOne icon: dashboard favicon and header brand mark now use the painted shield icon; source assets under docs/brand/.
+
+### Fixed
+
+- LiveMap dashboard no longer shows a hard black margin/seam beside or around the world at any zoom or pan position: the map surface background now matches the renderer's deep-ocean edge color, so letterboxed areas and still-rendering deep-zoom tiles read as open ocean.
+
 ## [0.6.0] - 2026-07-19
 
 ### Added
 
 - Opt-in standalone `[Query]` A2S UDP responder for server browsers, monitoring tools, and hosting panels, including crossplay servers, with per-client challenge flow, A2S_INFO and A2S_PLAYER responses, player-name privacy via `PublicPlayerNames`, and an automatic game-port-plus-4 default.
 - LiveMap palette fidelity: biome tints now match the in-game map look (light-green Meadows, gray-green Black Forest, murky Swamp, tan Plains, gray Mistlands with dark forest specks, red Ashlands with a contained southern lava sea, pale Deep North, crisp ocean depth ramp), with forest stipple following the game's own per-biome forest-factor rules; renderer cache version bumped.
-- LiveMap true zoom depth: tiles beyond the base overview render lazily at each tile's own world resolution (down to about 0.375 m/px at zoom 8) on a single background worker with request coalescing, bounded LRU disk caching, a flat-ocean fast path outside the world edge, and background pre-rendering of the first detail zoom.
+- LiveMap true zoom depth: tiles beyond the base overview render lazily at each tile's own world resolution (down to about 1.5 m/px at zoom 6) on a single background worker with request coalescing, disk caching, a flat-ocean fast path outside the world edge, and background pre-rendering of the first detail zoom.
 
 ### Fixed
 

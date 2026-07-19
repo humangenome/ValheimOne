@@ -279,6 +279,10 @@ internal sealed class LiveMapHttpServer
             {
                 ServeIndex(response, viewLevel);
             }
+            else if (isGet && path == "/favicon.ico")
+            {
+                ServeFavicon(response);
+            }
             else if (isGet && path.StartsWith("/assets/", StringComparison.Ordinal))
             {
                 ServeAsset(response, path.Substring("/assets/".Length));
@@ -456,6 +460,14 @@ internal sealed class LiveMapHttpServer
                 assetName = "app.css";
                 contentType = "text/css; charset=utf-8";
                 break;
+            case "icon-192.png":
+                assetName = "icon-192.png";
+                contentType = "image/png";
+                break;
+            case "icon-64.png":
+                assetName = "icon-64.png";
+                contentType = "image/png";
+                break;
             default:
                 assetName = null;
                 contentType = null;
@@ -473,6 +485,16 @@ internal sealed class LiveMapHttpServer
             HttpStatusCode.OK,
             contentType,
             EmbeddedAssets.Get(assetName),
+            "public, max-age=3600");
+    }
+
+    private void ServeFavicon(HttpListenerResponse response)
+    {
+        WriteBytes(
+            response,
+            HttpStatusCode.OK,
+            "image/x-icon",
+            EmbeddedAssets.Get("favicon.ico"),
             "public, max-age=3600");
     }
 

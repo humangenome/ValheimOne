@@ -11,6 +11,9 @@ ASSET_NAMES=(
     "app.css"
     "leaflet.js"
     "leaflet.css"
+    "icon-192.png"
+    "icon-64.png"
+    "favicon.ico"
 )
 
 ASSET_PATHS=(
@@ -19,6 +22,9 @@ ASSET_PATHS=(
     "$LIVEMAP_DIR/web/app.css"
     "$LIVEMAP_DIR/web/vendor/leaflet.js"
     "$LIVEMAP_DIR/web/vendor/leaflet.css"
+    "$LIVEMAP_DIR/web/icon-192.png"
+    "$LIVEMAP_DIR/web/icon-64.png"
+    "$LIVEMAP_DIR/web/favicon.ico"
 )
 
 for asset_path in "${ASSET_PATHS[@]}"; do
