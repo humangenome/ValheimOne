@@ -12,7 +12,7 @@ public sealed class VersionHandshake : IVersionHandshake
 {
     private const string HelloRpc = "VO_Hello";
     private const string ConfigRpc = "VO_Config";
-    private const string AckRpc = "VO_Ack";
+    internal const string AckRpc = "VO_Ack";
     private const int MaximumConfigChunks = 1024;
 
     private static VersionHandshake? _active;
@@ -20,6 +20,7 @@ public sealed class VersionHandshake : IVersionHandshake
     private readonly ValheimOneConfig _settings;
     private readonly ServerConfig _serverConfig;
     private readonly ModLogger _log;
+    private readonly IReadOnlyList<IVersionHandshakeExtension> _extensions;
     private readonly Dictionary<long, PeerHandshakeState> _peerStates =
         new Dictionary<long, PeerHandshakeState>();
     private readonly List<ZRoutedRpc> _registeredRpcInstances = new List<ZRoutedRpc>();
@@ -34,10 +35,20 @@ public sealed class VersionHandshake : IVersionHandshake
         ValheimOneConfig settings,
         ServerConfig serverConfig,
         ModLogger log)
+        : this(settings, serverConfig, log, Array.Empty<IVersionHandshakeExtension>())
+    {
+    }
+
+    internal VersionHandshake(
+        ValheimOneConfig settings,
+        ServerConfig serverConfig,
+        ModLogger log,
+        IReadOnlyList<IVersionHandshakeExtension> extensions)
     {
         _settings = settings;
         _serverConfig = serverConfig;
         _log = log;
+        _extensions = extensions;
     }
 
     public bool IsAvailable =>
@@ -85,6 +96,11 @@ public sealed class VersionHandshake : IVersionHandshake
         if (ReferenceEquals(_active, this))
         {
             _active = null;
+        }
+
+        foreach (IVersionHandshakeExtension extension in _extensions)
+        {
+            extension.Shutdown();
         }
 
         _settings.ClearOverlay();
@@ -151,6 +167,8 @@ public sealed class VersionHandshake : IVersionHandshake
         {
             active.TrySendClientHello(__instance);
         }
+
+        active.PumpExtensions(__instance);
     }
 
     private static void ZNetOnDestroyPostfix()
@@ -176,6 +194,11 @@ public sealed class VersionHandshake : IVersionHandshake
             routedRpc.Register<ZPackage>(HelloRpc, HandleHello);
             routedRpc.Register<ZPackage>(ConfigRpc, HandleConfig);
             routedRpc.Register<ZPackage>(AckRpc, HandleAck);
+            foreach (IVersionHandshakeExtension extension in _extensions)
+            {
+                extension.RegisterRpcHandlers(routedRpc);
+            }
+
             _registeredRpcInstances.Add(routedRpc);
             _log.Debug("Registered ValheimOne routed RPC handlers.");
         }
@@ -348,6 +371,11 @@ public sealed class VersionHandshake : IVersionHandshake
             $"Peer {PeerLabel(peer)} is modded: handshake ok " +
             $"(ValheimOne v{remoteVersion}, schema {remoteSchema}; {hashStatus}).");
 
+        foreach (IVersionHandshakeExtension extension in _extensions)
+        {
+            extension.OnPeerCompatible(sender);
+        }
+
         if (_serverConfig.Enabled && _serverConfig.SyncConfig.Value)
         {
             QueueConfigPush(state, serverConfig);
@@ -387,7 +415,7 @@ public sealed class VersionHandshake : IVersionHandshake
         state.ResetConfigPush();
         for (int index = 0; index < chunks.Count; index++)
         {
-            state.PendingConfigChunks.Enqueue(new OutboundConfigChunk(chunks.Count, index, chunks[index]));
+            state.ConfigQueue.Enqueue(new OutboundConfigChunk(chunks.Count, index, chunks[index]));
         }
 
         _log.Info(
@@ -506,6 +534,7 @@ public sealed class VersionHandshake : IVersionHandshake
     private void SendAck(ZRoutedRpc routedRpc, long serverPeerId, int index)
     {
         var ack = new ZPackage();
+        ack.Write(ConfigRpc);
         ack.Write(index);
         try
         {
@@ -520,14 +549,16 @@ public sealed class VersionHandshake : IVersionHandshake
     private void HandleAck(long sender, ZPackage package)
     {
         ZNet? net = ZNet.instance;
-        if (!ReferenceEquals(_active, this) || net == null || !net.IsServer())
+        if (!ReferenceEquals(_active, this) || net == null)
         {
             return;
         }
 
+        string channel;
         int index;
         try
         {
+            channel = package.ReadString();
             index = package.ReadInt();
         }
         catch (Exception exception)
@@ -536,22 +567,34 @@ public sealed class VersionHandshake : IVersionHandshake
             return;
         }
 
-        if (!_peerStates.TryGetValue(sender, out PeerHandshakeState? state) ||
-            !state.AwaitingConfigAck ||
-            state.AwaitingConfigIndex != index)
+        if (!string.Equals(channel, ConfigRpc, StringComparison.Ordinal))
         {
-            _log.Warning($"Ignored unexpected {AckRpc} for chunk {index + 1} from peer uid {sender}.");
+            foreach (IVersionHandshakeExtension extension in _extensions)
+            {
+                if (extension.TryHandleAcknowledgement(sender, channel, index))
+                {
+                    return;
+                }
+            }
+
+            _log.Warning(
+                $"Ignored unexpected {AckRpc} for {channel} chunk {index + 1} from peer uid {sender}.");
             return;
         }
 
-        state.AwaitingConfigAck = false;
-        state.AwaitingConfigIndex = -1;
-        state.AcknowledgedConfigChunks++;
-        if (state.PendingConfigChunks.Count == 0)
+        if (!net.IsServer() ||
+            !_peerStates.TryGetValue(sender, out PeerHandshakeState? state) ||
+            !state.ConfigQueue.TryAcknowledge(index))
+        {
+            _log.Warning($"Ignored unexpected {AckRpc} for config chunk {index + 1} from peer uid {sender}.");
+            return;
+        }
+
+        if (state.ConfigQueue.IsIdle)
         {
             _log.Info(
                 $"Config push to peer {PeerLabel(state.Peer)} complete: " +
-                $"{state.AcknowledgedConfigChunks} chunk(s) sent and acknowledged.");
+                $"{state.ConfigQueue.AcknowledgedCount} chunk(s) sent and acknowledged.");
             state.ResetConfigPush();
         }
     }
@@ -572,20 +615,17 @@ public sealed class VersionHandshake : IVersionHandshake
 
         foreach (PeerHandshakeState state in new List<PeerHandshakeState>(_peerStates.Values))
         {
-            if (state.KickIssued || !state.Compatible || state.AwaitingConfigAck ||
-                state.PendingConfigChunks.Count == 0)
+            if (state.KickIssued || !state.Compatible ||
+                !state.ConfigQueue.TryStartNext(out OutboundConfigChunk? chunk) || chunk == null)
             {
                 continue;
             }
 
-            OutboundConfigChunk chunk = state.PendingConfigChunks.Dequeue();
             var package = new ZPackage();
             package.Write(chunk.TotalChunks);
             package.Write(chunk.Index);
             package.Write(chunk.Text);
 
-            state.AwaitingConfigAck = true;
-            state.AwaitingConfigIndex = chunk.Index;
             try
             {
                 routedRpc.InvokeRoutedRPC(state.PeerId, ConfigRpc, package);
@@ -737,6 +777,11 @@ public sealed class VersionHandshake : IVersionHandshake
 
     private void ResetNetworkState()
     {
+        foreach (IVersionHandshakeExtension extension in _extensions)
+        {
+            extension.ResetNetworkState();
+        }
+
         if (_settings.ClearOverlay())
         {
             _log.Info("Server config overlay cleared; local settings restored.");
@@ -746,6 +791,32 @@ public sealed class VersionHandshake : IVersionHandshake
         _clientConfigBuffer = null;
         _clientHelloFailureLogged = false;
         _clientHelloSent = false;
+    }
+
+    private void PumpExtensions(ZNet net)
+    {
+        ZRoutedRpc? routedRpc = ZRoutedRpc.instance;
+        if (routedRpc == null || !IsRegistered(routedRpc))
+        {
+            return;
+        }
+
+        var compatiblePeerIds = new List<long>();
+        if (net.IsServer())
+        {
+            foreach (PeerHandshakeState state in _peerStates.Values)
+            {
+                if (state.Compatible && !state.KickIssued && state.Peer.IsReady())
+                {
+                    compatiblePeerIds.Add(state.PeerId);
+                }
+            }
+        }
+
+        foreach (IVersionHandshakeExtension extension in _extensions)
+        {
+            extension.Pump(net, routedRpc, compatiblePeerIds);
+        }
     }
 
     private static string PeerLabel(ZNetPeer peer)
@@ -784,21 +855,12 @@ public sealed class VersionHandshake : IVersionHandshake
 
         public string RemoteConfigHash { get; set; } = string.Empty;
 
-        public Queue<OutboundConfigChunk> PendingConfigChunks { get; } =
-            new Queue<OutboundConfigChunk>();
-
-        public bool AwaitingConfigAck { get; set; }
-
-        public int AwaitingConfigIndex { get; set; } = -1;
-
-        public int AcknowledgedConfigChunks { get; set; }
+        public AckGatedChunkQueue<OutboundConfigChunk> ConfigQueue { get; } =
+            new AckGatedChunkQueue<OutboundConfigChunk>();
 
         public void ResetConfigPush()
         {
-            PendingConfigChunks.Clear();
-            AwaitingConfigAck = false;
-            AwaitingConfigIndex = -1;
-            AcknowledgedConfigChunks = 0;
+            ConfigQueue.Reset();
         }
     }
 
@@ -817,7 +879,7 @@ public sealed class VersionHandshake : IVersionHandshake
         public int ReceivedChunks { get; set; }
     }
 
-    private readonly struct OutboundConfigChunk
+    private sealed class OutboundConfigChunk : IAcknowledgedChunk
     {
         public OutboundConfigChunk(int totalChunks, int index, string text)
         {
