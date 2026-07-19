@@ -18,7 +18,7 @@ _ValheimOne is a community project and is not affiliated with or endorsed by Iro
 
 > **Official Hosting:** [SurvivalServers.com](https://www.survivalservers.com/services/game_servers/valheim/?utm_source=github&utm_medium=readme&utm_campaign=valheim_one) offers managed Valheim dedicated servers with BepInEx support for ValheimOne.
 
-**Status — unreleased / in development.** The configuration foundation and first gameplay module are implemented; the live map, web console, and status endpoint are in development. There is no packaged release yet, and every feature is disabled by default.
+**Status — unreleased / in development.** The configuration foundation and first gameplay module are implemented; the live map, web console, and status endpoint are in development. There is no packaged release yet. Gameplay features are disabled by default; the `[Server]` transport infrastructure is enabled by default but does not alter gameplay on its own.
 
 ---
 
@@ -57,6 +57,8 @@ Provides an authenticated dashboard for remote server administration. Operators 
 Uses one `BepInEx/config/valheimone.cfg` file as the server ruleset. Typed sections keep Boolean, integer, float, and percentage settings explicit; every feature has its own `Enabled = false` gate, so installing ValheimOne changes nothing until an operator opts in.
 
 The first module exists today: `[Player]` controls base carry weight and the Megingjord bonus. The server owns the configured values, and additional modules follow the same isolated, default-off contract.
+
+The `[Server]` section controls the enforcement chassis. `EnforceMod = false` allows vanilla clients by default, `SyncConfig = true` pushes effective non-client-only settings to compatible ValheimOne clients, and `HandshakeGraceSeconds = 15` sets the wait before a client is classified as vanilla. Setting `EnforceMod = true` requires compatible ValheimOne clients.
 
 ![ValheimOne Server-Enforced Settings](docs/screenshots/server-enforced-settings.png)
 
@@ -102,7 +104,7 @@ Start the dedicated server normally. ValheimOne loads through BepInEx and create
 3. Enable only the feature sections you want and set their typed values.
 4. Start the server again to apply the ruleset.
 
-Every section is opt-in. This `[Player]` example raises base carry weight to 450 and changes the Megingjord bonus to 200:
+Every gameplay section is opt-in. The `[Server]` infrastructure section is the sole default-on exception. This `[Player]` example raises base carry weight to 450 and changes the Megingjord bonus to 200:
 
 ```ini
 [Player]

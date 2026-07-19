@@ -1,10 +1,12 @@
+using HarmonyLib;
+
 namespace ValheimOne.Networking;
 
 public interface IVersionHandshake
 {
     bool IsAvailable { get; }
 
-    void Initialize();
+    void Initialize(Harmony harmony);
 
     void Shutdown();
 }

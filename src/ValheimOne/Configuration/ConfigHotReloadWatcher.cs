@@ -63,7 +63,7 @@ public sealed class ConfigHotReloadWatcher : IDisposable
         Volatile.Write(ref _changeObserved, 1);
 
         // TODO: Debounce editor write bursts, validate a replacement snapshot, and swap values on the Unity thread.
-        // TODO: Reconcile enabled-state changes without an unsafe mid-frame blanket unpatch/repatch cycle.
+        // TODO: Reload validated local values; installed patches already consult effective accessors.
     }
 
     private void OnConfigFileRenamed(object sender, RenamedEventArgs args)

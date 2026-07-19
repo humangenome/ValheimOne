@@ -6,23 +6,25 @@ namespace ValheimOne.Configuration;
 
 public sealed class FeatureDefinition
 {
-    private readonly ConfigFile _config;
+    private readonly ValheimOneConfig _settings;
     private readonly List<IConfigEntry> _keys = new List<IConfigEntry>();
 
     internal FeatureDefinition(
-        ConfigFile config,
+        ValheimOneConfig settings,
         string name,
         string section,
-        FeatureClassification classification)
+        FeatureClassification classification,
+        bool enabledByDefault,
+        string enabledDescription)
     {
-        _config = config;
+        _settings = settings;
         Name = name;
         Section = section;
         Classification = classification;
         Enabled = Bool(
             "Enabled",
-            defaultValue: false,
-            $"Enable the {name} feature. All ValheimOne features are disabled by default.");
+            enabledByDefault,
+            enabledDescription);
     }
 
     public string Name { get; }
@@ -39,8 +41,9 @@ public sealed class FeatureDefinition
     {
         var definition = AddDefinition(key, ConfigValueKind.Boolean, description);
         var accessor = new ConfigEntryBool(
-            _config.Bind(Section, key, defaultValue, new ConfigDescription(description)),
-            definition);
+            _settings.File.Bind(Section, key, defaultValue, new ConfigDescription(description)),
+            definition,
+            _settings);
         _keys.Add(accessor);
         return accessor;
     }
@@ -49,8 +52,9 @@ public sealed class FeatureDefinition
     {
         var definition = AddDefinition(key, ConfigValueKind.Integer, description);
         var accessor = new ConfigEntryInt(
-            _config.Bind(Section, key, defaultValue, new ConfigDescription(description)),
-            definition);
+            _settings.File.Bind(Section, key, defaultValue, new ConfigDescription(description)),
+            definition,
+            _settings);
         _keys.Add(accessor);
         return accessor;
     }
@@ -59,8 +63,9 @@ public sealed class FeatureDefinition
     {
         var definition = AddDefinition(key, ConfigValueKind.Float, description);
         var accessor = new ConfigEntryFloat(
-            _config.Bind(Section, key, defaultValue, new ConfigDescription(description)),
-            definition);
+            _settings.File.Bind(Section, key, defaultValue, new ConfigDescription(description)),
+            definition,
+            _settings);
         _keys.Add(accessor);
         return accessor;
     }
@@ -71,10 +76,26 @@ public sealed class FeatureDefinition
             description + " Stored as a modifier percent: new = base * (1 + value / 100); values <= -100 yield 0.";
         var definition = AddDefinition(key, ConfigValueKind.Percent, percentDescription);
         var accessor = new ConfigEntryPercent(
-            _config.Bind(Section, key, defaultValue, new ConfigDescription(percentDescription)),
-            definition);
+            _settings.File.Bind(Section, key, defaultValue, new ConfigDescription(percentDescription)),
+            definition,
+            _settings);
         _keys.Add(accessor);
         return accessor;
+    }
+
+    public bool TryGetKey(string key, out IConfigEntry? entry)
+    {
+        foreach (IConfigEntry candidate in _keys)
+        {
+            if (string.Equals(candidate.Definition.Name, key, StringComparison.OrdinalIgnoreCase))
+            {
+                entry = candidate;
+                return true;
+            }
+        }
+
+        entry = null;
+        return false;
     }
 
     private ConfigKeyDefinition AddDefinition(string key, ConfigValueKind kind, string description)
@@ -87,6 +108,6 @@ public sealed class FeatureDefinition
             }
         }
 
-        return new ConfigKeyDefinition(key, kind, description);
+        return new ConfigKeyDefinition(Section, key, kind, description);
     }
 }

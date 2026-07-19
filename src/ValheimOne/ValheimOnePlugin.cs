@@ -19,6 +19,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
 
     private Harmony? _harmony;
     private ConfigHotReloadWatcher? _configWatcher;
+    private IVersionHandshake? _versionHandshake;
     private ModLogger? _log;
 
     private void Awake()
@@ -28,9 +29,11 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
 
         string configPath = Path.Combine(Paths.ConfigPath, "valheimone.cfg");
         var settings = new ValheimOneConfig(configPath);
+        var serverConfig = new ServerConfig(settings.Features);
         IReadOnlyList<IFeatureModule> modules = new IFeatureModule[]
         {
             new PlayerCarryWeightModule(settings.Features),
+            new ValheimOne.LiveMap.LiveMapModule(settings.Features),
         };
 
         settings.WriteDefaultsIfNeeded();
@@ -38,15 +41,14 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
         _harmony = new Harmony(PluginGuid);
         foreach (IFeatureModule module in modules)
         {
-            if (!module.IsEnabled)
-            {
-                _log.Debug($"Feature disabled: {module.Section}");
-                continue;
-            }
-
             module.ApplyPatches(_harmony);
-            _log.Info($"Feature enabled: {module.Section} ({module.Classification})");
+            string state = module.IsEnabled ? "enabled" : "disabled";
+            _log.Info(
+                $"Feature patches ready: {module.Section} ({module.Classification}, {state}).");
         }
+
+        _versionHandshake = new VersionHandshake(settings, serverConfig, _log);
+        _versionHandshake.Initialize(_harmony);
 
         _configWatcher = new ConfigHotReloadWatcher(configPath, _log);
         _configWatcher.Start();
@@ -57,6 +59,9 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
     {
         _configWatcher?.Dispose();
         _configWatcher = null;
+
+        _versionHandshake?.Shutdown();
+        _versionHandshake = null;
 
         _harmony?.UnpatchSelf();
         _harmony = null;
@@ -77,7 +82,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
         {
             log.Warning(
                 $"This build targets Valheim {VersionInfo.SupportedGameVersion}; " +
-                $"detected {detectedVersion}. Disabled features remain unpatched.");
+                $"detected {detectedVersion}. Verify compatibility before enabling gameplay features.");
         }
     }
 }

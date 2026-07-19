@@ -10,5 +10,8 @@ All notable changes to ValheimOne will be documented in this file. This project 
 - Original typed, section-based configuration framework with default-off feature gates and modifier-percent support.
 - Central feature registry with server-authoritative, client-required, and client-only classifications.
 - Working opt-in `PlayerCarryWeight` Harmony module as the first end-to-end gameplay example.
-- Safe game-version detection, startup diagnostics, config-watcher stub, and version-handshake contract placeholder.
+- Safe game-version detection, startup diagnostics, and a config-watcher stub.
+- Routed-RPC version enforcement with an optional vanilla-client gate and grace period.
+- Ack-gated server config transfer with non-persistent, non-ClientOnly client overlays.
+- Startup-installed, runtime-gated feature patches so synced config can enable client modules safely.
 - Build script, project documentation, contribution guidance, and MIT license.

@@ -36,8 +36,7 @@ public sealed class PlayerCarryWeightModule : IFeatureModule
 
     public void ApplyPatches(Harmony harmony)
     {
-        // Carry weight changes simulation and belongs to the server ruleset. Vanilla clients do not
-        // see this patch without ValheimOne; the server/client version handshake arrives in a later phase.
+        // The patch remains installed while the effective Enabled accessor decides whether it acts.
         _active = this;
 
         var original = AccessTools.Method(typeof(Player), nameof(Player.GetMaxCarryWeight), Type.EmptyTypes)
