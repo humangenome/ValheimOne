@@ -11,6 +11,8 @@ namespace ValheimOne.LiveMap;
 
 internal sealed class LiveMapHttpServer
 {
+    private const int MaximumRequestBodyBytes = 8 * 1024;
+
     private enum ViewLevel
     {
         Admin,
@@ -29,12 +31,16 @@ internal sealed class LiveMapHttpServer
     private readonly Func<string> _getFogMode;
     private readonly FogTracker _fogTracker;
     private readonly WorldMapRenderer _renderer;
+    private readonly LiveMapConfig _config;
+    private readonly ConsoleBridge? _consoleBridge;
+    private readonly LogRingBuffer? _logRingBuffer;
     private readonly ModLogger _log;
     private readonly object _fogPngLock = new object();
     private HttpListener? _listener;
     private Thread? _listenerThread;
     private byte[]? _fogPng;
     private long _fogPngRevision = -1;
+    private bool _consoleTokenWarningLogged;
     private volatile bool _stopping;
 
     public LiveMapHttpServer(
@@ -50,6 +56,9 @@ internal sealed class LiveMapHttpServer
         Func<string> getFogMode,
         FogTracker fogTracker,
         WorldMapRenderer renderer,
+        LiveMapConfig config,
+        ConsoleBridge? consoleBridge,
+        LogRingBuffer? logRingBuffer,
         ModLogger log)
     {
         _port = port;
@@ -64,6 +73,9 @@ internal sealed class LiveMapHttpServer
         _getFogMode = getFogMode;
         _fogTracker = fogTracker;
         _renderer = renderer;
+        _config = config;
+        _consoleBridge = consoleBridge;
+        _logRingBuffer = logRingBuffer;
         _log = log;
     }
 
@@ -72,6 +84,15 @@ internal sealed class LiveMapHttpServer
         if (_listener != null)
         {
             return;
+        }
+
+        if (!_consoleTokenWarningLogged &&
+            _config.ConsoleEnabled &&
+            string.IsNullOrEmpty(_config.AccessToken))
+        {
+            _consoleTokenWarningLogged = true;
+            _log.Warning(
+                "[LiveMap] web console requires a non-empty AccessToken; console endpoints disabled");
         }
 
         string preferredHost = string.IsNullOrEmpty(_bindIp) ? "*" : FormatHost(_bindIp);
@@ -211,54 +232,112 @@ internal sealed class LiveMapHttpServer
         response.KeepAlive = false;
         try
         {
-            if (!TryResolveView(context.Request, out ViewLevel viewLevel))
+            HttpListenerRequest request = context.Request;
+            string path = request.Url?.AbsolutePath ?? "/";
+            bool isConsolePath = IsConsolePath(path);
+            ViewLevel viewLevel;
+            if (isConsolePath)
             {
-                WriteJson(response, HttpStatusCode.Unauthorized, "{\"error\":\"unauthorized\"}");
-                return;
+                if (!HasConsoleToken(request))
+                {
+                    WriteJson(response, HttpStatusCode.Unauthorized, "{\"error\":\"unauthorized\"}");
+                    return;
+                }
+
+                if (!_config.ConsoleEnabled || _consoleBridge == null || _logRingBuffer == null)
+                {
+                    WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+                    return;
+                }
+
+                viewLevel = ViewLevel.Admin;
+            }
+            else if (!TryResolveView(request, out viewLevel))
+            {
+                if (path == "/api/status" && _config.StatusPublic)
+                {
+                    viewLevel = ViewLevel.Public;
+                }
+                else
+                {
+                    WriteJson(response, HttpStatusCode.Unauthorized, "{\"error\":\"unauthorized\"}");
+                    return;
+                }
             }
 
-            if (!string.Equals(context.Request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase))
-            {
-                WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
-                return;
-            }
-
-            string path = context.Request.Url?.AbsolutePath ?? "/";
-            if (path == "/")
+            bool isGet = string.Equals(request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase);
+            bool isPost = string.Equals(request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase);
+            if (isGet && path == "/")
             {
                 ServeIndex(response, viewLevel);
             }
-            else if (path.StartsWith("/assets/", StringComparison.Ordinal))
+            else if (isGet && path.StartsWith("/assets/", StringComparison.Ordinal))
             {
                 ServeAsset(response, path.Substring("/assets/".Length));
             }
-            else if (path == "/api/status")
+            else if (isGet && path == "/api/status")
             {
                 ServeStatus(response, viewLevel);
             }
-            else if (path == "/api/players")
+            else if (isGet && path == "/api/players")
             {
                 ServePlayers(response, viewLevel);
             }
-            else if (path == "/api/pois")
+            else if (isGet && path == "/api/pois")
             {
                 ServePois(response, viewLevel);
             }
-            else if (path == "/api/pins")
+            else if (isGet && path == "/api/pins")
             {
                 ServePins(response);
             }
-            else if (path.StartsWith("/tiles/", StringComparison.Ordinal))
+            else if (isGet && path.StartsWith("/tiles/", StringComparison.Ordinal))
             {
                 ServeTile(response, path.Substring("/tiles/".Length));
             }
-            else if (path == "/base.png")
+            else if (isGet && path == "/base.png")
             {
                 ServeBaseImage(response);
             }
-            else if (path == "/fog.png")
+            else if (isGet && path == "/fog.png")
             {
                 ServeFogImage(response, viewLevel);
+            }
+            else if (isPost && path == "/api/console/exec")
+            {
+                ServeConsoleExec(request, response);
+            }
+            else if (isGet && path == "/api/console/log")
+            {
+                ServeConsoleLog(request, response);
+            }
+            else if (isGet && path == "/api/console/meta")
+            {
+                ServeConsoleMeta(response);
+            }
+            else if (isPost && path == "/api/admin/kick")
+            {
+                ServeAdminAction(request, response, _consoleBridge!.Kick);
+            }
+            else if (isPost && path == "/api/admin/ban")
+            {
+                ServeAdminAction(request, response, _consoleBridge!.Ban);
+            }
+            else if (isPost && path == "/api/admin/unban")
+            {
+                ServeAdminAction(request, response, _consoleBridge!.Unban);
+            }
+            else if (isGet && path == "/api/admin/banlist")
+            {
+                ServeBanList(response);
+            }
+            else if (isPost && path == "/api/admin/save")
+            {
+                ServeSave(response);
+            }
+            else if (isGet && path == "/api/stats")
+            {
+                ServeStats(response);
             }
             else
             {
@@ -298,6 +377,28 @@ internal sealed class LiveMapHttpServer
         isAdmin |= FixedTimeEquals(_accessToken, headerToken);
         viewLevel = isAdmin ? ViewLevel.Admin : ViewLevel.Public;
         return isAdmin || _publicView;
+    }
+
+    private bool HasConsoleToken(HttpListenerRequest request)
+    {
+        string accessToken = _config.AccessToken;
+        if (string.IsNullOrEmpty(accessToken))
+        {
+            return false;
+        }
+
+        string queryToken = request.QueryString["token"] ?? string.Empty;
+        string headerToken = request.Headers["X-LiveMap-Token"] ?? string.Empty;
+        bool matches = FixedTimeEquals(accessToken, queryToken);
+        matches |= FixedTimeEquals(accessToken, headerToken);
+        return matches;
+    }
+
+    private static bool IsConsolePath(string path)
+    {
+        return path.StartsWith("/api/console/", StringComparison.Ordinal) ||
+               path.StartsWith("/api/admin/", StringComparison.Ordinal) ||
+               path == "/api/stats";
     }
 
     private void ServeIndex(HttpListenerResponse response, ViewLevel viewLevel)
@@ -372,7 +473,11 @@ internal sealed class LiveMapHttpServer
             }
         }
 
-        var json = new StringBuilder(320);
+        bool consoleAvailable = viewLevel == ViewLevel.Admin &&
+                                _config.ConsoleEnabled &&
+                                !string.IsNullOrEmpty(_config.AccessToken) &&
+                                _consoleBridge != null;
+        var json = new StringBuilder(336);
         json.Append('{');
         json.Append("\"serverName\":").Append(JsonWriter.Quote(snapshot.ServerName));
         json.Append(",\"worldName\":").Append(JsonWriter.Quote(snapshot.WorldName));
@@ -381,6 +486,7 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"players\":").Append(visiblePlayers.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"view\":").Append(JsonWriter.Quote(
             viewLevel == ViewLevel.Admin ? "admin" : "public"));
+        json.Append(",\"console\":").Append(consoleAvailable ? "true" : "false");
         json.Append(",\"map\":{");
         json.Append("\"state\":").Append(JsonWriter.Quote(_renderer.StateName));
         json.Append(",\"progress\":").Append(JsonWriter.Number(_renderer.Progress));
@@ -395,6 +501,211 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"revision\":").Append(fogRevision.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"size\":").Append(FogTracker.Size.ToString(CultureInfo.InvariantCulture));
         json.Append("}}}");
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private void ServeConsoleExec(HttpListenerRequest request, HttpListenerResponse response)
+    {
+        if (!TryReadRequiredString(request, response, "command", "command is required", out string line))
+        {
+            return;
+        }
+
+        int separator = FindWhitespace(line);
+        string commandName = separator < 0
+            ? line.ToLowerInvariant()
+            : line.Substring(0, separator).ToLowerInvariant();
+        if (!_config.AllowAllCommands && !_config.ConsoleWhitelist.Contains(commandName))
+        {
+            WriteJson(
+                response,
+                HttpStatusCode.Forbidden,
+                "{\"ok\":false,\"error\":\"command not whitelisted\"}");
+            return;
+        }
+
+        ConsoleExecResult result = _consoleBridge!.ExecuteCommand(line);
+        if (!result.Ok)
+        {
+            HttpStatusCode status = string.Equals(
+                result.Error,
+                "unknown command",
+                StringComparison.Ordinal)
+                ? HttpStatusCode.BadRequest
+                : HttpStatusCode.OK;
+            WriteJson(
+                response,
+                status,
+                "{\"ok\":false,\"error\":" + JsonWriter.Quote(result.Error) + "}");
+            return;
+        }
+
+        var json = new StringBuilder(32 + (result.Output.Count * 64));
+        json.Append("{\"ok\":true,\"output\":[");
+        for (int index = 0; index < result.Output.Count; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            json.Append(JsonWriter.Quote(result.Output[index]));
+        }
+
+        json.Append("]}");
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private void ServeConsoleLog(HttpListenerRequest request, HttpListenerResponse response)
+    {
+        long cursor = ParseLong(request.QueryString["cursor"], 0L);
+        long requestedMaximum = ParseLong(request.QueryString["max"], 200L);
+        int maximum = (int)Math.Max(1L, Math.Min(500L, requestedMaximum));
+        var entries = new List<LogEntry>(maximum);
+        long latestCursor = _logRingBuffer!.CopyAfter(cursor, maximum, entries);
+        var json = new StringBuilder(32 + (entries.Count * 128));
+        json.Append("{\"cursor\":");
+        json.Append(latestCursor.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"lines\":[");
+        for (int index = 0; index < entries.Count; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            LogEntry entry = entries[index];
+            json.Append('{');
+            json.Append("\"seq\":").Append(entry.Seq.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"time\":").Append(entry.UnixMs.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"level\":").Append(JsonWriter.Quote(entry.Level));
+            json.Append(",\"source\":").Append(JsonWriter.Quote(entry.Source));
+            json.Append(",\"text\":").Append(JsonWriter.Quote(entry.Message));
+            json.Append('}');
+        }
+
+        json.Append("]}");
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private void ServeConsoleMeta(HttpListenerResponse response)
+    {
+        bool allowAll = _config.AllowAllCommands;
+        var whitelist = new List<string>(_config.ConsoleWhitelist);
+        whitelist.Sort(StringComparer.Ordinal);
+        List<ConsoleCommandInfo> commands = _consoleBridge!.GetKnownCommands();
+        var json = new StringBuilder(64 + (whitelist.Count * 16) + (commands.Count * 96));
+        json.Append("{\"allowAll\":").Append(allowAll ? "true" : "false");
+        json.Append(",\"whitelist\":[");
+        for (int index = 0; index < whitelist.Count; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            json.Append(JsonWriter.Quote(whitelist[index]));
+        }
+
+        json.Append("],\"commands\":[");
+        bool needsComma = false;
+        for (int index = 0; index < commands.Count; index++)
+        {
+            ConsoleCommandInfo command = commands[index];
+            if (!allowAll && !whitelist.Contains(command.Name.ToLowerInvariant()))
+            {
+                continue;
+            }
+
+            if (needsComma)
+            {
+                json.Append(',');
+            }
+
+            json.Append('{');
+            json.Append("\"name\":").Append(JsonWriter.Quote(command.Name));
+            json.Append(",\"description\":").Append(JsonWriter.Quote(command.Description));
+            json.Append(",\"cheat\":").Append(command.IsCheat ? "true" : "false");
+            json.Append('}');
+            needsComma = true;
+        }
+
+        json.Append("]}");
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private static void ServeAdminAction(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        Func<string, ConsoleActionResult> action)
+    {
+        if (!TryReadRequiredString(request, response, "player", "player is required", out string player))
+        {
+            return;
+        }
+
+        ConsoleActionResult result = action(player);
+        string json = result.Ok
+            ? "{\"ok\":true}"
+            : "{\"ok\":false,\"error\":" + JsonWriter.Quote(result.Error) + "}";
+        WriteJson(response, HttpStatusCode.OK, json);
+    }
+
+    private void ServeBanList(HttpListenerResponse response)
+    {
+        ConsoleBanListResult result = _consoleBridge!.BanList();
+        if (!result.Ok)
+        {
+            WriteJson(
+                response,
+                HttpStatusCode.OK,
+                "{\"ok\":false,\"error\":" + JsonWriter.Quote(result.Error) + "}");
+            return;
+        }
+
+        var json = new StringBuilder(16 + (result.Banned.Count * 24));
+        json.Append("{\"banned\":[");
+        for (int index = 0; index < result.Banned.Count; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            json.Append(JsonWriter.Quote(result.Banned[index]));
+        }
+
+        json.Append("]}");
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private void ServeSave(HttpListenerResponse response)
+    {
+        ConsoleSaveResult result = _consoleBridge!.Save();
+        string json = result.Ok
+            ? "{\"ok\":true,\"alreadySaving\":" + (result.AlreadySaving ? "true" : "false") + "}"
+            : "{\"ok\":false,\"error\":" + JsonWriter.Quote(result.Error) + "}";
+        WriteJson(response, HttpStatusCode.OK, json);
+    }
+
+    private void ServeStats(HttpListenerResponse response)
+    {
+        StatsSnapshot stats = _consoleBridge!.Stats;
+        LiveMapSnapshot snapshot = _getSnapshot();
+        var json = new StringBuilder(256);
+        json.Append('{');
+        json.Append("\"uptimeSeconds\":").Append(JsonWriter.Number(stats.UptimeSeconds));
+        json.Append(",\"players\":").Append(stats.Players.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"peers\":").Append(stats.Peers.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"zdoCount\":").Append(stats.ZdoCount.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"monoHeapBytes\":").Append(stats.MonoHeapBytes.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"frameAvgMs\":").Append(JsonWriter.Number(stats.FrameAvgMs));
+        json.Append(",\"frameMaxMs\":").Append(JsonWriter.Number(stats.FrameMaxMs));
+        json.Append(",\"snapshotUnixMs\":").Append(stats.SnapshotUnixMs.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"worldName\":").Append(JsonWriter.Quote(snapshot.WorldName));
+        json.Append(",\"day\":").Append(snapshot.Day.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"timeOfDay\":").Append(JsonWriter.Number(snapshot.TimeOfDay));
+        json.Append('}');
         WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
 
@@ -659,6 +970,255 @@ internal sealed class LiveMapHttpServer
                int.TryParse(coordinates.Substring(0, separator), NumberStyles.None, CultureInfo.InvariantCulture, out x) &&
                int.TryParse(coordinates.Substring(separator + 1), NumberStyles.None, CultureInfo.InvariantCulture, out y) &&
                zoom >= 0 && x >= 0 && y >= 0;
+    }
+
+    private static bool TryReadRequiredString(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        string propertyName,
+        string requiredError,
+        out string value)
+    {
+        if (!TryReadStringProperty(request, propertyName, out value, out bool tooLarge))
+        {
+            if (tooLarge)
+            {
+                WriteJson(
+                    response,
+                    HttpStatusCode.RequestEntityTooLarge,
+                    "{\"ok\":false,\"error\":\"payload too large\"}");
+            }
+            else
+            {
+                WriteJson(
+                    response,
+                    HttpStatusCode.BadRequest,
+                    "{\"ok\":false,\"error\":" + JsonWriter.Quote(requiredError) + "}");
+            }
+
+            return false;
+        }
+
+        value = value.Trim();
+        if (value.Length > 0)
+        {
+            return true;
+        }
+
+        WriteJson(
+            response,
+            HttpStatusCode.BadRequest,
+            "{\"ok\":false,\"error\":" + JsonWriter.Quote(requiredError) + "}");
+        return false;
+    }
+
+    private static bool TryReadStringProperty(
+        HttpListenerRequest request,
+        string propertyName,
+        out string value,
+        out bool tooLarge)
+    {
+        value = string.Empty;
+        tooLarge = request.ContentLength64 > MaximumRequestBodyBytes;
+        if (tooLarge)
+        {
+            return false;
+        }
+
+        var bytes = new byte[MaximumRequestBodyBytes + 1];
+        int length = 0;
+        while (length < bytes.Length)
+        {
+            int read = request.InputStream.Read(bytes, length, bytes.Length - length);
+            if (read == 0)
+            {
+                break;
+            }
+
+            length += read;
+        }
+
+        if (length > MaximumRequestBodyBytes)
+        {
+            tooLarge = true;
+            return false;
+        }
+
+        string json = Encoding.UTF8.GetString(bytes, 0, length);
+        string property = "\"" + propertyName + "\"";
+        int searchIndex = 0;
+        while (searchIndex < json.Length)
+        {
+            int propertyIndex = json.IndexOf(property, searchIndex, StringComparison.Ordinal);
+            if (propertyIndex < 0)
+            {
+                return false;
+            }
+
+            int valueIndex = propertyIndex + property.Length;
+            SkipJsonWhitespace(json, ref valueIndex);
+            if (valueIndex >= json.Length || json[valueIndex] != ':')
+            {
+                searchIndex = valueIndex;
+                continue;
+            }
+
+            valueIndex++;
+            SkipJsonWhitespace(json, ref valueIndex);
+            if (TryParseJsonString(json, valueIndex, out value))
+            {
+                return true;
+            }
+
+            searchIndex = valueIndex;
+        }
+
+        return false;
+    }
+
+    private static bool TryParseJsonString(string json, int startIndex, out string value)
+    {
+        value = string.Empty;
+        if (startIndex >= json.Length || json[startIndex] != '"')
+        {
+            return false;
+        }
+
+        var output = new StringBuilder();
+        for (int index = startIndex + 1; index < json.Length; index++)
+        {
+            char character = json[index];
+            if (character == '"')
+            {
+                value = output.ToString();
+                return true;
+            }
+
+            if (character < 0x20)
+            {
+                return false;
+            }
+
+            if (character != '\\')
+            {
+                output.Append(character);
+                continue;
+            }
+
+            index++;
+            if (index >= json.Length)
+            {
+                return false;
+            }
+
+            switch (json[index])
+            {
+                case '"':
+                    output.Append('"');
+                    break;
+                case '\\':
+                    output.Append('\\');
+                    break;
+                case '/':
+                    output.Append('/');
+                    break;
+                case 'b':
+                    output.Append('\b');
+                    break;
+                case 'f':
+                    output.Append('\f');
+                    break;
+                case 'n':
+                    output.Append('\n');
+                    break;
+                case 'r':
+                    output.Append('\r');
+                    break;
+                case 't':
+                    output.Append('\t');
+                    break;
+                case 'u':
+                    if (index + 4 >= json.Length ||
+                        !TryParseHexCharacter(json, index + 1, out char escapedCharacter))
+                    {
+                        return false;
+                    }
+
+                    output.Append(escapedCharacter);
+                    index += 4;
+                    break;
+                default:
+                    return false;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryParseHexCharacter(string value, int startIndex, out char character)
+    {
+        int codePoint = 0;
+        for (int index = 0; index < 4; index++)
+        {
+            char digit = value[startIndex + index];
+            int parsed;
+            if (digit >= '0' && digit <= '9')
+            {
+                parsed = digit - '0';
+            }
+            else if (digit >= 'a' && digit <= 'f')
+            {
+                parsed = digit - 'a' + 10;
+            }
+            else if (digit >= 'A' && digit <= 'F')
+            {
+                parsed = digit - 'A' + 10;
+            }
+            else
+            {
+                character = '\0';
+                return false;
+            }
+
+            codePoint = (codePoint << 4) | parsed;
+        }
+
+        character = (char)codePoint;
+        return true;
+    }
+
+    private static void SkipJsonWhitespace(string value, ref int index)
+    {
+        while (index < value.Length)
+        {
+            char character = value[index];
+            if (character != ' ' && character != '\t' && character != '\r' && character != '\n')
+            {
+                return;
+            }
+
+            index++;
+        }
+    }
+
+    private static int FindWhitespace(string value)
+    {
+        for (int index = 0; index < value.Length; index++)
+        {
+            if (char.IsWhiteSpace(value[index]))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private static long ParseLong(string? value, long fallback)
+    {
+        return long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsed)
+            ? parsed
+            : fallback;
     }
 
     private static void WriteJson(HttpListenerResponse response, HttpStatusCode status, string json)

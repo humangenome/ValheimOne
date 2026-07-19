@@ -14,6 +14,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private FogTracker? _fogTracker;
     private MapTableReader? _mapTableReader;
     private LiveMapHttpServer? _httpServer;
+    private LogRingBuffer? _logRingBuffer;
+    private ConsoleBridge? _consoleBridge;
     private volatile LiveMapSnapshot _snapshot = LiveMapSnapshot.Empty;
     private volatile PoiCatalog _poiCatalog = PoiCatalog.Empty;
     private volatile string _fogMode = "off";
@@ -25,6 +27,10 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private bool _stopped;
 
     public static LiveMapBehaviour? Instance { get; private set; }
+
+    internal LogRingBuffer? LogRingBuffer => _logRingBuffer;
+
+    internal ConsoleBridge? ConsoleBridge => _consoleBridge;
 
     public static void Initialize(
         GameObject host,
@@ -64,6 +70,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             return;
         }
 
+        _consoleBridge?.Pump();
+
         float now = Time.realtimeSinceStartup;
         _mapTableReader?.Tick(now, _fogMode == "explored");
         if (now >= _nextPlayerUpdate)
@@ -101,6 +109,26 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         if (world == null)
         {
             return;
+        }
+
+        if (config.ConsoleEnabled && _logRingBuffer == null)
+        {
+            try
+            {
+                _logRingBuffer = new LogRingBuffer(config.ConsoleLogLines);
+                _logRingBuffer.Start();
+                _consoleBridge = new ConsoleBridge(_logRingBuffer, log);
+            }
+            catch (Exception exception)
+            {
+                _consoleBridge?.Stop();
+                _consoleBridge = null;
+                _logRingBuffer?.Stop();
+                _logRingBuffer = null;
+                log.Warning(
+                    $"[LiveMap] web console could not start: " +
+                    $"{exception.GetType().Name}: {exception.Message}");
+            }
         }
 
         _worldName = string.IsNullOrWhiteSpace(world.m_name) ? "world" : world.m_name;
@@ -159,6 +187,9 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             () => _fogMode,
             _fogTracker,
             _renderer,
+            config,
+            _consoleBridge,
+            _logRingBuffer,
             log);
         _httpServer.Start();
 
@@ -249,6 +280,10 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _stopped = permanently;
         _httpServer?.Stop();
         _httpServer = null;
+        _consoleBridge?.Stop();
+        _consoleBridge = null;
+        _logRingBuffer?.Stop();
+        _logRingBuffer = null;
         _mapTableReader?.Stop();
         _mapTableReader = null;
         _fogTracker?.Stop();

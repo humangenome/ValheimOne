@@ -56,6 +56,27 @@ public sealed class LiveMapModule : IFeatureModule
             "off",
             "Fog of war for the map view: off (full map), trails (areas players have traveled), " +
             "explored (player trails plus cartography-table exploration data).");
+        ConfigEntryBool consoleEnabled = _feature.Bool(
+            "ConsoleEnabled",
+            false,
+            "Enable the web admin console API and dashboard console tab.");
+        ConfigEntryString consoleWhitelist = _feature.String(
+            "ConsoleWhitelist",
+            "say save kick ban unban banned lodbias sleep",
+            "Space-separated list of console commands the web console may execute.");
+        ConfigEntryBool allowAllCommands = _feature.Bool(
+            "AllowAllCommands",
+            false,
+            "Allow the web console to execute any console command, bypassing ConsoleWhitelist.");
+        ConfigEntryInt consoleLogLines = _feature.Int(
+            "ConsoleLogLines",
+            500,
+            "Server log ring buffer size for the web console (clamped 50..5000).");
+        ConfigEntryBool statusPublic = _feature.Bool(
+            "StatusPublic",
+            true,
+            "Serve /api/status without an access token even when the map itself is token-locked " +
+            "(for hosting-panel queries).");
         _config = new LiveMapConfig(
             port,
             textureSize,
@@ -65,7 +86,12 @@ public sealed class LiveMapModule : IFeatureModule
             accessToken,
             publicView,
             publicShowPlayerNames,
-            fogMode);
+            fogMode,
+            consoleEnabled,
+            consoleWhitelist,
+            allowAllCommands,
+            consoleLogLines,
+            statusPublic);
     }
 
     public string Name => "Live map";
