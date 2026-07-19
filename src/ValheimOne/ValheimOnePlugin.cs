@@ -64,6 +64,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
             new DeathPenaltyModule(settings.Features),
             mapSharingModule,
             new ValheimOne.LiveMap.LiveMapModule(settings.Features),
+            new ValheimOne.Query.QueryModule(settings.Features),
         };
 
         settings.WriteDefaultsIfNeeded();
