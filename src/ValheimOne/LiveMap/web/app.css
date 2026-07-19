@@ -96,17 +96,39 @@ input {
     font-size: 12px;
 }
 
-.offline-badge {
+.brand-copy {
+    min-width: 0;
+}
+
+.brand-badges {
+    display: grid;
+    justify-items: end;
+    gap: 4px;
     margin-left: auto;
+}
+
+.public-view-badge,
+.offline-badge {
     padding: 3px 7px;
-    border: 1px solid rgb(248 81 73 / 35%);
     border-radius: 999px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.055em;
+    line-height: 1.2;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.public-view-badge {
+    border: 1px solid rgb(139 148 158 / 30%);
+    background: rgb(139 148 158 / 7%);
+    color: #9da7b3;
+}
+
+.offline-badge {
+    border: 1px solid rgb(248 81 73 / 35%);
     background: rgb(248 81 73 / 9%);
     color: #ff938a;
-    font-size: 10px;
-    font-weight: 650;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
 }
 
 .server-details {
@@ -359,6 +381,266 @@ input {
     color: #484f58;
 }
 
+.layers-control {
+    width: 174px;
+    overflow: hidden;
+    border: 1px solid rgb(48 54 61 / 92%);
+    border-radius: 8px;
+    background: rgb(18 24 31 / 94%);
+    box-shadow: 0 6px 22px rgb(0 0 0 / 28%);
+    color: var(--text);
+    backdrop-filter: blur(7px);
+}
+
+.layers-control.is-collapsed {
+    width: 92px;
+}
+
+.layers-toggle {
+    display: flex;
+    width: 100%;
+    min-height: 34px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 10px;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+}
+
+.layers-toggle:hover,
+.layers-toggle:focus-visible {
+    outline: none;
+    background: rgb(255 255 255 / 4%);
+}
+
+.layers-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.layers-chevron {
+    color: var(--secondary);
+    font-size: 13px;
+    line-height: 1;
+}
+
+.layers-rows {
+    padding: 3px 7px 7px;
+    border-top: 1px solid rgb(48 54 61 / 72%);
+}
+
+.layers-rows[hidden] {
+    display: none;
+}
+
+.layer-row {
+    display: grid;
+    min-height: 29px;
+    grid-template-columns: 15px 18px minmax(0, 1fr);
+    align-items: center;
+    gap: 7px;
+    padding: 3px 4px;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.layer-row:hover {
+    background: rgb(255 255 255 / 3%);
+}
+
+.layer-row input {
+    position: relative;
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    appearance: none;
+    border: 1px solid #4b5561;
+    border-radius: 3px;
+    background: #0d1117;
+    cursor: pointer;
+}
+
+.layer-row input:checked {
+    border-color: #568dc1;
+    background: #2d6da7;
+}
+
+.layer-row input:checked::after {
+    position: absolute;
+    top: 1px;
+    left: 4px;
+    width: 3px;
+    height: 7px;
+    border: solid #f7fbff;
+    border-width: 0 1.5px 1.5px 0;
+    content: "";
+    transform: rotate(45deg);
+}
+
+.layer-row input:focus-visible {
+    outline: 2px solid rgb(77 159 236 / 50%);
+    outline-offset: 1px;
+}
+
+.layer-swatch {
+    display: grid;
+    width: 18px;
+    height: 18px;
+    place-items: center;
+    color: #b6c1cc;
+    font-size: 11px;
+    font-weight: 750;
+    line-height: 1;
+}
+
+.layer-swatch-players {
+    color: var(--accent);
+    font-size: 9px;
+}
+
+.layer-swatch-pins {
+    color: #e1a54b;
+    font-size: 15px;
+}
+
+.layer-swatch-spawn {
+    color: #9ac7e7;
+}
+
+.layer-swatch-trader {
+    color: #d9b65d;
+}
+
+.layer-swatch-boss {
+    color: #cb8580;
+}
+
+.layer-swatch-dungeon {
+    color: #a59bc9;
+}
+
+.layer-swatch-spawner {
+    color: #cb8fa8;
+    font-size: 16px;
+}
+
+.layer-swatch-misc,
+.layer-swatch-other {
+    color: #98a2ad;
+    font-size: 9px;
+}
+
+.layer-swatch-fog {
+    color: #778391;
+    font-size: 16px;
+}
+
+.layer-label {
+    overflow: hidden;
+    color: #c9d1d9;
+    font-size: 11px;
+    font-weight: 550;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.fog-overlay {
+    image-rendering: auto;
+    pointer-events: none;
+}
+
+.poi-div-icon,
+.pin-div-icon {
+    border: 0;
+    background: transparent;
+}
+
+.poi-marker-shell {
+    display: grid;
+    width: 20px;
+    height: 20px;
+    place-items: center;
+    border: 1px solid rgb(118 132 146 / 58%);
+    border-radius: 6px;
+    background: rgb(13 17 23 / 90%);
+    box-shadow: 0 2px 7px rgb(0 0 0 / 34%);
+    color: #b8c3ce;
+    font-size: 12px;
+    font-weight: 750;
+    line-height: 1;
+}
+
+.poi-spawn .poi-marker-shell {
+    border-color: rgb(104 166 205 / 68%);
+    color: #a7d2ed;
+}
+
+.poi-trader .poi-marker-shell {
+    border-color: rgb(185 148 66 / 68%);
+    color: #e1c16f;
+}
+
+.poi-boss .poi-marker-shell {
+    border-color: rgb(174 91 85 / 72%);
+    color: #db918b;
+    font-size: 11px;
+}
+
+.poi-dungeon .poi-marker-shell {
+    border-color: rgb(118 104 165 / 70%);
+    color: #b1a6d7;
+}
+
+.poi-spawner .poi-marker-shell {
+    border-color: rgb(169 91 125 / 66%);
+    color: #d99ab5;
+    font-size: 17px;
+}
+
+.poi-misc .poi-marker-shell,
+.poi-other .poi-marker-shell {
+    color: #aab4be;
+    font-size: 9px;
+}
+
+.poi-other .poi-marker-shell {
+    border-style: dashed;
+    color: #87929d;
+}
+
+.pin-marker-shell {
+    display: grid;
+    width: 18px;
+    height: 18px;
+    place-items: center;
+    border: 1px solid #f0c36f;
+    border-radius: 50% 50% 50% 0;
+    background: #c78331;
+    box-shadow: 0 3px 8px rgb(0 0 0 / 42%);
+    color: #10151b;
+    transform: rotate(-45deg);
+}
+
+.pin-marker-glyph {
+    display: block;
+    font-size: 11px;
+    font-weight: 850;
+    line-height: 1;
+    transform: rotate(45deg);
+}
+
+.pin-div-icon.is-checked .pin-marker-shell {
+    border-color: #99a4ae;
+    background: #66717c;
+    color: #f0f3f6;
+    opacity: 0.78;
+}
+
+.leaflet-tooltip.map-tooltip,
 .leaflet-tooltip.player-tooltip {
     padding: 3px 7px;
     border: 1px solid rgb(48 54 61 / 88%);
@@ -372,8 +654,28 @@ input {
     white-space: nowrap;
 }
 
+.leaflet-tooltip.map-tooltip::before,
 .leaflet-tooltip.player-tooltip::before {
     display: none;
+}
+
+.leaflet-tooltip.poi-tooltip {
+    color: #d4dbe2;
+    font-weight: 550;
+}
+
+.leaflet-tooltip.pin-tooltip {
+    border-color: rgb(160 113 51 / 64%);
+}
+
+.pin-tooltip-check {
+    color: #9fb2a5;
+}
+
+.pin-tooltip-name.is-checked {
+    color: #9ba5af;
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
 }
 
 .player-marker {
