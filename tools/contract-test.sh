@@ -36,6 +36,10 @@ world_fwl="${world_dir}/${world_name}.fwl"
 world_db="${world_dir}/${world_name}.db"
 fixture_fwl="${repo_root}/tools/fixtures/${world_name}.fwl"
 fixture_db="${repo_root}/tools/fixtures/${world_name}.db"
+reference_cfg="${repo_root}/tools/release/valheimone.cfg"
+overlay_cfg="${repo_root}/tools/fixtures/contract.cfg"
+config_dir="${testserver}/BepInEx/config"
+plugin_cfg="${config_dir}/valheimone.cfg"
 candidate="${repo_root}/tools/contract-fingerprint.txt"
 golden="${repo_root}/tools/golden-fingerprint.txt"
 output_dll="${repo_root}/src/ValheimOne/bin/Release/net472/ValheimOne.dll"
@@ -64,6 +68,14 @@ baseline_allowlist=(
     printf 'Missing testserver world directory: %s\n' "$world_dir" >&2
     exit 1
 }
+[[ -f $reference_cfg ]] || {
+    printf 'Missing pristine reference config: %s\n' "$reference_cfg" >&2
+    exit 1
+}
+[[ -f $overlay_cfg ]] || {
+    printf 'Missing contract config overlay: %s\n' "$overlay_cfg" >&2
+    exit 1
+}
 
 "${repo_root}/build.sh"
 mkdir -p -- "$plugin_dir"
@@ -72,11 +84,70 @@ cp -f -- "$output_dll" "${plugin_dir}/ValheimOne.dll"
 backup_dir=$(mktemp -d "${TMPDIR:-/tmp}/valheimone-contract.XXXXXX")
 backup_fwl="${backup_dir}/${world_name}.fwl"
 backup_db="${backup_dir}/${world_name}.db"
+backup_cfg="${backup_dir}/valheimone.cfg"
 had_fwl=0
 had_db=0
+had_cfg=0
 world_replaced=0
+cfg_replaced=0
 server_pid=
 server_pgid=
+
+install_contract_cfg() {
+    python3 - "$reference_cfg" "$overlay_cfg" "$plugin_cfg" <<'PY'
+import sys
+
+base_path, overlay_path, out_path = sys.argv[1:4]
+
+def parse(path):
+    data = {}
+    section = None
+    with open(path, encoding='utf-8') as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line or line.startswith(('#', ';')):
+                continue
+            if line.startswith('[') and line.endswith(']'):
+                section = line[1:-1]
+                continue
+            if section is not None and '=' in line:
+                key, value = line.split('=', 1)
+                data.setdefault(section, {})[key.strip()] = value.strip()
+    return data
+
+overlay = parse(overlay_path)
+applied = {section: set() for section in overlay}
+
+out_lines = []
+section = None
+with open(base_path, encoding='utf-8') as handle:
+    for raw in handle:
+        line = raw.rstrip('\n')
+        stripped = line.strip()
+        if stripped.startswith('[') and stripped.endswith(']'):
+            section = stripped[1:-1]
+        elif (section in overlay and '=' in stripped
+                and not stripped.startswith(('#', ';'))):
+            key = stripped.split('=', 1)[0].strip()
+            if key in overlay[section]:
+                line = '{} = {}'.format(key, overlay[section][key])
+                applied[section].add(key)
+        out_lines.append(line)
+
+missing = [
+    '[{}] {}'.format(section, key)
+    for section, keys in overlay.items()
+    for key in keys
+    if key not in applied[section]
+]
+if missing:
+    sys.exit('overlay keys missing from the reference config: '
+             + ', '.join(missing))
+
+with open(out_path, 'w', encoding='utf-8') as handle:
+    handle.write('\n'.join(out_lines) + '\n')
+PY
+}
 
 group_is_alive() {
     [[ -n $server_pgid ]] && kill -0 -- "-$server_pgid" 2>/dev/null
@@ -181,11 +252,18 @@ cleanup() {
         fi
     fi
 
-    rm -f -- "$backup_fwl" "$backup_db"
+    if (( cfg_replaced )); then
+        rm -f -- "$plugin_cfg"
+        if (( had_cfg )); then
+            cp -a -- "$backup_cfg" "$plugin_cfg" || restore_status=1
+        fi
+    fi
+
+    rm -f -- "$backup_fwl" "$backup_db" "$backup_cfg"
     rmdir -- "$backup_dir" 2>/dev/null || true
 
     if (( restore_status )); then
-        printf 'ERROR: failed to restore the original SmokeWorld files.\n' >&2
+        printf 'ERROR: failed to restore the original SmokeWorld or valheimone.cfg files.\n' >&2
         status=1
     fi
     exit "$status"
@@ -206,6 +284,15 @@ fi
 world_replaced=1
 cp -a -- "$fixture_fwl" "$world_fwl"
 cp -a -- "$fixture_db" "$world_db"
+
+mkdir -p -- "$config_dir"
+if [[ -e $plugin_cfg ]]; then
+    cp -a -- "$plugin_cfg" "$backup_cfg"
+    had_cfg=1
+fi
+cfg_replaced=1
+install_contract_cfg
+
 rm -f -- "$candidate"
 
 printf 'Starting contract server; waiting up to 240 seconds for diagnostics.\n'

@@ -84,7 +84,7 @@ After every Valheim update, run the deterministic contract test before releasing
 tools/contract-test.sh
 ```
 
-`CONTRACT PASS` means the pinned world's worldgen fingerprint, Harmony patch contract, and module registration contract still match the checked-in golden fingerprint. `CONTRACT DRIFT` requires review: a worldgen hash change means map caches must be invalidated and worldgen changes reviewed; patch drift reports broken patch points in `failed=`; and module-count drift indicates registration changes.
+The contract run installs a pinned config — the pristine reference config with the `tools/fixtures/contract.cfg` overlay applied ([Query] enabled) — and restores the harness's prior config afterward, so the enabled-module fingerprint does not depend on local harness state. `CONTRACT PASS` means the pinned world's worldgen fingerprint, Harmony patch contract, and module registration contract still match the checked-in golden fingerprint. `CONTRACT DRIFT` requires review: a worldgen hash change means map caches must be invalidated and worldgen changes reviewed; patch drift reports broken patch points in `failed=`; and module-count drift indicates registration changes.
 
 After reviewing an intentional change, re-baseline and check in the updated golden fingerprint with:
 
