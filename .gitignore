@@ -30,3 +30,4 @@ Thumbs.db
 # Release packaging
 tools/cache/
 !tools/release/valheimone.cfg
+tools/contract-fingerprint.txt
