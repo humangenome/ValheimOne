@@ -15,6 +15,8 @@ public sealed class FeatureRegistry
 
     public IReadOnlyList<FeatureDefinition> Features => _features;
 
+    internal event Action? EffectiveValuesChanged;
+
     public FeatureDefinition Register(
         string name,
         string section,
@@ -81,5 +83,10 @@ public sealed class FeatureRegistry
 
         classification = default;
         return false;
+    }
+
+    internal void NotifyEffectiveValuesChanged()
+    {
+        EffectiveValuesChanged?.Invoke();
     }
 }

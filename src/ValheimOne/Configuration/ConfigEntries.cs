@@ -107,4 +107,24 @@ public sealed class ConfigEntryPercent : IConfigEntry
         float result = baseValue * (1f + (Value / 100f));
         return result < 0f ? 0f : result;
     }
+
+    public int ApplyChance(float baseValue)
+    {
+        float adjustedValue = Apply(baseValue);
+        if (adjustedValue <= 0f)
+        {
+            return 0;
+        }
+
+        if (adjustedValue >= int.MaxValue)
+        {
+            return int.MaxValue;
+        }
+
+        int guaranteedValue = (int)adjustedValue;
+        float fractionalChance = adjustedValue - guaranteedValue;
+        return UnityEngine.Random.value < fractionalChance
+            ? guaranteedValue + 1
+            : guaranteedValue;
+    }
 }

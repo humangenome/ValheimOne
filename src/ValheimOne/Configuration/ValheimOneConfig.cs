@@ -78,6 +78,7 @@ public sealed class ValheimOneConfig
         }
 
         _overlay = replacement;
+        Features.NotifyEffectiveValuesChanged();
         return appliedValues;
     }
 
@@ -89,6 +90,7 @@ public sealed class ValheimOneConfig
         }
 
         _overlay = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+        Features.NotifyEffectiveValuesChanged();
         return true;
     }
 

@@ -33,6 +33,8 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
         IReadOnlyList<IFeatureModule> modules = new IFeatureModule[]
         {
             new PlayerCarryWeightModule(settings.Features),
+            new PlayerStaminaModule(settings.Features),
+            new FoodDurationModule(settings.Features),
             new ValheimOne.LiveMap.LiveMapModule(settings.Features),
         };
 
