@@ -1,0 +1,28 @@
+# Build output
+bin/
+obj/
+artifacts/
+
+# IDE and editor files
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# .NET tooling
+*.nupkg
+*.snupkg
+TestResults/
+coverage/
+
+# Local game/mod output
+BepInEx/
+valheimone.cfg
+*.log
+
+# Operating-system files
+.DS_Store
+Thumbs.db
