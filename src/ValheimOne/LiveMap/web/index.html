@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ValheimOne Live Map</title>
+    <link rel="stylesheet" href="/assets/leaflet.css{{TOKEN_QUERY}}">
+    <link rel="stylesheet" href="/assets/app.css{{TOKEN_QUERY}}">
+    <script src="/assets/leaflet.js{{TOKEN_QUERY}}" defer></script>
+    <script src="/assets/app.js{{TOKEN_QUERY}}" defer></script>
+</head>
+<body>
+    <input class="sidebar-state" id="sidebar-state" type="checkbox" aria-hidden="true">
+    <label class="sidebar-toggle" for="sidebar-state" aria-label="Toggle map details">
+        <span></span>
+        <span></span>
+        <span></span>
+    </label>
+
+    <aside id="sidebar" aria-label="Live map details">
+        <header class="brand">
+            <div class="brand-mark" aria-hidden="true">V1</div>
+            <div>
+                <div class="brand-name">ValheimOne</div>
+                <div class="brand-subtitle">Live Map</div>
+            </div>
+            <span id="offline-badge" class="offline-badge" hidden>Offline</span>
+        </header>
+
+        <section class="server-details" aria-label="Server details">
+            <div class="detail-line">
+                <span class="detail-label">World</span>
+                <span class="detail-value" id="world-name">—</span>
+            </div>
+            <div class="detail-line">
+                <span class="detail-label">Server</span>
+                <span class="detail-value" id="server-name">—</span>
+            </div>
+        </section>
+
+        <section class="time-panel" aria-label="World time">
+            <div>
+                <div class="day-number" id="day-number">Day —</div>
+                <div class="world-clock" id="world-clock">--:--</div>
+            </div>
+            <span class="sky-indicator is-sun" id="sky-indicator" role="img" aria-label="Daytime">☀</span>
+        </section>
+
+        <section class="players-panel" aria-labelledby="players-heading">
+            <div class="section-heading">
+                <h2 id="players-heading">Players</h2>
+                <span class="player-count" id="player-count">0 online</span>
+            </div>
+            <ul class="player-list" id="player-list">
+                <li class="empty-player-list">No players online</li>
+            </ul>
+        </section>
+
+        <footer class="sidebar-footer">
+            <span class="footer-tag">ValheimOne</span>
+            <span>World services</span>
+        </footer>
+    </aside>
+
+    <main id="map" aria-label="Valheim world map"></main>
+
+    <div id="render-status" class="render-status" role="status" aria-live="polite">
+        <div class="render-card">
+            <span class="spinner" aria-hidden="true"></span>
+            <span id="render-status-text">Rendering world map — 0%</span>
+        </div>
+    </div>
+</body>
+</html>
