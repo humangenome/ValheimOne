@@ -34,6 +34,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
         {
             new PlayerCarryWeightModule(settings.Features),
             new PlayerStaminaModule(settings.Features),
+            new BuildingQoLModule(settings.Features),
             new FoodDurationModule(settings.Features),
             new ItemDropMultiplierModule(settings.Features),
             new GatheringModule(settings.Features),
