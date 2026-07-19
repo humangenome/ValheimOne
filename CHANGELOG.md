@@ -2,12 +2,13 @@
 
 All notable changes to ValheimOne will be documented in this file. This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and intends to use [Semantic Versioning](https://semver.org/spec/v2.0.0.html) after its first release.
 
-## [Unreleased]
+## [0.6.1] - 2026-07-19
 
 ### Added
 
 - LiveMap deep zoom now reaches zoom 8 (about 0.375 m/px on the default 2048 texture), with the on-demand detail tile cache bounded by a 512 MB LRU disk cap (least-recently-served tiles are evicted; evictions are logged).
 - Official ValheimOne icon: dashboard favicon and header brand mark now use the painted shield icon; source assets under docs/brand/.
+- Contract test now boots with a pinned config (pristine reference config plus the `tools/fixtures/contract.cfg` overlay, `[Query]` enabled) and restores the harness config afterward, making the enabled-module fingerprint deterministic; golden re-blessed accordingly.
 
 ### Fixed
 
