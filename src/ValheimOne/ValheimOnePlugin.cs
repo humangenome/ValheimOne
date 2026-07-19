@@ -41,6 +41,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
             new ItemTweaksModule(settings.Features),
             new ItemDropMultiplierModule(settings.Features),
             new GatheringModule(settings.Features),
+            new TamesModule(settings.Features),
             new DayNightLengthModule(settings.Features),
             new BeehiveModule(settings.Features),
             new FireSourceModule(settings.Features, _log),
