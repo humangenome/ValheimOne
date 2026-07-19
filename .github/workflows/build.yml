@@ -167,11 +167,29 @@ jobs:
             https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz
           tar -xzf "${steamcmd_archive}" -C "${steamcmd_dir}"
 
-          "${steamcmd_dir}/steamcmd.sh" \
-            +force_install_dir "${HOME}/valheim-modding/server" \
-            +login anonymous \
-            +app_update 896660 validate \
-            +quit
+          "${steamcmd_dir}/steamcmd.sh" +login anonymous +quit
+
+          install_succeeded=false
+          for attempt in {1..4}; do
+            if "${steamcmd_dir}/steamcmd.sh" \
+              +force_install_dir "${HOME}/valheim-modding/server" \
+              +login anonymous \
+              +app_update 896660 validate \
+              +quit; then
+              install_succeeded=true
+              break
+            fi
+
+            if (( attempt < 4 )); then
+              echo "Valheim server install attempt ${attempt} failed; retrying in 15 seconds..." >&2
+              sleep 15
+            fi
+          done
+
+          if [[ "${install_succeeded}" != true ]]; then
+            echo "Valheim server install failed after 4 attempts." >&2
+            exit 1
+          fi
 
       - name: Verify Valheim managed assemblies
         shell: bash
