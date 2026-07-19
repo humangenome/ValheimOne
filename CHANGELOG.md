@@ -23,6 +23,15 @@ All notable changes to ValheimOne will be documented in this file. This project 
 - Opt-in `Portals` module for disabling portal travel or allowing restricted inventory through portals.
 - Opt-in `ExperienceRates` module with global and per-skill experience multipliers.
 - Opt-in `DeathPenalty` module for scaling skill loss or preserving inventory on death.
+- Extended the opt-in `[Player]` module with auto-pickup range, pickup while encumbered, and rested seconds per comfort level.
+- Opt-in `BuildingQoL` module for bypassing structural support, suppressing ordinary placement blocking, and overriding build reach and rotation step.
+- Opt-in `ItemTweaks` module with stack-size, weight, and durability multipliers.
+- Opt-in `Gathering` module with per-material yield and supported drop-chance modifiers.
+- Opt-in `Beehive`, `Fermenter`, and `SapCollector` production modules for timing and capacity overrides.
+- Opt-in `Wards` module for overriding ward protection radius.
+- Opt-in `MapSharing` module for forced position sharing and server-unioned client exploration sync.
+- New `VO_Map` wire protocol with validated run-length map ranges, bounded chunks, and acknowledgement-gated bidirectional transfers.
+- Generalized acknowledgement-gated chunk queue shared by config sync and map exploration transfers.
 - Runtime-visibility hardening for Unity 6 Mono: verified public game APIs where available and cached reflection delegates for vanilla-private members.
 - Build script, project documentation, contribution guidance, and MIT license.
 - Opt-in `LiveMap` module: background seed-to-tiles world render (north-up Leaflet tile pyramid cached on disk), embedded HTTP server with `/api/status` and `/api/players` (honoring in-game position privacy), and a dark self-contained live map page with player markers and day/time readout.

@@ -18,7 +18,7 @@ _ValheimOne is a community project and is not affiliated with or endorsed by Iro
 
 > **Official Hosting:** [SurvivalServers.com](https://www.survivalservers.com/services/game_servers/valheim/?utm_source=github&utm_medium=readme&utm_campaign=valheim_one) offers managed Valheim dedicated servers with BepInEx support for ValheimOne.
 
-**Status — unreleased / in development.** The server enforcement chassis and ten default-off gameplay modules are implemented; the web console and status endpoint remain in development. There is no packaged release yet. Gameplay features are disabled by default; the `[Server]` transport infrastructure is enabled by default but does not alter gameplay on its own.
+**Status — unreleased / in development.** The server enforcement chassis and eighteen default-off gameplay modules are implemented; the web console and status endpoint remain in development. There is no packaged release yet. Gameplay features are disabled by default; the `[Server]` transport infrastructure is enabled by default but does not alter gameplay on its own.
 
 ---
 
@@ -60,16 +60,24 @@ The enforcement chassis exchanges `VO_Hello`, `VO_Config`, and `VO_Ack` over rou
 
 Features use three modes: **server-authoritative** logic runs under server ownership and can support vanilla clients; **synced** logic requires a compatible client and receives the server overlay; **client-only** settings stay local and are never pushed. The current gameplay modules are:
 
-- `PlayerCarryWeight` (`[Player]`) — sets base carry weight and the Megingjord bonus. **Mode:** server-authoritative.
+- `Player` (`[Player]`) — sets carry weight, the Megingjord bonus, auto-pickup range, encumbered pickup, and rested seconds per comfort level. **Mode:** server-authoritative.
 - `PlayerStamina` (`[Stamina]`) — scales stamina regeneration, delay, movement drains, and action costs. **Mode:** synced.
+- `BuildingQoL` (`[Building]`) — removes structural-support requirements, suppresses ordinary placement blocking, and overrides build reach and rotation step. **Mode:** synced.
 - `FoodDuration` (`[Food]`) — scales food duration and can hold benefits at full strength until expiry. **Mode:** synced.
+- `ItemTweaks` (`[Items]`) — scales item stack sizes, weights, and maximum durability. **Mode:** synced.
 - `ItemDropMultiplier` (`[Drops]`) — scales destructible, creature, and pickable yields. **Mode:** server-authoritative.
+- `Gathering` (`[Gathering]`) — applies per-material yield modifiers and adjusts supported non-guaranteed drop chances. **Mode:** server-authoritative.
 - `CraftFromChest` (`[CraftFromChest]`) — consumes crafting and optional build costs from nearby accessible containers. **Mode:** synced.
 - `StationAutomation` (`[StationAutomation]`) — pulls fuel and processable items from nearby containers for smelter-based stations and fireplaces. **Mode:** synced.
 - `DayNightLength` (`[Time]`) — scales or absolutely overrides the full day/night cycle length. **Mode:** synced.
+- `Beehive` (`[Beehive]`) — overrides honey production time and storage capacity. **Mode:** synced.
+- `Fermenter` (`[Fermenter]`) — overrides fermentation time. **Mode:** synced.
+- `SapCollector` (`[SapCollector]`) — overrides sap production time and storage capacity. **Mode:** synced.
+- `Wards` (`[Wards]`) — overrides ward protection radius. **Mode:** synced.
 - `Portals` (`[Portals]`) — disables portal travel or permits normally restricted inventory. **Mode:** synced.
 - `ExperienceRates` (`[Experience]`) — applies global and per-skill experience multipliers. **Mode:** synced.
 - `DeathPenalty` (`[DeathPenalty]`) — scales death skill loss or preserves inventory without a tombstone. **Mode:** synced.
+- `MapSharing` (`[MapSharing]`) — forces compatible clients to share positions and synchronizes their combined explored-map area. **Mode:** synced.
 
 **Client-only:** n/a; no current gameplay module uses this mode.
 
