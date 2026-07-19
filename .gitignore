@@ -26,3 +26,7 @@ valheimone.cfg
 # Operating-system files
 .DS_Store
 Thumbs.db
+
+# Release packaging
+tools/cache/
+!tools/release/valheimone.cfg
