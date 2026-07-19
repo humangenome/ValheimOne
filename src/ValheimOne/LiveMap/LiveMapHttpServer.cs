@@ -502,6 +502,7 @@ internal sealed class LiveMapHttpServer
                                 _config.ConsoleEnabled &&
                                 !string.IsNullOrEmpty(_config.AccessToken) &&
                                 _consoleBridge != null;
+        bool entitiesAvailable = viewLevel == ViewLevel.Admin && _config.EntityLayer;
         string mapState = _renderer.StateName;
         string mapProgress = JsonWriter.Number(_renderer.Progress);
         string fogMode = GetEffectiveFogMode(viewLevel);
@@ -523,6 +524,7 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"console\":").Append(consoleAvailable ? "true" : "false");
         if (viewLevel == ViewLevel.Admin)
         {
+            json.Append(",\"entities\":").Append(entitiesAvailable ? "true" : "false");
             json.Append(",\"event\":");
             AppendRaidEventJson(json, activeEvent);
         }
@@ -550,6 +552,7 @@ internal sealed class LiveMapHttpServer
         key.Append(fogRevision.ToString(CultureInfo.InvariantCulture));
         if (viewLevel == ViewLevel.Admin)
         {
+            key.Append('|').Append(entitiesAvailable ? "entities" : "no-entities");
             key.Append('|');
             if (activeEvent == null)
             {

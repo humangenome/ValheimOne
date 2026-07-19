@@ -1076,16 +1076,12 @@
         return Math.max(0, Math.round(Math.log(textureSize / TILE_SIZE) / Math.LN2));
     }
 
-    function ensureMap(statusMap) {
-        if (tileLayer || !statusMap || statusMap.state !== "ready") {
-            return;
-        }
-
+    function readMapMetrics(statusMap) {
         var textureSize = Number(statusMap.textureSize);
         var pixelSize = Number(statusMap.pixelSize);
         if (!Number.isFinite(textureSize) || textureSize < TILE_SIZE ||
             !Number.isFinite(pixelSize) || pixelSize <= 0) {
-            return;
+            return null;
         }
 
         var overviewZoom = Number(statusMap.baseZoom);
@@ -1096,11 +1092,57 @@
         if (!Number.isFinite(maximumZoom) || maximumZoom < overviewZoom) {
             maximumZoom = overviewZoom;
         }
-        mapMetrics = {
+        return {
             textureSize: textureSize,
             pixelSize: pixelSize,
+            overviewZoom: overviewZoom,
             maximumZoom: maximumZoom,
             unitsPerPixel: WORLD_UNITS / textureSize
+        };
+    }
+
+    function reconcileMapMetrics(nextMetrics) {
+        if (nextMetrics.maximumZoom === mapMetrics.maximumZoom &&
+            nextMetrics.textureSize === mapMetrics.textureSize &&
+            nextMetrics.pixelSize === mapMetrics.pixelSize) {
+            return;
+        }
+
+        var center = map.getCenter();
+        var zoom = Math.max(map.getMinZoom(), Math.min(nextMetrics.maximumZoom, map.getZoom()));
+        mapMetrics.textureSize = nextMetrics.textureSize;
+        mapMetrics.pixelSize = nextMetrics.pixelSize;
+        mapMetrics.maximumZoom = nextMetrics.maximumZoom;
+        mapMetrics.unitsPerPixel = nextMetrics.unitsPerPixel;
+        map.setMaxZoom(nextMetrics.maximumZoom);
+        tileLayer.options.maxZoom = nextMetrics.maximumZoom;
+        tileLayer.options.maxNativeZoom = nextMetrics.maximumZoom;
+        tileLayer.removeFrom(map);
+        tileLayer.addTo(map);
+        map.setView(center, zoom, { animate: false });
+    }
+
+    function ensureMap(statusMap) {
+        if (!statusMap || statusMap.state !== "ready") {
+            return;
+        }
+
+        var nextMetrics = readMapMetrics(statusMap);
+        if (!nextMetrics) {
+            return;
+        }
+        if (tileLayer) {
+            reconcileMapMetrics(nextMetrics);
+            return;
+        }
+
+        var overviewZoom = nextMetrics.overviewZoom;
+        var maximumZoom = nextMetrics.maximumZoom;
+        mapMetrics = {
+            textureSize: nextMetrics.textureSize,
+            pixelSize: nextMetrics.pixelSize,
+            maximumZoom: maximumZoom,
+            unitsPerPixel: nextMetrics.unitsPerPixel
         };
 
         worldBounds = L.latLngBounds([[-WORLD_UNITS, 0], [0, WORLD_UNITS]]);
@@ -1784,6 +1826,30 @@
         entityRevision = null;
     }
 
+    function updateEntityAvailability(status) {
+        if (status.view !== "admin" || typeof status.entities !== "boolean") {
+            return;
+        }
+
+        if (!status.entities) {
+            window.clearTimeout(entityPollTimer);
+            entityPollTimer = 0;
+            if (entityAvailability !== "unavailable") {
+                entityAvailability = "unavailable";
+                clearEntityLayers();
+                setFeedState("entities", true);
+                renderLayerRows();
+                syncLayerVisibility();
+            }
+            return;
+        }
+
+        if (entityAvailability === "unavailable") {
+            entityAvailability = "unknown";
+            ensureEntityFeed();
+        }
+    }
+
     function renderEntityPayload(payload) {
         clearEntityLayers();
         var entities = payload && Array.isArray(payload.entities) ? payload.entities : [];
@@ -1861,6 +1927,9 @@
             }
 
             var payload = await response.json();
+            if (entityAvailability === "unavailable") {
+                return;
+            }
             var wasAvailable = entityAvailability === "available";
             entityAvailability = "available";
             setFeedState("entities", true);
@@ -2136,6 +2205,7 @@
         renderWorldTime(status.day, status.timeOfDay);
         renderPlayerCount(status.players);
         updateRenderStatus(status.map);
+        updateEntityAvailability(status);
         updateView(status.view);
         updateConsoleAvailability(status);
         updateFogStatus(status.map && status.map.fog);
