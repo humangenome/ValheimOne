@@ -72,7 +72,7 @@ public sealed class FoodDurationModule : IFeatureModule
             return;
         }
 
-        foreach (Player.Food food in __instance.m_foods)
+        foreach (Player.Food food in __instance.GetFoods())
         {
             if (!ReferenceEquals(food.m_item, item))
             {
@@ -97,7 +97,7 @@ public sealed class FoodDurationModule : IFeatureModule
             return;
         }
 
-        foreach (Player.Food food in __instance.m_foods)
+        foreach (Player.Food food in __instance.GetFoods())
         {
             if (food.m_time <= 0f)
             {

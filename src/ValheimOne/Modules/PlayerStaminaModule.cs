@@ -142,7 +142,7 @@ public sealed class PlayerStaminaModule : IFeatureModule
             return;
         }
 
-        ItemDrop.ItemData? rightItem = __instance.GetRightItem();
+        ItemDrop.ItemData? rightItem = __instance.RightItem;
         if (rightItem == null || rightItem.m_shared.m_buildPieces == null)
         {
             return;

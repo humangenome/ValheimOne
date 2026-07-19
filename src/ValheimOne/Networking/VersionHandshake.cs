@@ -227,7 +227,7 @@ public sealed class VersionHandshake : IVersionHandshake
             return;
         }
 
-        long serverPeerId = routedRpc.GetServerPeerID();
+        long serverPeerId = serverPeer.m_uid;
         if (serverPeerId == 0L)
         {
             return;
@@ -403,7 +403,8 @@ public sealed class VersionHandshake : IVersionHandshake
             return;
         }
 
-        long serverPeerId = routedRpc.GetServerPeerID();
+        ZNetPeer? serverPeer = net.GetServerPeer();
+        long serverPeerId = serverPeer?.m_uid ?? 0L;
         if (sender != serverPeerId)
         {
             _log.Warning($"Ignored spoofed {ConfigRpc} from peer uid {sender}.");
@@ -605,7 +606,7 @@ public sealed class VersionHandshake : IVersionHandshake
     {
         float now = Time.realtimeSinceStartup;
         var connectedPeerIds = new HashSet<long>();
-        foreach (ZNetPeer peer in new List<ZNetPeer>(net.m_peers))
+        foreach (ZNetPeer peer in new List<ZNetPeer>(net.GetPeers()))
         {
             if (peer.m_server || !peer.IsReady())
             {
@@ -724,7 +725,7 @@ public sealed class VersionHandshake : IVersionHandshake
         _log.Warning($"Peer {PeerLabel(state.Peer)} kicked: {reason}.");
         try
         {
-            net.InternalKick(state.Peer);
+            net.Kick(state.Peer.m_playerName);
         }
         catch (Exception exception)
         {
