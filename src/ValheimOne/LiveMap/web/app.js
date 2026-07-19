@@ -3,6 +3,7 @@
 
     var POLL_INTERVAL_MS = 2000;
     var PINS_POLL_INTERVAL_MS = 60000;
+    var ENTITIES_POLL_INTERVAL_MS = 10000;
     var CONSOLE_LOG_POLL_INTERVAL_MS = 2000;
     var CONSOLE_STATS_POLL_INTERVAL_MS = 5000;
     var CONSOLE_LOG_LIMIT = 1000;
@@ -10,6 +11,10 @@
     var MOVE_DURATION_MS = 400;
     var TILE_SIZE = 256;
     var WORLD_UNITS = 256;
+    var POI_CLUSTER_ZOOM = 2;
+    var POI_CLUSTER_GRID_PX = 64;
+    var SSE_RETRY_INITIAL_MS = 5000;
+    var SSE_RETRY_MAX_MS = 60000;
     var LAYER_STORAGE_KEY = "vo-livemap-layers";
     var TAB_SESSION_KEY = "vo-livemap-active-tab";
 
@@ -33,6 +38,13 @@
         other: { label: "Other", glyph: "◇" }
     };
 
+    var ENTITY_GROUP_ORDER = ["ship", "cart", "portal"];
+    var ENTITY_GROUPS = {
+        ship: { label: "Ships", glyph: "⛵" },
+        cart: { label: "Carts", glyph: "▣" },
+        portal: { label: "Portals", glyph: "◊" }
+    };
+
     var LAYER_DEFAULTS = {
         players: true,
         pins: true,
@@ -43,7 +55,11 @@
         spawner: false,
         misc: false,
         other: false,
-        fog: true
+        fog: true,
+        ship: true,
+        cart: true,
+        portal: true,
+        legendCollapsed: false
     };
 
     var query = new URLSearchParams(window.location.search);
@@ -60,9 +76,18 @@
     var playerLayer = null;
     var pinLayer = null;
     var poiLayers = new Map();
+    var poiRecords = new Map();
     var availablePoiGroups = new Set();
+    var entityLayers = new Map();
+    var entityAvailability = "unknown";
+    var entityRequestPending = false;
+    var entityPollTimer = 0;
+    var entityRevision = null;
+    var raidCircle = null;
+    var currentRaidEvent = null;
     var layerSettings = loadLayerSettings();
     var layersRows = null;
+    var legendContent = null;
     var currentView = null;
     var lastPoiRequestedView = null;
     var poiRequestSequence = 0;
@@ -94,6 +119,11 @@
     var consoleFailures = Object.create(null);
     var confirmAction = null;
     var saveButtonTimer = 0;
+    var eventSource = null;
+    var eventSourceOpen = false;
+    var eventSourceLogFlowing = false;
+    var eventSourceRetryTimer = 0;
+    var eventSourceRetryDelay = SSE_RETRY_INITIAL_MS;
 
     var elements = {
         bannedCount: document.getElementById("console-banned-count"),
@@ -117,6 +147,7 @@
         playerCount: document.getElementById("player-count"),
         playerList: document.getElementById("player-list"),
         publicViewBadge: document.getElementById("public-view-badge"),
+        raidBadge: document.getElementById("raid-badge"),
         saveButton: document.getElementById("console-save"),
         saveStatus: document.getElementById("console-save-status"),
         serverName: document.getElementById("server-name"),
@@ -533,31 +564,48 @@
         }
     }
 
+    function handleConsoleLogPayload(payload, preserveNewerCursor) {
+        var previousCursor = consoleCursor;
+        var nextCursor = payload ? Number(payload.cursor) : NaN;
+        var cursorReset = Number.isFinite(nextCursor) && nextCursor < previousCursor &&
+            !preserveNewerCursor;
+        var minimumSequence = cursorReset ? 0 : previousCursor;
+        var lines = payload && Array.isArray(payload.lines) ? payload.lines : [];
+        appendConsoleEntries(lines.filter(function (line) {
+            var sequence = line ? Number(line.seq) : NaN;
+            return !Number.isFinite(sequence) || sequence > minimumSequence;
+        }).map(function (line) {
+            return {
+                kind: "server",
+                time: line && line.time,
+                level: line && line.level,
+                text: line && line.text
+            };
+        }));
+
+        if (Number.isFinite(nextCursor) &&
+            !(preserveNewerCursor && nextCursor < previousCursor)) {
+            consoleCursor = Math.max(0, Math.floor(nextCursor));
+        }
+        clearConsoleFailure("log");
+    }
+
     async function pollConsoleLog() {
-        if (!consoleIsActive() || consoleLogRequestPending) {
+        if (!consoleIsActive() || consoleLogRequestPending ||
+            (eventSourceOpen && eventSourceLogFlowing)) {
             return;
         }
 
         consoleLogRequestPending = true;
+        var logStreamWasFlowing = eventSourceLogFlowing;
         try {
             var payload = await fetchConsoleJson(
                 "/api/console/log?cursor=" + encodeURIComponent(consoleCursor) + "&max=250"
             );
-            var lines = payload && Array.isArray(payload.lines) ? payload.lines : [];
-            appendConsoleEntries(lines.map(function (line) {
-                return {
-                    kind: "server",
-                    time: line && line.time,
-                    level: line && line.level,
-                    text: line && line.text
-                };
-            }));
-
-            var nextCursor = payload ? Number(payload.cursor) : NaN;
-            if (Number.isFinite(nextCursor)) {
-                consoleCursor = Math.max(0, Math.floor(nextCursor));
+            if (!logStreamWasFlowing && eventSourceLogFlowing) {
+                return;
             }
-            clearConsoleFailure("log");
+            handleConsoleLogPayload(payload);
         } catch (error) {
             reportConsoleFailure("log", "Console log", error);
         } finally {
@@ -1079,10 +1127,13 @@
         createLayersControl();
         map.setView(worldToLatLng(0, 0), Math.max(0, maximumZoom - 1));
         map.on("dragstart", clearFollow);
+        map.on("zoomend", renderPoiLayers);
         syncLayerVisibility();
         updatePlayerMarkers(latestPlayers);
         loadPoisForCurrentView();
         applyFogStatus();
+        applyRaidEvent(currentRaidEvent);
+        ensureEntityFeed();
         startPinsPolling();
     }
 
@@ -1091,6 +1142,10 @@
         pinLayer = L.layerGroup();
         POI_GROUP_ORDER.forEach(function (group) {
             poiLayers.set(group, L.layerGroup());
+            poiRecords.set(group, []);
+        });
+        ENTITY_GROUP_ORDER.forEach(function (group) {
+            entityLayers.set(group, L.layerGroup());
         });
     }
 
@@ -1105,6 +1160,14 @@
             -pixelYFromNorth * mapMetrics.unitsPerPixel,
             pixelX * mapMetrics.unitsPerPixel
         );
+    }
+
+    function worldDistanceToMap(distance) {
+        if (!mapMetrics) {
+            return 0;
+        }
+
+        return Math.abs(distance / mapMetrics.pixelSize * mapMetrics.unitsPerPixel);
     }
 
     function createLayersControl() {
@@ -1150,6 +1213,7 @@
         }
 
         layersRows.textContent = "";
+        legendContent = null;
         appendLayerRow("players", "Players", "●", "players");
         appendLayerRow("pins", "Pins", "⌖", "pins");
 
@@ -1162,6 +1226,19 @@
         if (fogAvailable) {
             appendLayerRow("fog", "Fog", "≈", "fog");
         }
+
+        if (entityLayersAreAvailable()) {
+            ENTITY_GROUP_ORDER.forEach(function (group) {
+                appendLayerRow(
+                    group,
+                    ENTITY_GROUPS[group].label,
+                    ENTITY_GROUPS[group].glyph,
+                    group
+                );
+            });
+        }
+
+        appendLegendBlock();
     }
 
     function appendLayerRow(key, labelText, glyph, swatchClass) {
@@ -1178,6 +1255,9 @@
             layerSettings[key] = checkbox.checked;
             saveLayerSettings();
             syncLayerVisibility();
+            if (Object.prototype.hasOwnProperty.call(ENTITY_GROUPS, key)) {
+                updateEntityPolling(true);
+            }
         });
 
         swatch.className = "layer-swatch layer-swatch-" + swatchClass;
@@ -1190,6 +1270,93 @@
         label.appendChild(swatch);
         label.appendChild(text);
         layersRows.appendChild(label);
+    }
+
+    function appendLegendBlock() {
+        var container = document.createElement("section");
+        var toggle = document.createElement("button");
+        var title = document.createElement("span");
+        var chevron = document.createElement("span");
+
+        container.className = "legend-block";
+        toggle.type = "button";
+        toggle.className = "legend-toggle";
+        title.textContent = "Legend";
+        chevron.className = "legend-chevron";
+        chevron.setAttribute("aria-hidden", "true");
+        toggle.appendChild(title);
+        toggle.appendChild(chevron);
+        legendContent = document.createElement("div");
+        legendContent.className = "legend-items";
+        container.appendChild(toggle);
+        container.appendChild(legendContent);
+        layersRows.appendChild(container);
+
+        function applyCollapsedState() {
+            var isCollapsed = layerSettings.legendCollapsed;
+            container.classList.toggle("is-collapsed", isCollapsed);
+            legendContent.hidden = isCollapsed;
+            toggle.setAttribute("aria-expanded", String(!isCollapsed));
+            chevron.textContent = isCollapsed ? "⌄" : "⌃";
+        }
+
+        toggle.addEventListener("click", function () {
+            layerSettings.legendCollapsed = !layerSettings.legendCollapsed;
+            saveLayerSettings();
+            applyCollapsedState();
+        });
+        applyCollapsedState();
+        renderLegend();
+    }
+
+    function appendLegendItem(glyph, labelText, swatchClass) {
+        var item = document.createElement("div");
+        var swatch = document.createElement("span");
+        var label = document.createElement("span");
+        item.className = "legend-item";
+        swatch.className = "legend-swatch layer-swatch layer-swatch-" + swatchClass;
+        swatch.textContent = glyph;
+        swatch.setAttribute("aria-hidden", "true");
+        label.textContent = labelText;
+        item.appendChild(swatch);
+        item.appendChild(label);
+        legendContent.appendChild(item);
+    }
+
+    function renderLegend() {
+        if (!legendContent) {
+            return;
+        }
+
+        legendContent.textContent = "";
+        if (layerSettings.players) {
+            appendLegendItem("●", "Players", "players");
+        }
+        if (layerSettings.pins) {
+            appendLegendItem("⌖", "Pins", "pins");
+        }
+        POI_GROUP_ORDER.forEach(function (group) {
+            if (availablePoiGroups.has(group) && layerSettings[group]) {
+                appendLegendItem(POI_GROUPS[group].glyph, POI_GROUPS[group].label, group);
+            }
+        });
+        if (fogAvailable && layerSettings.fog) {
+            appendLegendItem("≈", "Fog", "fog");
+        }
+        if (entityLayersAreAvailable()) {
+            ENTITY_GROUP_ORDER.forEach(function (group) {
+                if (layerSettings[group]) {
+                    appendLegendItem(
+                        ENTITY_GROUPS[group].glyph,
+                        ENTITY_GROUPS[group].label,
+                        group
+                    );
+                }
+            });
+        }
+        if (currentRaidEvent) {
+            appendLegendItem("◯", "Raid area", "raid");
+        }
     }
 
     function setLayerVisible(layer, visible) {
@@ -1218,6 +1385,13 @@
             );
         });
         setLayerVisible(fogOverlay, fogAvailable && layerSettings.fog);
+        ENTITY_GROUP_ORDER.forEach(function (group) {
+            setLayerVisible(
+                entityLayers.get(group),
+                entityLayersAreAvailable() && layerSettings[group]
+            );
+        });
+        renderLegend();
     }
 
     function normalizePlayers(payload) {
@@ -1450,9 +1624,96 @@
         poiLayers.forEach(function (layer) {
             layer.clearLayers();
         });
+        poiRecords.forEach(function (records) {
+            records.length = 0;
+        });
         availablePoiGroups.clear();
         renderLayerRows();
         syncLayerVisibility();
+    }
+
+    function createPoiMarker(record) {
+        var icon = L.divIcon({
+            className: "poi-div-icon poi-" + record.group,
+            html: '<span class="poi-marker-shell" aria-hidden="true">' +
+                POI_GROUPS[record.group].glyph + "</span>",
+            iconAnchor: [10, 10],
+            iconSize: [20, 20]
+        });
+        var marker = L.marker(record.latLng, {
+            icon: icon,
+            opacity: record.placed ? 1 : 0.55,
+            title: record.title
+        });
+        var tooltipContent = document.createElement("span");
+        tooltipContent.textContent = record.title;
+        marker.bindTooltip(tooltipContent, {
+            className: "map-tooltip poi-tooltip",
+            direction: "top",
+            offset: [0, -10],
+            opacity: 1
+        });
+        return marker;
+    }
+
+    function createPoiClusterMarker(group, bucket) {
+        var center = L.latLng(bucket.latitude / bucket.records.length, bucket.longitude / bucket.records.length);
+        var count = bucket.records.length;
+        var icon = L.divIcon({
+            className: "poi-div-icon poi-cluster-icon poi-" + group,
+            html: '<span class="poi-cluster-shell" aria-hidden="true"><span>' +
+                POI_GROUPS[group].glyph + '</span><strong>' + count + "</strong></span>",
+            iconAnchor: [16, 12],
+            iconSize: [32, 24]
+        });
+        var marker = L.marker(center, {
+            icon: icon,
+            title: count + " " + POI_GROUPS[group].label
+        });
+        var tooltipContent = document.createElement("span");
+        tooltipContent.textContent = count + " " + POI_GROUPS[group].label;
+        marker.bindTooltip(tooltipContent, {
+            className: "map-tooltip poi-tooltip",
+            direction: "top",
+            offset: [0, -11],
+            opacity: 1
+        });
+        return marker;
+    }
+
+    function renderPoiLayers() {
+        if (!map) {
+            return;
+        }
+
+        var useClusters = map.getZoom() < POI_CLUSTER_ZOOM;
+        POI_GROUP_ORDER.forEach(function (group) {
+            var layer = poiLayers.get(group);
+            var records = poiRecords.get(group) || [];
+            layer.clearLayers();
+            if (!useClusters) {
+                records.forEach(function (record) {
+                    createPoiMarker(record).addTo(layer);
+                });
+                return;
+            }
+
+            var buckets = Object.create(null);
+            records.forEach(function (record) {
+                var point = map.latLngToContainerPoint(record.latLng);
+                var cell = Math.floor(point.x / POI_CLUSTER_GRID_PX) + ":" +
+                    Math.floor(point.y / POI_CLUSTER_GRID_PX);
+                if (!buckets[cell]) {
+                    buckets[cell] = { latitude: 0, longitude: 0, records: [] };
+                }
+                buckets[cell].latitude += record.latLng.lat;
+                buckets[cell].longitude += record.latLng.lng;
+                buckets[cell].records.push(record);
+            });
+            Object.keys(buckets).forEach(function (cell) {
+                createPoiClusterMarker(group, buckets[cell]).addTo(layer);
+            });
+        });
     }
 
     async function loadPoisForCurrentView() {
@@ -1479,31 +1740,17 @@
 
                 var group = normalizePoiGroup(poi.group);
                 var title = prettifyPoiName(poi.name);
-                var icon = L.divIcon({
-                    className: "poi-div-icon poi-" + group,
-                    html: '<span class="poi-marker-shell" aria-hidden="true">' +
-                        POI_GROUPS[group].glyph + "</span>",
-                    iconAnchor: [10, 10],
-                    iconSize: [20, 20]
-                });
-                var marker = L.marker(worldToLatLng(Number(poi.x), Number(poi.z)), {
-                    icon: icon,
-                    opacity: poi.placed === false ? 0.55 : 1,
+                poiRecords.get(group).push({
+                    group: group,
+                    latLng: worldToLatLng(Number(poi.x), Number(poi.z)),
+                    placed: poi.placed !== false,
                     title: title
                 });
-                var tooltipContent = document.createElement("span");
-                tooltipContent.textContent = title;
-                marker.bindTooltip(tooltipContent, {
-                    className: "map-tooltip poi-tooltip",
-                    direction: "top",
-                    offset: [0, -10],
-                    opacity: 1
-                });
-                marker.addTo(poiLayers.get(group));
                 availablePoiGroups.add(group);
             });
 
             setFeedState("pois", true);
+            renderPoiLayers();
             renderLayerRows();
             syncLayerVisibility();
         } catch (error) {
@@ -1511,6 +1758,183 @@
                 setFeedState("pois", false);
             }
         }
+    }
+
+    function entityLayersAreAvailable() {
+        return currentView === "admin" && entityAvailability === "available";
+    }
+
+    function anyEntityLayerEnabled() {
+        return ENTITY_GROUP_ORDER.some(function (group) {
+            return layerSettings[group];
+        });
+    }
+
+    function clearEntityLayers() {
+        entityLayers.forEach(function (layer) {
+            layer.clearLayers();
+        });
+        entityRevision = null;
+    }
+
+    function renderEntityPayload(payload) {
+        clearEntityLayers();
+        var entities = payload && Array.isArray(payload.entities) ? payload.entities : [];
+        entities.forEach(function (entity) {
+            var group = entity && typeof entity.group === "string"
+                ? entity.group.trim().toLowerCase()
+                : "";
+            if (!Object.prototype.hasOwnProperty.call(ENTITY_GROUPS, group) ||
+                !Number.isFinite(Number(entity.x)) || !Number.isFinite(Number(entity.z))) {
+                return;
+            }
+
+            var prefab = typeof entity.prefab === "string" && entity.prefab.trim()
+                ? entity.prefab.trim()
+                : ENTITY_GROUPS[group].label;
+            var icon = L.divIcon({
+                className: "entity-div-icon entity-" + group,
+                html: '<span class="entity-marker-shell" aria-hidden="true">' +
+                    ENTITY_GROUPS[group].glyph + "</span>",
+                iconAnchor: [11, 11],
+                iconSize: [22, 22]
+            });
+            var marker = L.marker(worldToLatLng(Number(entity.x), Number(entity.z)), {
+                icon: icon,
+                title: prefab
+            });
+            var tooltipContent = document.createElement("span");
+            tooltipContent.textContent = prefab;
+            marker.bindTooltip(tooltipContent, {
+                className: "map-tooltip entity-tooltip",
+                direction: "top",
+                offset: [0, -11],
+                opacity: 1
+            });
+            marker.addTo(entityLayers.get(group));
+        });
+    }
+
+    function updateEntityPolling(immediate) {
+        window.clearTimeout(entityPollTimer);
+        entityPollTimer = 0;
+        if (!map || currentView !== "admin" || entityAvailability === "unavailable" ||
+            entityRequestPending || !anyEntityLayerEnabled()) {
+            return;
+        }
+
+        entityPollTimer = window.setTimeout(
+            pollEntities,
+            immediate ? 0 : ENTITIES_POLL_INTERVAL_MS
+        );
+    }
+
+    async function pollEntities() {
+        if (!map || currentView !== "admin" || entityRequestPending ||
+            entityAvailability === "unavailable") {
+            return;
+        }
+
+        entityRequestPending = true;
+        try {
+            var response = await fetch(authorizedUrl("/api/entities"), {
+                cache: "no-store",
+                credentials: "same-origin"
+            });
+            if (response.status === 404) {
+                entityAvailability = "unavailable";
+                clearEntityLayers();
+                setFeedState("entities", true);
+                renderLayerRows();
+                syncLayerVisibility();
+                return;
+            }
+            if (!response.ok) {
+                throw new Error("HTTP " + response.status);
+            }
+
+            var payload = await response.json();
+            var wasAvailable = entityAvailability === "available";
+            entityAvailability = "available";
+            setFeedState("entities", true);
+            var nextRevision = payload && payload.revision != null
+                ? String(payload.revision)
+                : "";
+            if (nextRevision !== entityRevision) {
+                renderEntityPayload(payload);
+                entityRevision = nextRevision;
+            }
+            if (!wasAvailable) {
+                renderLayerRows();
+            }
+            syncLayerVisibility();
+        } catch (error) {
+            setFeedState("entities", false);
+        } finally {
+            entityRequestPending = false;
+            updateEntityPolling(false);
+        }
+    }
+
+    function ensureEntityFeed() {
+        if (!map || currentView !== "admin" || entityAvailability === "unavailable") {
+            return;
+        }
+
+        if (entityAvailability === "unknown" && !entityRequestPending) {
+            pollEntities();
+            return;
+        }
+        updateEntityPolling(true);
+    }
+
+    function normalizeRaidEvent(value) {
+        if (currentView !== "admin" || !value ||
+            !Number.isFinite(Number(value.x)) || !Number.isFinite(Number(value.z)) ||
+            !Number.isFinite(Number(value.radius)) || Number(value.radius) <= 0) {
+            return null;
+        }
+
+        return {
+            name: typeof value.name === "string" && value.name.trim() ? value.name.trim() : "Event",
+            radius: Number(value.radius),
+            x: Number(value.x),
+            z: Number(value.z)
+        };
+    }
+
+    function applyRaidEvent(value) {
+        currentRaidEvent = normalizeRaidEvent(value);
+        elements.raidBadge.hidden = !currentRaidEvent;
+        elements.raidBadge.textContent = currentRaidEvent ? "Raid: " + currentRaidEvent.name : "";
+
+        if (!map || !currentRaidEvent) {
+            if (raidCircle && map) {
+                map.removeLayer(raidCircle);
+            }
+            raidCircle = null;
+            renderLegend();
+            return;
+        }
+
+        var center = worldToLatLng(currentRaidEvent.x, currentRaidEvent.z);
+        var radius = worldDistanceToMap(currentRaidEvent.radius);
+        if (!raidCircle) {
+            raidCircle = L.circle(center, {
+                className: "raid-ring",
+                color: "#c9514b",
+                fillColor: "#6e1619",
+                fillOpacity: 0.22,
+                interactive: false,
+                opacity: 0.78,
+                radius: radius,
+                weight: 2
+            }).addTo(map);
+        } else {
+            raidCircle.setLatLng(center);
+            raidCircle.setRadius(radius);
+        }
+        renderLegend();
     }
 
     function createPinTooltip(pin) {
@@ -1600,6 +2024,16 @@
         currentView = nextView;
         if (map) {
             loadPoisForCurrentView();
+            renderLayerRows();
+            syncLayerVisibility();
+            if (currentView === "admin") {
+                ensureEntityFeed();
+            } else {
+                window.clearTimeout(entityPollTimer);
+                entityPollTimer = 0;
+                setFeedState("entities", true);
+                applyRaidEvent(null);
+            }
         }
     }
 
@@ -1684,35 +2118,147 @@
         image.src = url;
     }
 
+    function handleStatusPayload(status) {
+        if (!status || typeof status !== "object") {
+            throw new Error("Invalid status payload");
+        }
+
+        setFeedState("status", true);
+        elements.serverName.textContent = textOrDash(status.serverName);
+        elements.worldName.textContent = textOrDash(status.worldName);
+        renderWorldTime(status.day, status.timeOfDay);
+        renderPlayerCount(status.players);
+        updateRenderStatus(status.map);
+        updateView(status.view);
+        updateConsoleAvailability(status);
+        updateFogStatus(status.map && status.map.fog);
+        ensureMap(status.map);
+        applyRaidEvent(status.event);
+    }
+
+    function handlePlayersPayload(payload) {
+        if (!payload || typeof payload !== "object") {
+            throw new Error("Invalid players payload");
+        }
+
+        setFeedState("players", true);
+        latestPlayers = normalizePlayers(payload);
+        renderPlayerList(latestPlayers);
+        renderConsolePlayers();
+        updatePlayerMarkers(latestPlayers);
+    }
+
     async function pollStatus() {
+        if (eventSourceOpen) {
+            return;
+        }
+
         try {
-            var status = await fetchJson("/api/status");
-            setFeedState("status", true);
-            elements.serverName.textContent = textOrDash(status.serverName);
-            elements.worldName.textContent = textOrDash(status.worldName);
-            renderWorldTime(status.day, status.timeOfDay);
-            renderPlayerCount(status.players);
-            updateRenderStatus(status.map);
-            updateView(status.view);
-            updateConsoleAvailability(status);
-            updateFogStatus(status.map && status.map.fog);
-            ensureMap(status.map);
+            handleStatusPayload(await fetchJson("/api/status"));
         } catch (error) {
             setFeedState("status", false);
         }
     }
 
     async function pollPlayers() {
+        if (eventSourceOpen) {
+            return;
+        }
+
         try {
-            var payload = await fetchJson("/api/players");
-            setFeedState("players", true);
-            latestPlayers = normalizePlayers(payload);
-            renderPlayerList(latestPlayers);
-            renderConsolePlayers();
-            updatePlayerMarkers(latestPlayers);
+            handlePlayersPayload(await fetchJson("/api/players"));
         } catch (error) {
             setFeedState("players", false);
         }
+    }
+
+    function resumePollingAfterEventStream() {
+        pollStatus();
+        pollPlayers();
+        if (consoleIsActive()) {
+            pollConsoleLog();
+        }
+    }
+
+    function scheduleEventStreamRetry() {
+        if (typeof window.EventSource !== "function" || eventSourceRetryTimer) {
+            return;
+        }
+
+        var delay = eventSourceRetryDelay;
+        eventSourceRetryDelay = Math.min(eventSourceRetryDelay * 2, SSE_RETRY_MAX_MS);
+        eventSourceRetryTimer = window.setTimeout(function () {
+            eventSourceRetryTimer = 0;
+            connectEventStream();
+        }, delay);
+    }
+
+    function disconnectEventStream(source) {
+        if (source && source !== eventSource) {
+            return;
+        }
+
+        var activeSource = eventSource;
+        eventSource = null;
+        eventSourceOpen = false;
+        eventSourceLogFlowing = false;
+        if (activeSource) {
+            activeSource.close();
+        }
+        resumePollingAfterEventStream();
+        scheduleEventStreamRetry();
+    }
+
+    function readEventStreamPayload(source, event, handler) {
+        if (source !== eventSource) {
+            return;
+        }
+
+        try {
+            handler(JSON.parse(event.data));
+        } catch (error) {
+            disconnectEventStream(source);
+        }
+    }
+
+    function connectEventStream() {
+        if (typeof window.EventSource !== "function" || eventSource) {
+            return;
+        }
+
+        var source;
+        try {
+            source = new window.EventSource(authorizedUrl("/api/events"));
+        } catch (error) {
+            scheduleEventStreamRetry();
+            return;
+        }
+
+        eventSource = source;
+        eventSourceOpen = false;
+        eventSourceLogFlowing = false;
+        source.addEventListener("open", function () {
+            if (source !== eventSource) {
+                return;
+            }
+            eventSourceOpen = true;
+            eventSourceRetryDelay = SSE_RETRY_INITIAL_MS;
+        });
+        source.addEventListener("players", function (event) {
+            readEventStreamPayload(source, event, handlePlayersPayload);
+        });
+        source.addEventListener("status", function (event) {
+            readEventStreamPayload(source, event, handleStatusPayload);
+        });
+        source.addEventListener("log", function (event) {
+            readEventStreamPayload(source, event, function (payload) {
+                eventSourceLogFlowing = true;
+                handleConsoleLogPayload(payload, true);
+            });
+        });
+        source.addEventListener("error", function () {
+            disconnectEventStream(source);
+        });
     }
 
     function startPolling(task, interval) {
@@ -1729,4 +2275,11 @@
     renderConsolePlayers();
     startPolling(pollStatus, POLL_INTERVAL_MS);
     startPolling(pollPlayers, POLL_INTERVAL_MS);
+    connectEventStream();
+    window.addEventListener("beforeunload", function () {
+        window.clearTimeout(eventSourceRetryTimer);
+        if (eventSource) {
+            eventSource.close();
+        }
+    });
 }());

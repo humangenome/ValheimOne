@@ -14,6 +14,7 @@ internal sealed class LiveMapConfig
     private readonly ConfigEntryString _accessToken;
     private readonly ConfigEntryBool _publicView;
     private readonly ConfigEntryBool _publicShowPlayerNames;
+    private readonly ConfigEntryBool _entityLayer;
     private readonly ConfigEntryString _fogMode;
     private readonly ConfigEntryBool _consoleEnabled;
     private readonly ConfigEntryString _consoleWhitelist;
@@ -30,6 +31,7 @@ internal sealed class LiveMapConfig
         ConfigEntryString accessToken,
         ConfigEntryBool publicView,
         ConfigEntryBool publicShowPlayerNames,
+        ConfigEntryBool entityLayer,
         ConfigEntryString fogMode,
         ConfigEntryBool consoleEnabled,
         ConfigEntryString consoleWhitelist,
@@ -45,6 +47,7 @@ internal sealed class LiveMapConfig
         _accessToken = accessToken;
         _publicView = publicView;
         _publicShowPlayerNames = publicShowPlayerNames;
+        _entityLayer = entityLayer;
         _fogMode = fogMode;
         _consoleEnabled = consoleEnabled;
         _consoleWhitelist = consoleWhitelist;
@@ -68,6 +71,8 @@ internal sealed class LiveMapConfig
     public bool PublicView => _publicView.Value;
 
     public bool PublicShowPlayerNames => _publicShowPlayerNames.Value;
+
+    public bool EntityLayer => _entityLayer.Value;
 
     public bool ConsoleEnabled => _consoleEnabled.Value;
 

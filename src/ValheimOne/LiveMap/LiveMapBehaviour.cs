@@ -13,6 +13,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private WorldMapRenderer? _renderer;
     private FogTracker? _fogTracker;
     private MapTableReader? _mapTableReader;
+    private EntityTracker? _entityTracker;
     private LiveMapHttpServer? _httpServer;
     private LogRingBuffer? _logRingBuffer;
     private ConsoleBridge? _consoleBridge;
@@ -74,6 +75,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
 
         float now = Time.realtimeSinceStartup;
         _mapTableReader?.Tick(now, _fogMode == "explored");
+        _entityTracker?.Tick(now);
         if (now >= _nextPlayerUpdate)
         {
             RefreshSnapshot();
@@ -171,9 +173,11 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _fogTracker = new FogTracker(_renderer.CacheDirectory, log);
         _mapTableReader = new MapTableReader(_fogTracker, log);
         _mapTableReader.Start();
+        _entityTracker = new EntityTracker(config, log);
 
         RefreshSnapshot();
         _fogTracker.Tick(_snapshot.Players);
+        _entityTracker.Tick(Time.realtimeSinceStartup);
         _httpServer = new LiveMapHttpServer(
             port,
             config.BindIp,
@@ -184,6 +188,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             () => _snapshot,
             () => _poiCatalog,
             () => _mapTableReader?.Snapshot ?? MapTableSnapshot.Empty,
+            () => _entityTracker?.Snapshot ?? EntityMapSnapshot.Empty,
             () => _fogMode,
             _fogTracker,
             _renderer,
@@ -286,6 +291,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _logRingBuffer = null;
         _mapTableReader?.Stop();
         _mapTableReader = null;
+        _entityTracker = null;
         _fogTracker?.Stop();
         _fogTracker = null;
         _renderer?.Stop();

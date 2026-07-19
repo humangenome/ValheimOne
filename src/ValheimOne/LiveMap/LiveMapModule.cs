@@ -51,6 +51,10 @@ public sealed class LiveMapModule : IFeatureModule
             true,
             "Show player names on the public view. " +
             "When disabled, public players render as anonymous markers.");
+        ConfigEntryBool entityLayer = _feature.Bool(
+            "EntityLayer",
+            false,
+            "Serve ships, carts, and portals as a toggleable admin map layer.");
         ConfigEntryString fogMode = _feature.String(
             "FogMode",
             "off",
@@ -86,6 +90,7 @@ public sealed class LiveMapModule : IFeatureModule
             accessToken,
             publicView,
             publicShowPlayerNames,
+            entityLayer,
             fogMode,
             consoleEnabled,
             consoleWhitelist,

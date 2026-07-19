@@ -49,9 +49,10 @@
         </section>
 
         <section class="time-panel" aria-label="World time">
-            <div>
+            <div class="time-copy">
                 <div class="day-number" id="day-number">Day —</div>
                 <div class="world-clock" id="world-clock">--:--</div>
+                <div class="raid-badge" id="raid-badge" role="status" hidden></div>
             </div>
             <span class="sky-indicator is-sun" id="sky-indicator" role="img" aria-label="Daytime">☀</span>
         </section>
@@ -80,7 +81,7 @@
                 <header class="console-terminal-header">
                     <div>
                         <h1 id="console-heading">Server console</h1>
-                        <span>Live log · refreshes every 2 seconds</span>
+                        <span>Live log · streaming with polling fallback</span>
                     </div>
                     <span class="console-live-indicator">Live</span>
                 </header>

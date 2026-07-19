@@ -170,6 +170,10 @@ input {
     border-bottom: 1px solid var(--border);
 }
 
+.time-copy {
+    min-width: 0;
+}
+
 .day-number {
     color: var(--secondary);
     font-size: 11px;
@@ -186,6 +190,28 @@ input {
     font-weight: 560;
     letter-spacing: -0.02em;
     line-height: 1;
+}
+
+.raid-badge {
+    display: inline-flex;
+    max-width: 150px;
+    margin-top: 9px;
+    padding: 3px 7px;
+    overflow: hidden;
+    border: 1px solid rgb(201 81 75 / 42%);
+    border-radius: 999px;
+    background: rgb(110 22 25 / 22%);
+    color: #e78b84;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.025em;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.raid-badge[hidden] {
+    display: none;
 }
 
 .sky-indicator {
@@ -424,7 +450,7 @@ input {
 }
 
 .layers-control {
-    width: 174px;
+    width: 184px;
     overflow: hidden;
     border: 1px solid rgb(48 54 61 / 92%);
     border-radius: 8px;
@@ -471,8 +497,12 @@ input {
 }
 
 .layers-rows {
+    max-height: calc(100vh - 55px);
     padding: 3px 7px 7px;
+    overflow-y: auto;
     border-top: 1px solid rgb(48 54 61 / 72%);
+    scrollbar-color: var(--border-strong) transparent;
+    scrollbar-width: thin;
 }
 
 .layers-rows[hidden] {
@@ -581,6 +611,26 @@ input {
     font-size: 16px;
 }
 
+.layer-swatch-ship {
+    color: #75b6d1;
+    font-size: 13px;
+}
+
+.layer-swatch-cart {
+    color: #c69b68;
+    font-size: 12px;
+}
+
+.layer-swatch-portal {
+    color: #b18bd1;
+    font-size: 17px;
+}
+
+.layer-swatch-raid {
+    color: #d0615b;
+    font-size: 15px;
+}
+
 .layer-label {
     overflow: hidden;
     color: #c9d1d9;
@@ -590,13 +640,72 @@ input {
     white-space: nowrap;
 }
 
+.legend-block {
+    margin: 5px 2px 0;
+    padding-top: 4px;
+    border-top: 1px solid rgb(48 54 61 / 62%);
+}
+
+.legend-toggle {
+    display: flex;
+    width: 100%;
+    min-height: 27px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 5px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: #aeb8c2;
+    cursor: pointer;
+    font-size: 9px;
+    font-weight: 750;
+    letter-spacing: 0.065em;
+    text-transform: uppercase;
+}
+
+.legend-toggle:hover,
+.legend-toggle:focus-visible {
+    outline: none;
+    background: rgb(255 255 255 / 3%);
+}
+
+.legend-chevron {
+    color: #6e7681;
+    font-size: 12px;
+}
+
+.legend-items {
+    padding: 1px 4px 4px;
+}
+
+.legend-items[hidden] {
+    display: none;
+}
+
+.legend-item {
+    display: grid;
+    min-height: 23px;
+    grid-template-columns: 18px minmax(0, 1fr);
+    align-items: center;
+    gap: 7px;
+    color: #8f9aa5;
+    font-size: 10px;
+}
+
+.legend-swatch {
+    width: 18px;
+    height: 18px;
+}
+
 .fog-overlay {
     image-rendering: auto;
     pointer-events: none;
 }
 
 .poi-div-icon,
-.pin-div-icon {
+.pin-div-icon,
+.entity-div-icon {
     border: 0;
     background: transparent;
 }
@@ -652,6 +761,92 @@ input {
 .poi-other .poi-marker-shell {
     border-style: dashed;
     color: #87929d;
+}
+
+.poi-cluster-shell {
+    display: flex;
+    width: 32px;
+    height: 24px;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    border: 1px solid rgb(118 132 146 / 66%);
+    border-radius: 999px;
+    background: rgb(13 17 23 / 94%);
+    box-shadow: 0 3px 9px rgb(0 0 0 / 40%);
+    color: #b8c3ce;
+    line-height: 1;
+}
+
+.poi-cluster-shell > span {
+    font-size: 10px;
+    font-weight: 750;
+}
+
+.poi-cluster-shell > strong {
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 800;
+}
+
+.poi-spawn .poi-cluster-shell {
+    border-color: rgb(104 166 205 / 72%);
+    color: #a7d2ed;
+}
+
+.poi-trader .poi-cluster-shell {
+    border-color: rgb(185 148 66 / 72%);
+    color: #e1c16f;
+}
+
+.poi-boss .poi-cluster-shell {
+    border-color: rgb(174 91 85 / 74%);
+    color: #db918b;
+}
+
+.poi-dungeon .poi-cluster-shell {
+    border-color: rgb(118 104 165 / 72%);
+    color: #b1a6d7;
+}
+
+.poi-spawner .poi-cluster-shell {
+    border-color: rgb(169 91 125 / 70%);
+    color: #d99ab5;
+}
+
+.poi-other .poi-cluster-shell {
+    border-style: dashed;
+}
+
+.entity-marker-shell {
+    display: grid;
+    width: 22px;
+    height: 22px;
+    place-items: center;
+    border: 1px solid rgb(118 132 146 / 64%);
+    border-radius: 7px;
+    background: rgb(13 17 23 / 92%);
+    box-shadow: 0 2px 8px rgb(0 0 0 / 38%);
+    color: #b8c3ce;
+    font-size: 13px;
+    font-weight: 750;
+    line-height: 1;
+}
+
+.entity-ship .entity-marker-shell {
+    border-color: rgb(83 157 187 / 72%);
+    color: #8ac8df;
+}
+
+.entity-cart .entity-marker-shell {
+    border-color: rgb(170 123 75 / 72%);
+    color: #d2a875;
+}
+
+.entity-portal .entity-marker-shell {
+    border-color: rgb(139 91 179 / 74%);
+    color: #c19ae0;
+    font-size: 18px;
 }
 
 .pin-marker-shell {
@@ -710,6 +905,10 @@ input {
     border-color: rgb(160 113 51 / 64%);
 }
 
+.leaflet-tooltip.entity-tooltip {
+    border-color: rgb(94 116 139 / 68%);
+}
+
 .pin-tooltip-check {
     color: #9fb2a5;
 }
@@ -726,6 +925,11 @@ input {
 
 .player-marker.is-followed {
     animation: marker-pulse 1.8s ease-in-out infinite;
+}
+
+.raid-ring {
+    animation: raid-ring-pulse 1.8s ease-in-out infinite;
+    pointer-events: none;
 }
 
 .console-pane {
@@ -1316,6 +1520,17 @@ input {
     50% {
         filter: drop-shadow(0 0 7px rgb(77 159 236 / 82%));
         stroke-width: 3;
+    }
+}
+
+@keyframes raid-ring-pulse {
+    0%,
+    100% {
+        opacity: 0.52;
+    }
+
+    50% {
+        opacity: 0.94;
     }
 }
 

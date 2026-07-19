@@ -12,6 +12,10 @@ namespace ValheimOne.LiveMap;
 internal sealed class LiveMapHttpServer
 {
     private const int MaximumRequestBodyBytes = 8 * 1024;
+    private const int MaximumEventStreams = 8;
+    private const int EventStreamTickMilliseconds = 1000;
+    private const int EventStreamHeartbeatTicks = 15;
+    private const int EventStreamLogBatchSize = 100;
 
     private enum ViewLevel
     {
@@ -28,6 +32,7 @@ internal sealed class LiveMapHttpServer
     private readonly Func<LiveMapSnapshot> _getSnapshot;
     private readonly Func<PoiCatalog> _getPoiCatalog;
     private readonly Func<MapTableSnapshot> _getMapTableSnapshot;
+    private readonly Func<EntityMapSnapshot> _getEntitySnapshot;
     private readonly Func<string> _getFogMode;
     private readonly FogTracker _fogTracker;
     private readonly WorldMapRenderer _renderer;
@@ -41,6 +46,7 @@ internal sealed class LiveMapHttpServer
     private byte[]? _fogPng;
     private long _fogPngRevision = -1;
     private bool _consoleTokenWarningLogged;
+    private int _eventStreamCount;
     private volatile bool _stopping;
 
     public LiveMapHttpServer(
@@ -53,6 +59,7 @@ internal sealed class LiveMapHttpServer
         Func<LiveMapSnapshot> getSnapshot,
         Func<PoiCatalog> getPoiCatalog,
         Func<MapTableSnapshot> getMapTableSnapshot,
+        Func<EntityMapSnapshot> getEntitySnapshot,
         Func<string> getFogMode,
         FogTracker fogTracker,
         WorldMapRenderer renderer,
@@ -70,6 +77,7 @@ internal sealed class LiveMapHttpServer
         _getSnapshot = getSnapshot;
         _getPoiCatalog = getPoiCatalog;
         _getMapTableSnapshot = getMapTableSnapshot;
+        _getEntitySnapshot = getEntitySnapshot;
         _getFogMode = getFogMode;
         _fogTracker = fogTracker;
         _renderer = renderer;
@@ -283,6 +291,14 @@ internal sealed class LiveMapHttpServer
             {
                 ServePlayers(response, viewLevel);
             }
+            else if (isGet && path == "/api/entities")
+            {
+                ServeEntities(response, viewLevel);
+            }
+            else if (isGet && path == "/api/events")
+            {
+                ServeEvents(request, response, viewLevel);
+            }
             else if (isGet && path == "/api/pois")
             {
                 ServePois(response, viewLevel);
@@ -463,6 +479,15 @@ internal sealed class LiveMapHttpServer
     private void ServeStatus(HttpListenerResponse response, ViewLevel viewLevel)
     {
         LiveMapSnapshot snapshot = _getSnapshot();
+        string json = BuildStatusJson(snapshot, viewLevel, out _);
+        WriteJson(response, HttpStatusCode.OK, json);
+    }
+
+    private string BuildStatusJson(
+        LiveMapSnapshot snapshot,
+        ViewLevel viewLevel,
+        out string changeKey)
+    {
         bool seesAllPlayers = SeesAllPlayers(viewLevel);
         int visiblePlayers = 0;
         for (int index = 0; index < snapshot.Players.Length; index++)
@@ -477,7 +502,16 @@ internal sealed class LiveMapHttpServer
                                 _config.ConsoleEnabled &&
                                 !string.IsNullOrEmpty(_config.AccessToken) &&
                                 _consoleBridge != null;
-        var json = new StringBuilder(336);
+        string mapState = _renderer.StateName;
+        string mapProgress = JsonWriter.Number(_renderer.Progress);
+        string fogMode = GetEffectiveFogMode(viewLevel);
+        FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
+        long fogRevision = fogMode == "off" ? 0 : fogSnapshot.Revision;
+        EntityMapSnapshot entitySnapshot = _getEntitySnapshot();
+        RaidEventSnapshot? activeEvent = viewLevel == ViewLevel.Admin
+            ? entitySnapshot.Event
+            : null;
+        var json = new StringBuilder(416);
         json.Append('{');
         json.Append("\"serverName\":").Append(JsonWriter.Quote(snapshot.ServerName));
         json.Append(",\"worldName\":").Append(JsonWriter.Quote(snapshot.WorldName));
@@ -487,21 +521,172 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"view\":").Append(JsonWriter.Quote(
             viewLevel == ViewLevel.Admin ? "admin" : "public"));
         json.Append(",\"console\":").Append(consoleAvailable ? "true" : "false");
+        if (viewLevel == ViewLevel.Admin)
+        {
+            json.Append(",\"event\":");
+            AppendRaidEventJson(json, activeEvent);
+        }
+
         json.Append(",\"map\":{");
-        json.Append("\"state\":").Append(JsonWriter.Quote(_renderer.StateName));
-        json.Append(",\"progress\":").Append(JsonWriter.Number(_renderer.Progress));
+        json.Append("\"state\":").Append(JsonWriter.Quote(mapState));
+        json.Append(",\"progress\":").Append(mapProgress);
         json.Append(",\"textureSize\":").Append(_renderer.TextureSize.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"pixelSize\":").Append(JsonWriter.Number(WorldMapRenderer.PixelSize));
         json.Append(",\"worldRadius\":").Append(WorldMapRenderer.WorldRadius.ToString(CultureInfo.InvariantCulture));
-        string fogMode = GetEffectiveFogMode(viewLevel);
-        FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
-        long fogRevision = fogMode == "off" ? 0 : fogSnapshot.Revision;
         json.Append(",\"fog\":{");
         json.Append("\"mode\":").Append(JsonWriter.Quote(fogMode));
         json.Append(",\"revision\":").Append(fogRevision.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"size\":").Append(FogTracker.Size.ToString(CultureInfo.InvariantCulture));
         json.Append("}}}");
-        WriteJson(response, HttpStatusCode.OK, json.ToString());
+
+        var key = new StringBuilder(96);
+        key.Append(snapshot.Day.ToString(CultureInfo.InvariantCulture)).Append('|');
+        key.Append(JsonWriter.Number(Math.Round(snapshot.TimeOfDay, 3))).Append('|');
+        key.Append(visiblePlayers.ToString(CultureInfo.InvariantCulture)).Append('|');
+        key.Append(mapState).Append('|');
+        key.Append(mapProgress).Append('|');
+        key.Append(fogRevision.ToString(CultureInfo.InvariantCulture));
+        if (viewLevel == ViewLevel.Admin)
+        {
+            key.Append('|');
+            if (activeEvent == null)
+            {
+                key.Append("no-event");
+            }
+            else
+            {
+                key.Append(activeEvent.Name).Append('|');
+                key.Append(JsonWriter.Number(Math.Round(activeEvent.Elapsed)));
+            }
+        }
+
+        changeKey = key.ToString();
+        return json.ToString();
+    }
+
+    private void ServeEvents(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        ViewLevel viewLevel)
+    {
+        int streamCount = Interlocked.Increment(ref _eventStreamCount);
+        try
+        {
+            if (streamCount > MaximumEventStreams)
+            {
+                WriteJson(
+                    response,
+                    HttpStatusCode.Conflict,
+                    "{\"error\":\"too many event streams\"}");
+                return;
+            }
+
+            bool sendLogs = viewLevel == ViewLevel.Admin &&
+                            _config.ConsoleEnabled &&
+                            HasConsoleToken(request) &&
+                            _consoleBridge != null &&
+                            _logRingBuffer != null;
+
+            response.StatusCode = (int)HttpStatusCode.OK;
+            response.ContentType = "text/event-stream";
+            response.Headers[HttpResponseHeader.CacheControl] = "no-store";
+            response.SendChunked = true;
+            response.KeepAlive = true;
+
+            Stream output = response.OutputStream;
+            WriteEventStreamText(output, "retry: 5000\n\n");
+
+            LiveMapSnapshot snapshot = _getSnapshot();
+            LiveMapSnapshot lastPlayerSnapshot = snapshot;
+            WriteEventStreamEvent(output, "players", BuildPlayersJson(snapshot, viewLevel));
+
+            string statusJson = BuildStatusJson(snapshot, viewLevel, out string statusChangeKey);
+            WriteEventStreamEvent(output, "status", statusJson);
+
+            long logCursor = 0L;
+            if (sendLogs)
+            {
+                string logJson = BuildConsoleLogJson(
+                    logCursor,
+                    EventStreamLogBatchSize,
+                    out logCursor,
+                    out _);
+                WriteEventStreamEvent(output, "log", logJson);
+            }
+
+            int idleTicks = 0;
+            while (!_stopping)
+            {
+                Thread.Sleep(EventStreamTickMilliseconds);
+                if (_stopping)
+                {
+                    break;
+                }
+
+                bool sentEvent = false;
+                snapshot = _getSnapshot();
+                if (!ReferenceEquals(snapshot, lastPlayerSnapshot))
+                {
+                    WriteEventStreamEvent(output, "players", BuildPlayersJson(snapshot, viewLevel));
+                    lastPlayerSnapshot = snapshot;
+                    sentEvent = true;
+                }
+
+                statusJson = BuildStatusJson(snapshot, viewLevel, out string nextStatusChangeKey);
+                if (!string.Equals(statusChangeKey, nextStatusChangeKey, StringComparison.Ordinal))
+                {
+                    WriteEventStreamEvent(output, "status", statusJson);
+                    statusChangeKey = nextStatusChangeKey;
+                    sentEvent = true;
+                }
+
+                if (sendLogs)
+                {
+                    string logJson = BuildConsoleLogJson(
+                        logCursor,
+                        EventStreamLogBatchSize,
+                        out long nextLogCursor,
+                        out int logLineCount);
+                    if (logLineCount > 0)
+                    {
+                        WriteEventStreamEvent(output, "log", logJson);
+                        logCursor = nextLogCursor;
+                        sentEvent = true;
+                    }
+                }
+
+                if (sentEvent)
+                {
+                    idleTicks = 0;
+                }
+                else if (++idleTicks >= EventStreamHeartbeatTicks)
+                {
+                    WriteEventStreamText(output, ": ping\n\n");
+                    idleTicks = 0;
+                }
+            }
+        }
+        catch (HttpListenerException)
+        {
+            // The event-stream client disconnected.
+        }
+        catch (IOException)
+        {
+            // The event-stream client disconnected.
+        }
+        catch (ObjectDisposedException)
+        {
+            // The event-stream client disconnected or the server is stopping.
+        }
+        catch (InvalidOperationException)
+        {
+            // The event-stream response is no longer writable.
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _eventStreamCount);
+            TryCloseEventStream(response);
+        }
     }
 
     private void ServeConsoleExec(HttpListenerRequest request, HttpListenerResponse response)
@@ -561,8 +746,19 @@ internal sealed class LiveMapHttpServer
         long cursor = ParseLong(request.QueryString["cursor"], 0L);
         long requestedMaximum = ParseLong(request.QueryString["max"], 200L);
         int maximum = (int)Math.Max(1L, Math.Min(500L, requestedMaximum));
+        string json = BuildConsoleLogJson(cursor, maximum, out _, out _);
+        WriteJson(response, HttpStatusCode.OK, json);
+    }
+
+    private string BuildConsoleLogJson(
+        long cursor,
+        int maximum,
+        out long latestCursor,
+        out int lineCount)
+    {
         var entries = new List<LogEntry>(maximum);
-        long latestCursor = _logRingBuffer!.CopyAfter(cursor, maximum, entries);
+        latestCursor = _logRingBuffer!.CopyAfter(cursor, maximum, entries);
+        lineCount = entries.Count;
         var json = new StringBuilder(32 + (entries.Count * 128));
         json.Append("{\"cursor\":");
         json.Append(latestCursor.ToString(CultureInfo.InvariantCulture));
@@ -585,7 +781,7 @@ internal sealed class LiveMapHttpServer
         }
 
         json.Append("]}");
-        WriteJson(response, HttpStatusCode.OK, json.ToString());
+        return json.ToString();
     }
 
     private void ServeConsoleMeta(HttpListenerResponse response)
@@ -712,6 +908,12 @@ internal sealed class LiveMapHttpServer
     private void ServePlayers(HttpListenerResponse response, ViewLevel viewLevel)
     {
         LiveMapSnapshot snapshot = _getSnapshot();
+        string json = BuildPlayersJson(snapshot, viewLevel);
+        WriteJson(response, HttpStatusCode.OK, json);
+    }
+
+    private string BuildPlayersJson(LiveMapSnapshot snapshot, ViewLevel viewLevel)
+    {
         bool seesAllPlayers = SeesAllPlayers(viewLevel);
         bool showNames = viewLevel == ViewLevel.Admin || _publicShowPlayerNames;
         var json = new StringBuilder(128 + (snapshot.Players.Length * 96));
@@ -740,7 +942,62 @@ internal sealed class LiveMapHttpServer
         }
 
         json.Append("]}");
+        return json.ToString();
+    }
+
+    private void ServeEntities(HttpListenerResponse response, ViewLevel viewLevel)
+    {
+        if (viewLevel != ViewLevel.Admin || !_config.EntityLayer)
+        {
+            WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
+        EntityMapSnapshot snapshot = _getEntitySnapshot();
+        var json = new StringBuilder(64 + (snapshot.Entities.Length * 112));
+        json.Append("{\"revision\":");
+        json.Append(snapshot.Revision.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"time\":").Append(snapshot.UnixMs.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"entities\":[");
+        for (int index = 0; index < snapshot.Entities.Length; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            TrackedEntitySnapshot entity = snapshot.Entities[index];
+            json.Append('{');
+            json.Append("\"group\":").Append(JsonWriter.Quote(entity.Group));
+            json.Append(",\"prefab\":").Append(JsonWriter.Quote(entity.Prefab));
+            json.Append(",\"x\":").Append(JsonWriter.Number(entity.X));
+            json.Append(",\"y\":").Append(JsonWriter.Number(entity.Y));
+            json.Append(",\"z\":").Append(JsonWriter.Number(entity.Z));
+            json.Append('}');
+        }
+
+        json.Append("],\"event\":");
+        AppendRaidEventJson(json, snapshot.Event);
+        json.Append('}');
         WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private static void AppendRaidEventJson(StringBuilder json, RaidEventSnapshot? activeEvent)
+    {
+        if (activeEvent == null)
+        {
+            json.Append("null");
+            return;
+        }
+
+        json.Append('{');
+        json.Append("\"name\":").Append(JsonWriter.Quote(activeEvent.Name));
+        json.Append(",\"x\":").Append(JsonWriter.Number(activeEvent.X));
+        json.Append(",\"z\":").Append(JsonWriter.Number(activeEvent.Z));
+        json.Append(",\"radius\":").Append(JsonWriter.Number(activeEvent.Radius));
+        json.Append(",\"elapsed\":").Append(JsonWriter.Number(activeEvent.Elapsed));
+        json.Append(",\"duration\":").Append(JsonWriter.Number(activeEvent.Duration));
+        json.Append('}');
     }
 
     private void ServePois(HttpListenerResponse response, ViewLevel viewLevel)
@@ -1219,6 +1476,42 @@ internal sealed class LiveMapHttpServer
         return long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsed)
             ? parsed
             : fallback;
+    }
+
+    private static void WriteEventStreamEvent(Stream output, string eventName, string json)
+    {
+        WriteEventStreamText(output, "event: " + eventName + "\ndata: " + json + "\n\n");
+    }
+
+    private static void WriteEventStreamText(Stream output, string text)
+    {
+        byte[] bytes = Encoding.UTF8.GetBytes(text);
+        output.Write(bytes, 0, bytes.Length);
+        output.Flush();
+    }
+
+    private static void TryCloseEventStream(HttpListenerResponse response)
+    {
+        try
+        {
+            response.OutputStream.Close();
+        }
+        catch (HttpListenerException)
+        {
+            // The event-stream client already disconnected.
+        }
+        catch (IOException)
+        {
+            // The event-stream client already disconnected.
+        }
+        catch (ObjectDisposedException)
+        {
+            // The event-stream response is already closed.
+        }
+        catch (InvalidOperationException)
+        {
+            // The event-stream response can no longer be closed normally.
+        }
     }
 
     private static void WriteJson(HttpListenerResponse response, HttpStatusCode status, string json)
