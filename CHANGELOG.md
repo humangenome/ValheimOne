@@ -39,3 +39,15 @@ All notable changes to ValheimOne will be documented in this file. This project 
 - LiveMap P3 web admin console (opt-in via `ConsoleEnabled`, admin token required): whitelisted console command execution through the game's own console path (`ConsoleWhitelist` / `AllowAllCommands`), cursor-polled server-log ring buffer (`ConsoleLogLines`), kick/ban/unban/banlist and world-save endpoints, and a `/api/stats` health snapshot (uptime, players, ZDOs, Mono heap, frame timings).
 - Dashboard Console tab: live server log with severity colors and resume-scroll, command input with history and whitelist autocomplete, player kick/ban and banned-list unban with confirm dialogs, stats readout, and a save-world button — same dark self-contained page, admin view only.
 - `StatusPublic` config key (default on): `/api/status` stays available without a token for hosting-panel queries even when the map is token-locked; see `docs/query.md`.
+- Opt-in `[ProductionSpeeds]` module for production time and queue or fuel capacity overrides across smelters, blast furnaces, kilns, windmills, spinning wheels, and eitr refineries.
+- Opt-in `[CookingStation]` module for cook speed, optional fire bypass, and automatic fuel and nearby-container raw-food feeding.
+- Opt-in `[FireSource]` module for infinite torches and fires.
+- Opt-in `[StructuralIntegrity]` module for disabling weather damage and reducing support loss by material.
+- Opt-in `[ContainerSizes]` module for chest, cart, karve, and longship grid overrides with an item-safe shrink guard.
+- Opt-in `[Tames]` module for taming, growth, and procreation modifiers.
+- Opt-in `[Events]` module for raid chance and interval controls, raid disabling, and guardian-power duration and cooldown overrides.
+- Opt-in `[Trader]` module for buy-price multiplication.
+
+### Deferred
+
+- Client-only quality-of-life features from the reference set—first-person and camera options, HUD tweaks, hotkey tools, and advanced building or editing modes—remain intentionally out of scope; mob-AI aggression tuning was skipped because no stable non-transpiler hook was available.
