@@ -62,7 +62,7 @@ public sealed class LiveMapModule : IFeatureModule
             "Enable the web admin console API and dashboard console tab.");
         ConfigEntryString consoleWhitelist = _feature.String(
             "ConsoleWhitelist",
-            "say save kick ban unban banned lodbias sleep",
+            "save kick ban unban banned lodbias sleep",
             "Space-separated list of console commands the web console may execute.");
         ConfigEntryBool allowAllCommands = _feature.Bool(
             "AllowAllCommands",

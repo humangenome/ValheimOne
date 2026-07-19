@@ -30,6 +30,13 @@
             </div>
         </header>
 
+        <nav id="view-tabs" class="view-tabs" aria-label="Admin views" role="tablist" hidden>
+            <button id="map-tab" class="view-tab is-active" type="button" role="tab"
+                    aria-controls="map" aria-selected="true">Map</button>
+            <button id="console-tab" class="view-tab" type="button" role="tab"
+                    aria-controls="console-pane" aria-selected="false" tabindex="-1">Console</button>
+        </nav>
+
         <section class="server-details" aria-label="Server details">
             <div class="detail-line">
                 <span class="detail-label">World</span>
@@ -65,7 +72,91 @@
         </footer>
     </aside>
 
-    <main id="map" aria-label="Valheim world map"></main>
+    <main id="map" aria-label="Valheim world map" aria-labelledby="map-tab" role="tabpanel"></main>
+
+    <section id="console-pane" class="console-pane" aria-labelledby="console-tab" role="tabpanel" hidden>
+        <div class="console-layout">
+            <section class="console-terminal" aria-labelledby="console-heading">
+                <header class="console-terminal-header">
+                    <div>
+                        <h1 id="console-heading">Server console</h1>
+                        <span>Live log · refreshes every 2 seconds</span>
+                    </div>
+                    <span class="console-live-indicator">Live</span>
+                </header>
+
+                <div class="console-log-shell">
+                    <div id="console-log" class="console-log" role="log" aria-live="polite"></div>
+                    <button id="console-resume" class="console-resume" type="button" hidden>
+                        New lines · Resume
+                    </button>
+                </div>
+
+                <form id="console-command-form" class="console-command-form" autocomplete="off">
+                    <div id="console-suggestions" class="console-suggestions" role="listbox"
+                         aria-label="Command suggestions" hidden></div>
+                    <label class="console-command-label" for="console-command">
+                        <span aria-hidden="true">&gt;</span>
+                        <input id="console-command" type="text" inputmode="text" spellcheck="false"
+                               aria-autocomplete="list" aria-controls="console-suggestions"
+                               placeholder="Enter a server command">
+                    </label>
+                </form>
+            </section>
+
+            <aside class="console-side" aria-label="Server administration">
+                <section class="console-side-section" aria-labelledby="stats-heading">
+                    <div class="console-section-heading">
+                        <h2 id="stats-heading">Stats</h2>
+                        <span>5s refresh</span>
+                    </div>
+                    <dl class="console-stats">
+                        <div><dt>Uptime</dt><dd id="console-stat-uptime">—</dd></div>
+                        <div><dt>Players</dt><dd id="console-stat-players">—</dd></div>
+                        <div><dt>ZDO count</dt><dd id="console-stat-zdo">—</dd></div>
+                        <div><dt>Mono heap</dt><dd id="console-stat-heap">—</dd></div>
+                        <div><dt>Frame avg</dt><dd id="console-stat-frame-avg">—</dd></div>
+                        <div><dt>Frame max</dt><dd id="console-stat-frame-max">—</dd></div>
+                    </dl>
+                    <div class="console-save-row">
+                        <button id="console-save" class="console-primary-button" type="button">Save world</button>
+                        <span id="console-save-status" class="console-action-status" role="status"></span>
+                    </div>
+                </section>
+
+                <section class="console-side-section" aria-labelledby="console-players-heading">
+                    <div class="console-section-heading">
+                        <h2 id="console-players-heading">Players</h2>
+                        <span id="console-player-count">0 online</span>
+                    </div>
+                    <ul id="console-player-list" class="console-admin-list">
+                        <li class="console-empty-list">No players online</li>
+                    </ul>
+                </section>
+
+                <section class="console-side-section" aria-labelledby="banned-heading">
+                    <div class="console-section-heading">
+                        <h2 id="banned-heading">Banned</h2>
+                        <span id="console-banned-count">—</span>
+                    </div>
+                    <ul id="console-banned-list" class="console-admin-list">
+                        <li class="console-empty-list">Open Console to load bans</li>
+                    </ul>
+                </section>
+            </aside>
+        </div>
+
+        <div id="console-confirm-backdrop" class="console-confirm-backdrop" hidden>
+            <div class="console-confirm-dialog" role="dialog" aria-modal="true"
+                 aria-labelledby="console-confirm-message">
+                <p id="console-confirm-message"></p>
+                <div class="console-confirm-actions">
+                    <button id="console-confirm-cancel" type="button">Cancel</button>
+                    <button id="console-confirm-submit" class="is-danger" type="button">Confirm</button>
+                </div>
+            </div>
+        </div>
+    </section>
 
     <div id="render-status" class="render-status" role="status" aria-live="polite">
         <div class="render-card">
