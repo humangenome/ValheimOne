@@ -69,18 +69,12 @@ input {
 }
 
 .brand-mark {
-    display: grid;
-    width: 34px;
-    height: 34px;
-    flex: 0 0 34px;
-    place-items: center;
-    border: 1px solid rgb(77 159 236 / 52%);
-    border-radius: 9px;
-    background: rgb(77 159 236 / 10%);
-    color: #8bc2f5;
-    font-size: 11px;
-    font-weight: 750;
-    letter-spacing: 0.04em;
+    display: block;
+    width: 40px;
+    height: 40px;
+    flex: 0 0 40px;
+    border-radius: 50%;
+    object-fit: contain;
 }
 
 .brand-name {
@@ -414,11 +408,12 @@ input {
     right: 0;
     bottom: 0;
     left: var(--sidebar-width);
-    background: #0a0f14;
+    /* Must match MapShading.DeepWater (rgb 22, 36, 61) so letterbox and loading tiles blend into the ocean. */
+    background: #16243d;
 }
 
 .leaflet-container {
-    background: #0a0f14;
+    background: #16243d;
     font-family: inherit;
 }
 
