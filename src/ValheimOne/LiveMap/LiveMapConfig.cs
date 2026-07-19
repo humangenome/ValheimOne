@@ -11,6 +11,8 @@ internal sealed class LiveMapConfig
     private readonly ConfigEntryBool _adminSeesAll;
     private readonly ConfigEntryString _bindIp;
     private readonly ConfigEntryString _accessToken;
+    private readonly ConfigEntryBool _publicView;
+    private readonly ConfigEntryBool _publicShowPlayerNames;
     private readonly ConfigEntryString _fogMode;
 
     public LiveMapConfig(
@@ -20,6 +22,8 @@ internal sealed class LiveMapConfig
         ConfigEntryBool adminSeesAll,
         ConfigEntryString bindIp,
         ConfigEntryString accessToken,
+        ConfigEntryBool publicView,
+        ConfigEntryBool publicShowPlayerNames,
         ConfigEntryString fogMode)
     {
         _port = port;
@@ -28,6 +32,8 @@ internal sealed class LiveMapConfig
         _adminSeesAll = adminSeesAll;
         _bindIp = bindIp;
         _accessToken = accessToken;
+        _publicView = publicView;
+        _publicShowPlayerNames = publicShowPlayerNames;
         _fogMode = fogMode;
     }
 
@@ -42,6 +48,10 @@ internal sealed class LiveMapConfig
     public string BindIp => _bindIp.Value;
 
     public string AccessToken => _accessToken.Value;
+
+    public bool PublicView => _publicView.Value;
+
+    public bool PublicShowPlayerNames => _publicShowPlayerNames.Value;
 
     public string FogMode
     {

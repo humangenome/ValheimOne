@@ -32,7 +32,7 @@ public sealed class LiveMapModule : IFeatureModule
         ConfigEntryBool adminSeesAll = _feature.Bool(
             "AdminSeesAll",
             false,
-            "When enabled, the player API includes players who disabled in-game public positioning.");
+            "When AccessToken is empty, include players who disabled in-game public positioning.");
         ConfigEntryString bindIp = _feature.String(
             "BindIp",
             string.Empty,
@@ -40,7 +40,17 @@ public sealed class LiveMapModule : IFeatureModule
         ConfigEntryString accessToken = _feature.String(
             "AccessToken",
             string.Empty,
-            "Optional token required as ?token= or X-LiveMap-Token on every HTTP request.");
+            "Optional token granting the admin map view as ?token= or X-LiveMap-Token.");
+        ConfigEntryBool publicView = _feature.Bool(
+            "PublicView",
+            true,
+            "Serve a read-only public map view to requests without the access token. " +
+            "Ignored when AccessToken is empty.");
+        ConfigEntryBool publicShowPlayerNames = _feature.Bool(
+            "PublicShowPlayerNames",
+            true,
+            "Show player names on the public view. " +
+            "When disabled, public players render as anonymous markers.");
         ConfigEntryString fogMode = _feature.String(
             "FogMode",
             "off",
@@ -53,6 +63,8 @@ public sealed class LiveMapModule : IFeatureModule
             adminSeesAll,
             bindIp,
             accessToken,
+            publicView,
+            publicShowPlayerNames,
             fogMode);
     }
 

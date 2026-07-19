@@ -11,10 +11,18 @@ namespace ValheimOne.LiveMap;
 
 internal sealed class LiveMapHttpServer
 {
+    private enum ViewLevel
+    {
+        Admin,
+        Public,
+    }
+
     private readonly int _port;
     private readonly string _bindIp;
     private readonly string _accessToken;
     private readonly bool _adminSeesAll;
+    private readonly bool _publicView;
+    private readonly bool _publicShowPlayerNames;
     private readonly Func<LiveMapSnapshot> _getSnapshot;
     private readonly Func<PoiCatalog> _getPoiCatalog;
     private readonly Func<MapTableSnapshot> _getMapTableSnapshot;
@@ -34,6 +42,8 @@ internal sealed class LiveMapHttpServer
         string bindIp,
         string accessToken,
         bool adminSeesAll,
+        bool publicView,
+        bool publicShowPlayerNames,
         Func<LiveMapSnapshot> getSnapshot,
         Func<PoiCatalog> getPoiCatalog,
         Func<MapTableSnapshot> getMapTableSnapshot,
@@ -46,6 +56,8 @@ internal sealed class LiveMapHttpServer
         _bindIp = bindIp.Trim();
         _accessToken = accessToken;
         _adminSeesAll = adminSeesAll;
+        _publicView = publicView;
+        _publicShowPlayerNames = publicShowPlayerNames;
         _getSnapshot = getSnapshot;
         _getPoiCatalog = getPoiCatalog;
         _getMapTableSnapshot = getMapTableSnapshot;
@@ -199,7 +211,7 @@ internal sealed class LiveMapHttpServer
         response.KeepAlive = false;
         try
         {
-            if (!IsAuthorized(context.Request))
+            if (!TryResolveView(context.Request, out ViewLevel viewLevel))
             {
                 WriteJson(response, HttpStatusCode.Unauthorized, "{\"error\":\"unauthorized\"}");
                 return;
@@ -214,7 +226,7 @@ internal sealed class LiveMapHttpServer
             string path = context.Request.Url?.AbsolutePath ?? "/";
             if (path == "/")
             {
-                ServeIndex(response);
+                ServeIndex(response, viewLevel);
             }
             else if (path.StartsWith("/assets/", StringComparison.Ordinal))
             {
@@ -222,15 +234,15 @@ internal sealed class LiveMapHttpServer
             }
             else if (path == "/api/status")
             {
-                ServeStatus(response);
+                ServeStatus(response, viewLevel);
             }
             else if (path == "/api/players")
             {
-                ServePlayers(response);
+                ServePlayers(response, viewLevel);
             }
             else if (path == "/api/pois")
             {
-                ServePois(response);
+                ServePois(response, viewLevel);
             }
             else if (path == "/api/pins")
             {
@@ -246,7 +258,7 @@ internal sealed class LiveMapHttpServer
             }
             else if (path == "/fog.png")
             {
-                ServeFogImage(response);
+                ServeFogImage(response, viewLevel);
             }
             else
             {
@@ -272,27 +284,31 @@ internal sealed class LiveMapHttpServer
         }
     }
 
-    private bool IsAuthorized(HttpListenerRequest request)
+    private bool TryResolveView(HttpListenerRequest request, out ViewLevel viewLevel)
     {
         if (string.IsNullOrEmpty(_accessToken))
         {
+            viewLevel = ViewLevel.Admin;
             return true;
         }
 
-        string supplied = request.QueryString["token"] ??
-                          request.Headers["X-LiveMap-Token"] ??
-                          string.Empty;
-        return FixedTimeEquals(_accessToken, supplied);
+        string queryToken = request.QueryString["token"] ?? string.Empty;
+        string headerToken = request.Headers["X-LiveMap-Token"] ?? string.Empty;
+        bool isAdmin = FixedTimeEquals(_accessToken, queryToken);
+        isAdmin |= FixedTimeEquals(_accessToken, headerToken);
+        viewLevel = isAdmin ? ViewLevel.Admin : ViewLevel.Public;
+        return isAdmin || _publicView;
     }
 
-    private void ServeIndex(HttpListenerResponse response)
+    private void ServeIndex(HttpListenerResponse response, ViewLevel viewLevel)
     {
         string html = Encoding.UTF8.GetString(EmbeddedAssets.Get("index.html"));
-        string tokenQuery = string.IsNullOrEmpty(_accessToken)
+        string token = viewLevel == ViewLevel.Admin ? _accessToken : string.Empty;
+        string tokenQuery = string.IsNullOrEmpty(token)
             ? string.Empty
-            : "?token=" + Uri.EscapeDataString(_accessToken);
+            : "?token=" + Uri.EscapeDataString(token);
         html = html.Replace("{{TOKEN_QUERY}}", tokenQuery);
-        html = html.Replace("{{TOKEN_VALUE}}", HtmlAttributeEncode(_accessToken));
+        html = html.Replace("{{TOKEN_VALUE}}", HtmlAttributeEncode(token));
         WriteBytes(
             response,
             HttpStatusCode.OK,
@@ -343,13 +359,14 @@ internal sealed class LiveMapHttpServer
             "public, max-age=3600");
     }
 
-    private void ServeStatus(HttpListenerResponse response)
+    private void ServeStatus(HttpListenerResponse response, ViewLevel viewLevel)
     {
         LiveMapSnapshot snapshot = _getSnapshot();
+        bool seesAllPlayers = SeesAllPlayers(viewLevel);
         int visiblePlayers = 0;
         for (int index = 0; index < snapshot.Players.Length; index++)
         {
-            if (_adminSeesAll || snapshot.Players[index].IsPublic)
+            if (seesAllPlayers || snapshot.Players[index].IsPublic)
             {
                 visiblePlayers++;
             }
@@ -362,13 +379,15 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"day\":").Append(snapshot.Day.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"timeOfDay\":").Append(JsonWriter.Number(snapshot.TimeOfDay));
         json.Append(",\"players\":").Append(visiblePlayers.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"view\":").Append(JsonWriter.Quote(
+            viewLevel == ViewLevel.Admin ? "admin" : "public"));
         json.Append(",\"map\":{");
         json.Append("\"state\":").Append(JsonWriter.Quote(_renderer.StateName));
         json.Append(",\"progress\":").Append(JsonWriter.Number(_renderer.Progress));
         json.Append(",\"textureSize\":").Append(_renderer.TextureSize.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"pixelSize\":").Append(JsonWriter.Number(WorldMapRenderer.PixelSize));
         json.Append(",\"worldRadius\":").Append(WorldMapRenderer.WorldRadius.ToString(CultureInfo.InvariantCulture));
-        string fogMode = _getFogMode();
+        string fogMode = GetEffectiveFogMode(viewLevel);
         FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
         long fogRevision = fogMode == "off" ? 0 : fogSnapshot.Revision;
         json.Append(",\"fog\":{");
@@ -379,16 +398,18 @@ internal sealed class LiveMapHttpServer
         WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
 
-    private void ServePlayers(HttpListenerResponse response)
+    private void ServePlayers(HttpListenerResponse response, ViewLevel viewLevel)
     {
         LiveMapSnapshot snapshot = _getSnapshot();
+        bool seesAllPlayers = SeesAllPlayers(viewLevel);
+        bool showNames = viewLevel == ViewLevel.Admin || _publicShowPlayerNames;
         var json = new StringBuilder(128 + (snapshot.Players.Length * 96));
         json.Append("{\"players\":[");
         bool needsComma = false;
         for (int index = 0; index < snapshot.Players.Length; index++)
         {
             LiveMapPlayerSnapshot player = snapshot.Players[index];
-            if (!_adminSeesAll && !player.IsPublic)
+            if (!seesAllPlayers && !player.IsPublic)
             {
                 continue;
             }
@@ -399,7 +420,7 @@ internal sealed class LiveMapHttpServer
             }
 
             json.Append('{');
-            json.Append("\"name\":").Append(JsonWriter.Quote(player.Name));
+            json.Append("\"name\":").Append(JsonWriter.Quote(showNames ? player.Name : string.Empty));
             json.Append(",\"x\":").Append(JsonWriter.Number(player.X));
             json.Append(",\"y\":").Append(JsonWriter.Number(player.Y));
             json.Append(",\"z\":").Append(JsonWriter.Number(player.Z));
@@ -411,19 +432,25 @@ internal sealed class LiveMapHttpServer
         WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
 
-    private void ServePois(HttpListenerResponse response)
+    private void ServePois(HttpListenerResponse response, ViewLevel viewLevel)
     {
         IReadOnlyList<PoiSnapshot> pois = _getPoiCatalog().ServedPois;
         var json = new StringBuilder(16 + (pois.Count * 96));
         json.Append("{\"pois\":[");
+        bool needsComma = false;
         for (int index = 0; index < pois.Count; index++)
         {
-            if (index > 0)
+            PoiSnapshot poi = pois[index];
+            if (viewLevel == ViewLevel.Public && !IsPublicPoi(poi))
+            {
+                continue;
+            }
+
+            if (needsComma)
             {
                 json.Append(',');
             }
 
-            PoiSnapshot poi = pois[index];
             json.Append('{');
             json.Append("\"name\":").Append(JsonWriter.Quote(poi.Name));
             json.Append(",\"group\":").Append(JsonWriter.Quote(poi.Group));
@@ -431,6 +458,7 @@ internal sealed class LiveMapHttpServer
             json.Append(",\"z\":").Append(JsonWriter.NumberOneDecimal(poi.Z));
             json.Append(",\"placed\":").Append(poi.Placed ? "true" : "false");
             json.Append('}');
+            needsComma = true;
         }
 
         json.Append("]}");
@@ -499,9 +527,9 @@ internal sealed class LiveMapHttpServer
         ServePngFile(response, Path.Combine(_renderer.CacheDirectory, "base.png"));
     }
 
-    private void ServeFogImage(HttpListenerResponse response)
+    private void ServeFogImage(HttpListenerResponse response, ViewLevel viewLevel)
     {
-        if (_getFogMode() == "off")
+        if (GetEffectiveFogMode(viewLevel) == "off")
         {
             WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
             return;
@@ -526,6 +554,23 @@ internal sealed class LiveMapHttpServer
             "image/png",
             png,
             "no-store");
+    }
+
+    private bool SeesAllPlayers(ViewLevel viewLevel)
+    {
+        return viewLevel == ViewLevel.Admin &&
+               (!string.IsNullOrEmpty(_accessToken) || _adminSeesAll);
+    }
+
+    private string GetEffectiveFogMode(ViewLevel viewLevel)
+    {
+        return viewLevel == ViewLevel.Admin ? "off" : _getFogMode();
+    }
+
+    private static bool IsPublicPoi(PoiSnapshot poi)
+    {
+        return string.Equals(poi.Group, "spawn", StringComparison.Ordinal) ||
+               string.Equals(poi.Group, "trader", StringComparison.Ordinal);
     }
 
     private static byte[] BuildFogPng(byte[] mask)

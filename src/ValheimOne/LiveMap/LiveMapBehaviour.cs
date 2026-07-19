@@ -151,6 +151,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             config.BindIp,
             config.AccessToken,
             config.AdminSeesAll,
+            config.PublicView,
+            config.PublicShowPlayerNames,
             () => _snapshot,
             () => _poiCatalog,
             () => _mapTableReader?.Snapshot ?? MapTableSnapshot.Empty,
