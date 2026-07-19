@@ -4,6 +4,14 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in standalone `[Query]` A2S UDP responder for server browsers, monitoring tools, and hosting panels, including crossplay servers, with per-client challenge flow, A2S_INFO and A2S_PLAYER responses, player-name privacy via `PublicPlayerNames`, and an automatic game-port-plus-4 default.
+
+### Fixed
+
+- LiveMap dashboard zoom bounds now reconcile from live status, so a page opened during the boot-time world render gains the full zoom depth without a manual refresh; the admin dashboard also no longer sends a guaranteed-404 `/api/entities` probe when the entity layer is disabled because availability is now advertised in `/api/status`.
+
 ## [0.5.0] - 2026-07-19
 
 ### Added

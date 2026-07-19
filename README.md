@@ -18,7 +18,7 @@ _ValheimOne is a community project and is not affiliated with or endorsed by Iro
 
 > **Official Hosting:** [SurvivalServers.com](https://www.survivalservers.com/services/game_servers/valheim/?utm_source=github&utm_medium=readme&utm_campaign=valheim_one) offers managed Valheim dedicated servers with BepInEx support for ValheimOne.
 
-**Status — unreleased / in development.** The server enforcement chassis, twenty-six default-off gameplay modules, the Live Map (world render, players, POIs, pins, fog-of-war, admin and public views), and the web admin console are implemented; the standalone query responder remains in development (the always-on `/api/status` JSON endpoint already covers panel queries). There is no public release yet. Gameplay features are disabled by default; the `[Server]` transport infrastructure is enabled by default but does not alter gameplay on its own.
+**Status — unreleased.** The server enforcement chassis, twenty-six default-off gameplay modules, the Live Map (world render, players, POIs, pins, fog-of-war, admin and public views), the web admin console, and the standalone A2S query responder are implemented. There is no public release yet. Gameplay features are disabled by default; the `[Server]` transport infrastructure is enabled by default but does not alter gameplay on its own.
 
 ---
 
@@ -97,11 +97,11 @@ Features use three modes: **server-authoritative** logic runs under server owner
 
 ### Server Query / Status
 
-🚧 **In development.**
+The opt-in `[Query]` feature runs a standalone A2S-compatible (Source Engine Query) UDP responder for server browsers, monitoring tools, and hosting panels, including crossplay servers that do not answer A2S natively. It works independently of the Live Map and defaults to the game port plus 4 (`QueryPort = 0`), avoiding Valheim's own game-port-plus-1 Steam query listener on non-crossplay servers.
 
-Adds a compact status endpoint for server browsers, uptime monitors, and operator tooling. The response reports server identity, game and ValheimOne versions, availability, player counts, uptime, and the active feature set without requiring a game connection.
+A2S_INFO reports the live server and world names, game and version details, password state, live player count, configured maximum players, game port, ValheimOne version keyword, and Valheim's game ID. A2S_PLAYER reports connected player slots; names default to private, generic `Player N` labels unless `PublicPlayerNames = true`.
 
-The Live Map's embedded HTTP server already exposes `/api/status` and `/api/players` when that module is enabled — and `/api/status` stays available without a token by default (`StatusPublic`) for hosting-panel queries; see [docs/query.md](docs/query.md). This feature is the standalone query responder that works without the map.
+When the Live Map is enabled, its embedded HTTP server also exposes the richer `/api/status` and `/api/players` JSON surfaces. `/api/status` stays available without a token by default (`StatusPublic`) for hosting-panel queries; see [docs/query.md](docs/query.md).
 
 ![ValheimOne /api/status JSON response](docs/screenshots/api-status.png)
 

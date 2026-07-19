@@ -70,3 +70,45 @@ Notes:
 - POST bodies are JSON, max 8 KB. Send a `Content-Length` header (an empty body with `Content-Length: 0` is fine for `/api/admin/save`; `curl` needs `-d ''`).
 - Cheat-gated commands (e.g. `sleep`) execute through the same rules as the in-game console: they report `not valid in the current context` until `devcommands` is enabled. Add `devcommands` to `ConsoleWhitelist` or set `AllowAllCommands = true` if you want that from the web console.
 - `say` is not in the default whitelist: the vanilla command is a silent no-op on dedicated servers (it requires a local player).
+
+## A2S query responder
+
+The standalone `[Query]` feature provides an A2S-compatible (Source Engine Query) UDP responder for server browsers, monitoring tools, and hosting-panel query infrastructure. It works when `[LiveMap]` is disabled and gives crossplay servers an A2S surface they do not have natively.
+
+Enable it in `valheimone.cfg`:
+
+```ini
+[Query]
+Enabled = true
+QueryPort = 0
+PublicPlayerNames = false
+MaxPlayers = 10
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `Enabled` | `false` | Starts the standalone UDP responder. Changes hot-reload and start or stop the listener. |
+| `QueryPort` | `0` | UDP listen port. `0` selects the game port plus 4; port changes hot-reload and restart the listener. |
+| `PublicPlayerNames` | `false` | Returns real player names from A2S_PLAYER when enabled; otherwise returns generic `Player N` slots. |
+| `MaxPlayers` | `10` | Maximum player count reported by A2S_INFO. |
+
+The automatic port is the Valheim game port plus 4. Vanilla non-crossplay Valheim already answers Steam queries on the game port plus 1, so the separate default avoids colliding with that listener. Open the selected port for inbound UDP traffic.
+
+### Responses
+
+- **A2S_INFO** reports the live server name; world name as the map; folder `valheim`; game `Valheim`; live peer count; configured maximum players; dedicated server type `d`; environment byte reporting the host OS (`l` Linux, `w` Windows); password flag; game version (for example, `0.221.12`); game port; keywords `valheimone,vo=<version>`; and 64-bit game ID `892970`.
+- **A2S_PLAYER** reports connected player slots. With `PublicPlayerNames = false`, names are returned as generic `Player N` labels, matching the Live Map's privacy stance; set it to `true` to return live player names.
+
+Both A2S_INFO and A2S_PLAYER use the standard S2C_CHALLENGE flow: the responder issues a challenge for the requesting client, the client repeats the request with that challenge, and the challenge expires after 30 seconds. Wrong challenges are re-challenged; malformed and oversized (over 1400 bytes) packets are dropped without throwing.
+
+The responder uses one background thread and serves an immutable status snapshot refreshed on the main thread every 2 seconds. If the UDP port cannot be bound, it logs one warning and retries every 30 seconds.
+
+With `python-a2s`:
+
+```bash
+python -m pip install python-a2s
+```
+
+```python
+import a2s; a2s.info(("ip", port))
+```
