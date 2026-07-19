@@ -141,6 +141,8 @@ public sealed class ValheimOneConfig
                 }
 
                 break;
+            case ConfigValueKind.Text:
+                return serializedValue;
             case ConfigValueKind.Integer:
                 if (int.TryParse(
                     serializedValue,

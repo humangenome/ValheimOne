@@ -1,6 +1,3 @@
-using System;
-using System.Reflection;
-using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 using ValheimOne.Configuration;
@@ -36,12 +33,18 @@ public sealed class LiveMapModule : IFeatureModule
             "AdminSeesAll",
             false,
             "When enabled, the player API includes players who disabled in-game public positioning.");
-
-        BindStringSettings(
-            registry,
-            out ConfigEntry<string>? bindIp,
-            out ConfigEntry<string>? accessToken,
-            out ConfigEntry<string>? fogMode);
+        ConfigEntryString bindIp = _feature.String(
+            "BindIp",
+            string.Empty,
+            "IP address to bind. Empty listens on all interfaces with a localhost fallback.");
+        ConfigEntryString accessToken = _feature.String(
+            "AccessToken",
+            string.Empty,
+            "Optional token required as ?token= or X-LiveMap-Token on every HTTP request.");
+        ConfigEntryString fogMode = _feature.String(
+            "FogMode",
+            "full",
+            "Reserved fog-of-war mode. P1 renders the full map.");
         _config = new LiveMapConfig(
             port,
             textureSize,
@@ -74,69 +77,5 @@ public sealed class LiveMapModule : IFeatureModule
         };
         UnityEngine.Object.DontDestroyOnLoad(host);
         LiveMapBehaviour.Initialize(host, _config, _log, () => _feature.Enabled.Value);
-    }
-
-    private void BindStringSettings(
-        FeatureRegistry registry,
-        out ConfigEntry<string>? bindIp,
-        out ConfigEntry<string>? accessToken,
-        out ConfigEntry<string>? fogMode)
-    {
-        bindIp = null;
-        accessToken = null;
-        fogMode = null;
-
-        try
-        {
-            // Temporary seam until the configuration framework grows typed string-key support.
-            ConfigFile? configFile = null;
-            try
-            {
-                FieldInfo? settingsField = typeof(FeatureRegistry).GetField(
-                    "_settings",
-                    BindingFlags.Instance | BindingFlags.NonPublic);
-                var settings = settingsField?.GetValue(registry) as ValheimOneConfig;
-                configFile = settings?.File;
-            }
-            catch (Exception)
-            {
-                // Fall through to the legacy FeatureRegistry shape.
-            }
-
-            if (configFile == null)
-            {
-                FieldInfo? configField = typeof(FeatureRegistry).GetField(
-                    "_config",
-                    BindingFlags.Instance | BindingFlags.NonPublic);
-                configFile = configField?.GetValue(registry) as ConfigFile;
-            }
-
-            if (configFile == null)
-            {
-                throw new InvalidOperationException("FeatureRegistry configuration was not available.");
-            }
-
-            bindIp = configFile.Bind(
-                Section,
-                "BindIp",
-                string.Empty,
-                new ConfigDescription("IP address to bind. Empty listens on all interfaces with a localhost fallback."));
-            accessToken = configFile.Bind(
-                Section,
-                "AccessToken",
-                string.Empty,
-                new ConfigDescription("Optional token required as ?token= or X-LiveMap-Token on every HTTP request."));
-            fogMode = configFile.Bind(
-                Section,
-                "FogMode",
-                "full",
-                new ConfigDescription("Reserved fog-of-war mode. P1 renders the full map."));
-        }
-        catch (Exception exception)
-        {
-            _log.Warning(
-                $"[LiveMap] string settings could not be bound ({exception.GetType().Name}); " +
-                "using BindIp='', AccessToken='', and FogMode='full'.");
-        }
     }
 }

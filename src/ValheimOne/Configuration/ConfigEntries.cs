@@ -32,6 +32,28 @@ public sealed class ConfigEntryBool : IConfigEntry
     public string GetSerializedValue() => Value ? "true" : "false";
 }
 
+public sealed class ConfigEntryString : IConfigEntry
+{
+    private readonly ConfigEntry<string> _entry;
+    private readonly ValheimOneConfig _settings;
+
+    internal ConfigEntryString(
+        ConfigEntry<string> entry,
+        ConfigKeyDefinition definition,
+        ValheimOneConfig settings)
+    {
+        _entry = entry;
+        _settings = settings;
+        Definition = definition;
+    }
+
+    public ConfigKeyDefinition Definition { get; }
+
+    public string Value => _settings.GetEffectiveValue(_entry, Definition);
+
+    public string GetSerializedValue() => Value;
+}
+
 public sealed class ConfigEntryInt : IConfigEntry
 {
     private readonly ConfigEntry<int> _entry;

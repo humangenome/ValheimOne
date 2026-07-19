@@ -48,6 +48,17 @@ public sealed class FeatureDefinition
         return accessor;
     }
 
+    public ConfigEntryString String(string key, string defaultValue, string description)
+    {
+        var definition = AddDefinition(key, ConfigValueKind.Text, description);
+        var accessor = new ConfigEntryString(
+            _settings.File.Bind(Section, key, defaultValue, new ConfigDescription(description)),
+            definition,
+            _settings);
+        _keys.Add(accessor);
+        return accessor;
+    }
+
     public ConfigEntryInt Int(string key, int defaultValue, string description)
     {
         var definition = AddDefinition(key, ConfigValueKind.Integer, description);

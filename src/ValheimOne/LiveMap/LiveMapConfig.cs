@@ -1,4 +1,3 @@
-using BepInEx.Configuration;
 using ValheimOne.Configuration;
 
 namespace ValheimOne.LiveMap;
@@ -9,18 +8,18 @@ internal sealed class LiveMapConfig
     private readonly ConfigEntryInt _textureSize;
     private readonly ConfigEntryFloat _playerUpdateSeconds;
     private readonly ConfigEntryBool _adminSeesAll;
-    private readonly ConfigEntry<string>? _bindIp;
-    private readonly ConfigEntry<string>? _accessToken;
-    private readonly ConfigEntry<string>? _fogMode;
+    private readonly ConfigEntryString _bindIp;
+    private readonly ConfigEntryString _accessToken;
+    private readonly ConfigEntryString _fogMode;
 
     public LiveMapConfig(
         ConfigEntryInt port,
         ConfigEntryInt textureSize,
         ConfigEntryFloat playerUpdateSeconds,
         ConfigEntryBool adminSeesAll,
-        ConfigEntry<string>? bindIp,
-        ConfigEntry<string>? accessToken,
-        ConfigEntry<string>? fogMode)
+        ConfigEntryString bindIp,
+        ConfigEntryString accessToken,
+        ConfigEntryString fogMode)
     {
         _port = port;
         _textureSize = textureSize;
@@ -39,9 +38,9 @@ internal sealed class LiveMapConfig
 
     public bool AdminSeesAll => _adminSeesAll.Value;
 
-    public string BindIp => _bindIp?.Value ?? string.Empty;
+    public string BindIp => _bindIp.Value;
 
-    public string AccessToken => _accessToken?.Value ?? string.Empty;
+    public string AccessToken => _accessToken.Value;
 
-    public string FogMode => _fogMode?.Value ?? "full";
+    public string FogMode => _fogMode.Value;
 }
