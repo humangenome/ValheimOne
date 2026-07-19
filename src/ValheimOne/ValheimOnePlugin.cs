@@ -32,7 +32,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
         var serverConfig = new ServerConfig(settings.Features);
         IReadOnlyList<IFeatureModule> modules = new IFeatureModule[]
         {
-            new PlayerCarryWeightModule(settings.Features),
+            new PlayerModule(settings.Features),
             new PlayerStaminaModule(settings.Features),
             new BuildingQoLModule(settings.Features),
             new FoodDurationModule(settings.Features),
