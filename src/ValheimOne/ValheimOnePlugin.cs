@@ -36,6 +36,8 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
             new PlayerStaminaModule(settings.Features),
             new FoodDurationModule(settings.Features),
             new ItemDropMultiplierModule(settings.Features),
+            new DayNightLengthModule(settings.Features),
+            new PortalsModule(settings.Features),
             new CraftFromChestModule(settings.Features),
             new StationAutomationModule(settings.Features),
             new ValheimOne.LiveMap.LiveMapModule(settings.Features),
