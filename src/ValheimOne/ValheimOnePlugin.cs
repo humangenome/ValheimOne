@@ -30,6 +30,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
         string configPath = Path.Combine(Paths.ConfigPath, "valheimone.cfg");
         var settings = new ValheimOneConfig(configPath);
         var serverConfig = new ServerConfig(settings.Features);
+        var mapSharingModule = new MapSharingModule(settings.Features, _log);
         IReadOnlyList<IFeatureModule> modules = new IFeatureModule[]
         {
             new PlayerModule(settings.Features),
@@ -49,6 +50,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
             new StationAutomationModule(settings.Features),
             new ExperienceRatesModule(settings.Features),
             new DeathPenaltyModule(settings.Features),
+            mapSharingModule,
             new ValheimOne.LiveMap.LiveMapModule(settings.Features),
         };
 
@@ -63,7 +65,11 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
                 $"Feature patches ready: {module.Section} ({module.Classification}, {state}).");
         }
 
-        _versionHandshake = new VersionHandshake(settings, serverConfig, _log);
+        _versionHandshake = new VersionHandshake(
+            settings,
+            serverConfig,
+            _log,
+            new IVersionHandshakeExtension[] { mapSharingModule });
         _versionHandshake.Initialize(_harmony);
 
         _configWatcher = new ConfigHotReloadWatcher(configPath, _log);
