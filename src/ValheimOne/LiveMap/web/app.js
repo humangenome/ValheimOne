@@ -65,6 +65,7 @@
     var query = new URLSearchParams(window.location.search);
     var token = query.get("token") || "";
     var failedFeeds = new Set();
+    var consecutiveStatusFailures = 0;
     var markerRecords = new Map();
     var latestPlayers = [];
     var latestPlayerCount = 0;
@@ -979,6 +980,14 @@
             failedFeeds.delete(feed);
         } else {
             failedFeeds.add(feed);
+        }
+
+        if (feed === "status") {
+            consecutiveStatusFailures = isOnline ? 0 : consecutiveStatusFailures + 1;
+            if (consecutiveStatusFailures >= 3 && !elements.mapStatus.hidden) {
+                elements.mapStatusText.textContent = "Server offline — waiting to reconnect";
+                elements.mapStatus.querySelector(".spinner").hidden = true;
+            }
         }
 
         elements.offlineBadge.hidden = failedFeeds.size === 0;

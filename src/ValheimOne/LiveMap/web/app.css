@@ -152,9 +152,9 @@ input {
 .brand-name {
     color: var(--text);
     font-family: var(--font-display);
-    font-size: 15px;
+    font-size: 13px;
     font-weight: 400;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.03em;
     line-height: 1.25;
     text-transform: uppercase;
     white-space: nowrap;
@@ -176,6 +176,7 @@ input {
 
 .brand-badges {
     display: grid;
+    flex-shrink: 0;
     justify-items: end;
     gap: 4px;
     margin-left: auto;
@@ -454,16 +455,16 @@ input {
 
 .view-tab {
     min-height: 31px;
-    padding: 5px 10px;
+    padding: 5px 6px;
     border: 1px solid transparent;
     border-radius: 6px;
     background: transparent;
     color: var(--secondary);
     cursor: pointer;
     font-family: var(--font-display);
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.05em;
     text-transform: uppercase;
     white-space: nowrap;
     transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
