@@ -33,6 +33,7 @@ internal sealed class LiveMapHttpServer
     private readonly Func<PoiCatalog> _getPoiCatalog;
     private readonly Func<MapTableSnapshot> _getMapTableSnapshot;
     private readonly Func<EntityMapSnapshot> _getEntitySnapshot;
+    private readonly Action _noteEntitiesRequested;
     private readonly Func<string> _getFogMode;
     private readonly FogTracker _fogTracker;
     private readonly WorldMapRenderer _renderer;
@@ -60,6 +61,7 @@ internal sealed class LiveMapHttpServer
         Func<PoiCatalog> getPoiCatalog,
         Func<MapTableSnapshot> getMapTableSnapshot,
         Func<EntityMapSnapshot> getEntitySnapshot,
+        Action noteEntitiesRequested,
         Func<string> getFogMode,
         FogTracker fogTracker,
         WorldMapRenderer renderer,
@@ -78,6 +80,7 @@ internal sealed class LiveMapHttpServer
         _getPoiCatalog = getPoiCatalog;
         _getMapTableSnapshot = getMapTableSnapshot;
         _getEntitySnapshot = getEntitySnapshot;
+        _noteEntitiesRequested = noteEntitiesRequested;
         _getFogMode = getFogMode;
         _fogTracker = fogTracker;
         _renderer = renderer;
@@ -1037,6 +1040,7 @@ internal sealed class LiveMapHttpServer
             return;
         }
 
+        _noteEntitiesRequested();
         EntityMapSnapshot snapshot = _getEntitySnapshot();
         var json = new StringBuilder(64 + (snapshot.Entities.Length * 112));
         json.Append("{\"revision\":");

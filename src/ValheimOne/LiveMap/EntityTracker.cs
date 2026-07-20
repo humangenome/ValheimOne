@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Threading;
 using HarmonyLib;
 using UnityEngine;
 using ValheimOne.Infrastructure;
@@ -9,7 +10,9 @@ namespace ValheimOne.LiveMap;
 
 internal sealed class EntityTracker
 {
-    private const float RefreshIntervalSeconds = 5f;
+    private const float EventRefreshIntervalSeconds = 5f;
+    private const float EntityRefreshIntervalSeconds = 30f;
+    private const long RequestActiveMilliseconds = 2L * 60L * 1000L;
     private const int MaximumEntities = 500;
 
     private static readonly Lazy<FieldInfo> RandomEventField = new(
@@ -31,11 +34,19 @@ internal sealed class EntityTracker
     private readonly LiveMapConfig _config;
     private readonly ModLogger _log;
     private readonly List<ZDO> _scanResults = new List<ZDO>();
-    private readonly List<TrackedEntitySnapshot> _entities =
+    private readonly List<TrackedEntitySnapshot> _pendingEntities =
         new List<TrackedEntitySnapshot>(MaximumEntities);
     private volatile EntityMapSnapshot _snapshot = EntityMapSnapshot.Empty;
-    private float _nextRefresh;
+    private TrackedEntitySnapshot[] _entities = Array.Empty<TrackedEntitySnapshot>();
+    private RaidEventSnapshot? _activeEvent;
+    private float _nextEntityRefresh;
+    private float _nextEventRefresh;
+    private long _lastEntitiesRequestUnixMs;
+    private int _prefabIndex;
+    private int _scanIndex;
     private int _revision;
+    private bool _scanning;
+    private bool _scanWarningLogged;
     private bool _eventWarningLogged;
 
     public EntityTracker(LiveMapConfig config, ModLogger log)
@@ -46,63 +57,106 @@ internal sealed class EntityTracker
 
     public EntityMapSnapshot Snapshot => _snapshot;
 
+    public void NoteEntitiesRequested()
+    {
+        Interlocked.Exchange(
+            ref _lastEntitiesRequestUnixMs,
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+    }
+
     public void Tick(float now)
     {
-        if (now < _nextRefresh)
+        bool publish = false;
+        if (now >= _nextEventRefresh)
+        {
+            _nextEventRefresh = now + EventRefreshIntervalSeconds;
+            RaidEventSnapshot? activeEvent = ReadActiveEvent();
+            if (!RaidEventsEqual(_activeEvent, activeEvent))
+            {
+                _activeEvent = activeEvent;
+                publish = true;
+            }
+        }
+
+        if (!_config.EntityLayer)
+        {
+            ResetScan();
+            if (_entities.Length != 0)
+            {
+                _entities = Array.Empty<TrackedEntitySnapshot>();
+                publish = true;
+            }
+        }
+        else if (_scanning)
+        {
+            publish |= ContinueScan(now);
+        }
+        else if (now >= _nextEntityRefresh && EntitiesWereRecentlyRequested())
+        {
+            StartScan(now);
+            publish |= ContinueScan(now);
+        }
+
+        if (!publish && _snapshot.Revision != 0)
         {
             return;
         }
 
-        _nextRefresh = now + RefreshIntervalSeconds;
-        _entities.Clear();
-        if (_config.EntityLayer)
-        {
-            CollectEntities();
-        }
-
-        RaidEventSnapshot? activeEvent = ReadActiveEvent();
-        _revision = unchecked(_revision + 1);
-        _snapshot = new EntityMapSnapshot(
-            _revision,
-            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            _entities.ToArray(),
-            activeEvent);
+        PublishSnapshot();
     }
 
-    private void CollectEntities()
+    private bool EntitiesWereRecentlyRequested()
+    {
+        long requestedUnixMs = Interlocked.Read(ref _lastEntitiesRequestUnixMs);
+        if (requestedUnixMs == 0L)
+        {
+            return false;
+        }
+
+        long elapsedMilliseconds =
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - requestedUnixMs;
+        return elapsedMilliseconds >= 0L && elapsedMilliseconds <= RequestActiveMilliseconds;
+    }
+
+    private void StartScan(float now)
+    {
+        _scanResults.Clear();
+        _pendingEntities.Clear();
+        _prefabIndex = 0;
+        _scanIndex = 0;
+        _scanWarningLogged = false;
+        _scanning = true;
+        _nextEntityRefresh = now + EntityRefreshIntervalSeconds;
+    }
+
+    private bool ContinueScan(float now)
     {
         ZDOMan? manager = ZDOMan.instance;
         if (manager == null)
         {
-            return;
+            ResetScan();
+            _nextEntityRefresh = now + EntityRefreshIntervalSeconds;
+            return false;
         }
 
-        for (int prefabIndex = 0;
-             prefabIndex < Prefabs.Length && _entities.Count < MaximumEntities;
-             prefabIndex++)
+        PrefabDefinition prefab = Prefabs[_prefabIndex];
+        bool complete;
+        int pendingCount = _pendingEntities.Count;
+        try
         {
-            PrefabDefinition prefab = Prefabs[prefabIndex];
-            _scanResults.Clear();
-            int scanIndex = 0;
-            try
+            // Valheim appends results across iterative calls, so retain this list until completion.
+            complete = manager.GetAllZDOsWithPrefabIterative(
+                prefab.Name,
+                _scanResults,
+                ref _scanIndex);
+            if (!complete)
             {
-                while (!manager.GetAllZDOsWithPrefabIterative(
-                           prefab.Name,
-                           _scanResults,
-                           ref scanIndex))
-                {
-                }
-            }
-            catch (Exception exception)
-            {
-                _log.Warning(
-                    $"[LiveMap] entity ZDO scan for {prefab.Name} failed: " +
-                    $"{exception.GetType().Name}: {exception.Message}");
-                continue;
+                return false;
             }
 
             for (int entityIndex = 0;
-                 entityIndex < _scanResults.Count && _entities.Count < MaximumEntities;
+                 entityIndex < _scanResults.Count &&
+                 _pendingEntities.Count < MaximumEntities;
                  entityIndex++)
             {
                 ZDO? zdo = _scanResults[entityIndex];
@@ -112,7 +166,7 @@ internal sealed class EntityTracker
                 }
 
                 Vector3 position = zdo.GetPosition();
-                _entities.Add(new TrackedEntitySnapshot(
+                _pendingEntities.Add(new TrackedEntitySnapshot(
                     prefab.Group,
                     prefab.Name,
                     position.x,
@@ -120,8 +174,76 @@ internal sealed class EntityTracker
                     position.z));
             }
         }
+        catch (Exception exception)
+        {
+            if (_pendingEntities.Count > pendingCount)
+            {
+                _pendingEntities.RemoveRange(
+                    pendingCount,
+                    _pendingEntities.Count - pendingCount);
+            }
+
+            if (!_scanWarningLogged)
+            {
+                _scanWarningLogged = true;
+                _log.Warning(
+                    $"[LiveMap] entity ZDO scan for {prefab.Name} failed: " +
+                    $"{exception.GetType().Name}: {exception.Message}");
+            }
+        }
 
         _scanResults.Clear();
+        _scanIndex = 0;
+        _prefabIndex++;
+        if (_prefabIndex < Prefabs.Length && _pendingEntities.Count < MaximumEntities)
+        {
+            return false;
+        }
+
+        _entities = _pendingEntities.ToArray();
+        ResetScan();
+        return true;
+    }
+
+    private void ResetScan()
+    {
+        _scanResults.Clear();
+        _pendingEntities.Clear();
+        _prefabIndex = 0;
+        _scanIndex = 0;
+        _scanning = false;
+    }
+
+    private void PublishSnapshot()
+    {
+        _revision = unchecked(_revision + 1);
+        _snapshot = new EntityMapSnapshot(
+            _revision,
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            _entities,
+            _activeEvent);
+    }
+
+    private static bool RaidEventsEqual(
+        RaidEventSnapshot? first,
+        RaidEventSnapshot? second)
+    {
+        if (ReferenceEquals(first, second))
+        {
+            return true;
+        }
+
+        if (first == null || second == null)
+        {
+            return false;
+        }
+
+        return string.Equals(first.Name, second.Name, StringComparison.Ordinal) &&
+               first.X.Equals(second.X) &&
+               first.Z.Equals(second.Z) &&
+               first.Radius.Equals(second.Radius) &&
+               first.Elapsed.Equals(second.Elapsed) &&
+               first.Duration.Equals(second.Duration);
     }
 
     private RaidEventSnapshot? ReadActiveEvent()

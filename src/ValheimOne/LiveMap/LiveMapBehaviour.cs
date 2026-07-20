@@ -173,11 +173,12 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _fogTracker = new FogTracker(_renderer.CacheDirectory, log);
         _mapTableReader = new MapTableReader(_fogTracker, log);
         _mapTableReader.Start();
-        _entityTracker = new EntityTracker(config, log);
+        EntityTracker entityTracker = new EntityTracker(config, log);
+        _entityTracker = entityTracker;
 
         RefreshSnapshot();
         _fogTracker.Tick(_snapshot.Players);
-        _entityTracker.Tick(Time.realtimeSinceStartup);
+        entityTracker.Tick(Time.realtimeSinceStartup);
         _httpServer = new LiveMapHttpServer(
             port,
             config.BindIp,
@@ -188,7 +189,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             () => _snapshot,
             () => _poiCatalog,
             () => _mapTableReader?.Snapshot ?? MapTableSnapshot.Empty,
-            () => _entityTracker?.Snapshot ?? EntityMapSnapshot.Empty,
+            () => entityTracker.Snapshot,
+            entityTracker.NoteEntitiesRequested,
             () => _fogMode,
             _fogTracker,
             _renderer,
