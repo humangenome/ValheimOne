@@ -22,6 +22,7 @@
     var TRAIL_MAX_POINTS = 900;
     var TRAIL_BUCKET_COUNT = 10;
     var SHIP_MATCH_DISTANCE = 40;
+    var MAP_PING_LIFETIME_MS = 30000;
     var LAYER_STORAGE_KEY = "vo-livemap-layers-v2";
     var LEGACY_LAYER_STORAGE_KEY = "vo-livemap-layers";
     var LEGACY_MINIMAP_STORAGE_KEY = "vo-livemap-minimap";
@@ -123,6 +124,13 @@
     var measurePoints = [];
     var measureVertexMarkers = [];
     var measureDoubleClickZoomWasEnabled = false;
+    var pingButton = null;
+    var pingControlElement = null;
+    var pingArmed = false;
+    var pingRequestPending = false;
+    var pingLayer = null;
+    var pendingMapPings = [];
+    var activePingMarkers = new Set();
     var playerLayer = null;
     var pinLayer = null;
     var latestPins = [];
@@ -2518,6 +2526,7 @@
         createCompassControl();
         createScaleBarControl();
         createMeasureControl();
+        createPingControl();
         createFullscreenControl();
         createSearchControl();
         createCoordinateControl();
@@ -2544,6 +2553,7 @@
         trailLayer = L.layerGroup().addTo(map);
         portalNetworkLayer = L.layerGroup();
         portalPopupLinkLayer = L.layerGroup().addTo(map);
+        pingLayer = L.layerGroup().addTo(map);
         POI_GROUP_ORDER.forEach(function (group) {
             poiLayers.set(group, L.layerGroup());
             poiRecords.set(group, []);
@@ -2551,6 +2561,7 @@
         ENTITY_GROUP_ORDER.forEach(function (group) {
             entityLayers.set(group, L.layerGroup());
         });
+        pendingMapPings.splice(0).forEach(renderMapPing);
     }
 
     function worldToLatLng(worldX, worldZ) {
@@ -2815,6 +2826,7 @@
     }
 
     function startMeasurement() {
+        disarmMapPing();
         measureModeEnabled = true;
         measureActive = true;
         measurePoints = [];
@@ -2899,6 +2911,203 @@
                 measurePoints.pop();
                 redrawMeasurement();
             }
+        });
+    }
+
+    function syncMapPingControl() {
+        var admin = currentView === "admin";
+        if (pingControlElement) {
+            pingControlElement.hidden = !admin;
+        }
+        if (!admin) {
+            disarmMapPing();
+        }
+    }
+
+    function disarmMapPing() {
+        pingArmed = false;
+        document.body.classList.remove("is-pinging");
+        if (!pingButton) {
+            return;
+        }
+        pingButton.classList.remove("is-active");
+        pingButton.title = "Ping in-game map";
+        pingButton.setAttribute("aria-label", "Ping in-game map");
+        pingButton.setAttribute("aria-pressed", "false");
+    }
+
+    function armMapPing() {
+        if (!map || currentView !== "admin" || pingRequestPending) {
+            return;
+        }
+        if (measureModeEnabled) {
+            clearMeasurement();
+        }
+        if (map._popup) {
+            map.closePopup();
+        }
+        pingArmed = true;
+        document.body.classList.add("is-pinging");
+        pingButton.classList.add("is-active");
+        pingButton.title = "Click the map to send ping · Esc cancels";
+        pingButton.setAttribute("aria-label", "Click the map to send ping; Escape cancels");
+        pingButton.setAttribute("aria-pressed", "true");
+    }
+
+    function flashMapPingResult(ok, message) {
+        if (!pingButton) {
+            return;
+        }
+        window.clearTimeout(pingButton._voPingResultTimer);
+        pingButton.classList.toggle("is-success", ok);
+        pingButton.classList.toggle("is-error", !ok);
+        pingButton.title = message;
+        pingButton._voPingResultTimer = window.setTimeout(function () {
+            pingButton.classList.remove("is-success", "is-error");
+            pingButton.title = "Ping in-game map";
+            pingButton._voPingResultTimer = 0;
+        }, 1800);
+    }
+
+    async function sendMapPing(world) {
+        pingRequestPending = true;
+        pingButton.disabled = true;
+        try {
+            var payload = await fetchConsoleJson("/api/ping", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ x: world.x, z: world.z })
+            });
+            if (!payload || payload.ok !== true) {
+                throw new Error(payload && payload.error ? payload.error : "Request rejected");
+            }
+            flashMapPingResult(true, "Ping sent to in-game maps");
+        } catch (error) {
+            flashMapPingResult(
+                false,
+                "Ping failed: " + (error && error.message ? error.message : "request failed")
+            );
+        } finally {
+            pingRequestPending = false;
+            pingButton.disabled = false;
+        }
+    }
+
+    function createPingControl() {
+        var PingControl = L.Control.extend({
+            options: { position: "topleft" },
+            onAdd: function () {
+                var container = L.DomUtil.create("div", "leaflet-control leaflet-bar map-tool-control ping-control");
+                pingControlElement = container;
+                pingButton = L.DomUtil.create("button", "map-tool-button ping-button", container);
+                pingButton.type = "button";
+                pingButton.title = "Ping in-game map";
+                pingButton.setAttribute("aria-label", "Ping in-game map");
+                pingButton.setAttribute("aria-pressed", "false");
+                pingButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+                    '<circle cx="12" cy="12" r="2"></circle>' +
+                    '<circle cx="12" cy="12" r="6"></circle>' +
+                    '<path d="M12 2v3m0 14v3M2 12h3m14 0h3"></path></svg>';
+                pingButton.addEventListener("click", function () {
+                    if (pingArmed) {
+                        disarmMapPing();
+                    } else {
+                        armMapPing();
+                    }
+                });
+                L.DomEvent.disableClickPropagation(container);
+                L.DomEvent.disableScrollPropagation(container);
+                syncMapPingControl();
+                return container;
+            }
+        });
+
+        new PingControl().addTo(map);
+        map.on("click", function (event) {
+            if (!pingArmed) {
+                return;
+            }
+            var world = latLngToWorld(event.latlng);
+            disarmMapPing();
+            if (world) {
+                sendMapPing(world);
+            }
+        });
+        document.addEventListener("keydown", function (event) {
+            if (event.key === "Escape" && pingArmed) {
+                event.preventDefault();
+                disarmMapPing();
+            }
+        });
+    }
+
+    function renderMapPing(ping) {
+        if (!map || !pingLayer) {
+            pendingMapPings.push(ping);
+            if (pendingMapPings.length > 16) {
+                pendingMapPings.shift();
+            }
+            return;
+        }
+
+        var remainingLifetime = MAP_PING_LIFETIME_MS -
+            Math.max(0, Date.now() - ping.receivedAt);
+        if (remainingLifetime <= 0) {
+            return;
+        }
+
+        var shell = document.createElement("div");
+        var firstRing = document.createElement("span");
+        var secondRing = document.createElement("span");
+        var core = document.createElement("span");
+        var label = document.createElement("span");
+        shell.className = "map-ping-marker";
+        firstRing.className = "map-ping-ring map-ping-ring-one";
+        secondRing.className = "map-ping-ring map-ping-ring-two";
+        core.className = "map-ping-core";
+        label.className = "map-ping-label";
+        label.textContent = ping.label || "Ping";
+        shell.appendChild(firstRing);
+        shell.appendChild(secondRing);
+        shell.appendChild(core);
+        shell.appendChild(label);
+
+        var marker = L.marker(worldToLatLng(ping.x, ping.z), {
+            icon: L.divIcon({
+                className: "map-ping-div-icon",
+                html: shell.outerHTML,
+                iconAnchor: [0, 0],
+                iconSize: [1, 1]
+            }),
+            interactive: false,
+            keyboard: false,
+            zIndexOffset: 1200
+        }).addTo(pingLayer);
+        var record = { marker: marker, timer: 0 };
+        activePingMarkers.add(record);
+        record.timer = window.setTimeout(function () {
+            activePingMarkers.delete(record);
+            if (pingLayer) {
+                pingLayer.removeLayer(marker);
+            }
+        }, remainingLifetime);
+    }
+
+    function handlePingPayload(payload) {
+        if (!payload || typeof payload !== "object") {
+            return;
+        }
+        var x = Number(payload.x);
+        var z = Number(payload.z);
+        if (!Number.isFinite(x) || !Number.isFinite(z)) {
+            return;
+        }
+        renderMapPing({
+            x: x,
+            z: z,
+            label: typeof payload.label === "string" ? payload.label : "Ping",
+            unixMs: Number(payload.unixMs) || Date.now(),
+            receivedAt: Date.now()
         });
     }
 
@@ -6076,6 +6285,7 @@
         }
 
         currentView = nextView;
+        syncMapPingControl();
         if (map) {
             loadPoisForCurrentView();
             renderLayerRows();
@@ -6389,6 +6599,9 @@
         source.addEventListener("status", function (event) {
             readEventStreamPayload(source, event, handleStatusPayload);
         });
+        source.addEventListener("ping", function (event) {
+            readEventStreamPayload(source, event, handlePingPayload);
+        });
         source.addEventListener("log", function (event) {
             readEventStreamPayload(source, event, function (payload) {
                 eventSourceLogFlowing = true;
@@ -6433,6 +6646,9 @@
         window.clearInterval(popupRefreshTimer);
         window.clearInterval(layersStalenessTimer);
         window.cancelAnimationFrame(minimapFrame);
+        activePingMarkers.forEach(function (record) {
+            window.clearTimeout(record.timer);
+        });
         if (eventSource) {
             eventSource.close();
         }

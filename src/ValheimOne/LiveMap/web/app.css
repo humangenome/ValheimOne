@@ -1303,6 +1303,23 @@ input {
     color: var(--accent);
 }
 
+.leaflet-bar .map-tool-button.is-success {
+    color: #8fc89a;
+}
+
+.leaflet-bar .map-tool-button.is-error {
+    color: #e08b75;
+}
+
+.leaflet-bar .map-tool-button:disabled {
+    cursor: wait;
+    opacity: 0.68;
+}
+
+.ping-control[hidden] {
+    display: none;
+}
+
 .map-tool-button svg {
     width: 17px;
     height: 17px;
@@ -1547,6 +1564,84 @@ body.is-measuring #map .leaflet-overlay-pane path {
 
 body.is-measuring .compass-control {
     display: none;
+}
+
+body.is-pinging #map.leaflet-container,
+body.is-pinging #map .leaflet-grab,
+body.is-pinging #map .leaflet-dragging {
+    cursor: crosshair;
+}
+
+body.is-pinging #map .leaflet-marker-pane,
+body.is-pinging #map .leaflet-popup-pane,
+body.is-pinging #map .leaflet-overlay-pane path {
+    pointer-events: none !important;
+}
+
+.map-ping-div-icon {
+    border: 0;
+    background: transparent;
+    pointer-events: none;
+}
+
+.map-ping-marker {
+    position: relative;
+    width: 1px;
+    height: 1px;
+    pointer-events: none;
+}
+
+.map-ping-ring,
+.map-ping-core {
+    position: absolute;
+    top: 0;
+    left: 0;
+    border-radius: 50%;
+    pointer-events: none;
+}
+
+.map-ping-ring {
+    width: 46px;
+    height: 46px;
+    border: 2px solid var(--accent);
+    box-shadow: 0 0 10px rgba(217, 177, 104, 0.36);
+    animation: map-ping-ring 2.4s ease-out infinite;
+    animation-fill-mode: backwards;
+}
+
+.map-ping-ring-two {
+    animation-delay: 1.2s;
+}
+
+.map-ping-core {
+    width: 8px;
+    height: 8px;
+    border: 1px solid #fff0bd;
+    background: var(--accent);
+    box-shadow: 0 0 0 2px rgba(28, 22, 16, 0.88), 0 0 12px rgba(217, 177, 104, 0.9);
+    transform: translate(-50%, -50%);
+}
+
+.map-ping-label {
+    position: absolute;
+    top: 15px;
+    left: 0;
+    max-width: 180px;
+    padding: 3px 7px 4px;
+    overflow: hidden;
+    border: 1px solid rgba(217, 177, 104, 0.72);
+    border-radius: 999px;
+    background: rgba(28, 22, 16, 0.94);
+    box-shadow: 0 4px 12px rgb(0 0 0 / 36%);
+    color: #f4ddb0;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    pointer-events: none;
+    text-overflow: ellipsis;
+    text-shadow: 0 1px 2px var(--background);
+    transform: translateX(-50%);
+    white-space: nowrap;
 }
 
 .coordinate-chip.vo-copy {
@@ -3154,6 +3249,22 @@ body.is-measuring .compass-control {
 
     50% {
         box-shadow: 0 0 0 1px rgba(216, 200, 173, 0.2), 0 2px 6px rgba(0, 0, 0, 0.5), 0 0 13px rgba(216, 200, 173, 0.4);
+    }
+}
+
+@keyframes map-ping-ring {
+    0% {
+        opacity: 0.92;
+        transform: translate(-50%, -50%) scale(0.18);
+    }
+
+    72% {
+        opacity: 0.36;
+    }
+
+    100% {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(1.16);
     }
 }
 

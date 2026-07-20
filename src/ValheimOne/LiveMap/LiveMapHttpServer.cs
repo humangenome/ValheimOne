@@ -16,6 +16,8 @@ internal sealed class LiveMapHttpServer
     private const int EventStreamTickMilliseconds = 1000;
     private const int EventStreamHeartbeatTicks = 15;
     private const int EventStreamLogBatchSize = 100;
+    private const float MaximumPingWorldRadius = 10500f;
+    private const int MaximumPingLabelLength = 32;
 
     private enum ViewLevel
     {
@@ -44,6 +46,7 @@ internal sealed class LiveMapHttpServer
     private readonly Func<float> _getEffectiveUpdateSeconds;
     private readonly FogTracker _fogTracker;
     private readonly WorldMapRenderer _renderer;
+    private readonly Func<float, float, string, bool> _enqueueMapPing;
     private readonly LiveMapConfig _config;
     private readonly ConsoleBridge? _consoleBridge;
     private readonly LogRingBuffer? _logRingBuffer;
@@ -81,6 +84,7 @@ internal sealed class LiveMapHttpServer
         Func<float> getEffectiveUpdateSeconds,
         FogTracker fogTracker,
         WorldMapRenderer renderer,
+        Func<float, float, string, bool> enqueueMapPing,
         LiveMapConfig config,
         ConsoleBridge? consoleBridge,
         LogRingBuffer? logRingBuffer,
@@ -106,6 +110,7 @@ internal sealed class LiveMapHttpServer
         _getEffectiveUpdateSeconds = getEffectiveUpdateSeconds;
         _fogTracker = fogTracker;
         _renderer = renderer;
+        _enqueueMapPing = enqueueMapPing;
         _config = config;
         _consoleBridge = consoleBridge;
         _logRingBuffer = logRingBuffer;
@@ -329,6 +334,10 @@ internal sealed class LiveMapHttpServer
             else if (isGet && path == "/api/height")
             {
                 ServeHeight(request, response);
+            }
+            else if (isPost && path == "/api/ping")
+            {
+                ServePing(request, response, viewLevel);
             }
             else if (isGet && path == "/api/entities")
             {
@@ -732,6 +741,8 @@ internal sealed class LiveMapHttpServer
             response.KeepAlive = true;
 
             Stream output = response.OutputStream;
+            long pingCursor = MapPingPatch.LatestCursor;
+            var pendingPings = new List<MapPingSnapshot>(16);
             WriteEventStreamText(output, "retry: 5000\n\n");
 
             LiveMapSnapshot snapshot = _getSnapshot();
@@ -775,6 +786,13 @@ internal sealed class LiveMapHttpServer
                 {
                     WriteEventStreamEvent(output, "status", statusJson);
                     statusChangeKey = nextStatusChangeKey;
+                    sentEvent = true;
+                }
+
+                pingCursor = MapPingPatch.CopyAfter(pingCursor, pendingPings);
+                for (int index = 0; index < pendingPings.Count; index++)
+                {
+                    WriteEventStreamEvent(output, "ping", BuildPingJson(pendingPings[index]));
                     sentEvent = true;
                 }
 
@@ -1349,14 +1367,12 @@ internal sealed class LiveMapHttpServer
             return;
         }
 
-        WorldGenerator? generator = WorldGenerator.instance;
-        if (generator == null)
+        if (!LiveMapBehaviour.TryGetGroundHeight(x, z, out float height))
         {
             WriteJson(response, HttpStatusCode.ServiceUnavailable, "{\"error\":\"not ready\"}");
             return;
         }
 
-        float height = generator.GetHeight(x, z);
         var json = new StringBuilder(64);
         json.Append('{');
         json.Append("\"x\":").Append(JsonWriter.Number(x));
@@ -1364,6 +1380,116 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"height\":").Append(JsonWriter.Number(height));
         json.Append('}');
         WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private void ServePing(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        ViewLevel viewLevel)
+    {
+        if (viewLevel != ViewLevel.Admin)
+        {
+            WriteJson(
+                response,
+                HttpStatusCode.Forbidden,
+                "{\"ok\":false,\"error\":\"forbidden\"}");
+            return;
+        }
+
+        if (!TryReadPingRequest(request, response, out float x, out float z, out string label))
+        {
+            return;
+        }
+
+        if (!_enqueueMapPing(x, z, label))
+        {
+            WriteJson(
+                response,
+                (HttpStatusCode)429,
+                "{\"ok\":false,\"error\":\"too many pending pings\"}");
+            return;
+        }
+
+        WriteJson(response, HttpStatusCode.OK, "{\"ok\":true}");
+    }
+
+    private static bool TryReadPingRequest(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        out float x,
+        out float z,
+        out string label)
+    {
+        x = 0f;
+        z = 0f;
+        label = "Web ping";
+        if (!TryReadRequestBody(request, out string json, out bool tooLarge))
+        {
+            HttpStatusCode status = tooLarge
+                ? HttpStatusCode.RequestEntityTooLarge
+                : HttpStatusCode.BadRequest;
+            string error = tooLarge ? "payload too large" : "bad request";
+            WriteJson(
+                response,
+                status,
+                "{\"ok\":false,\"error\":" + JsonWriter.Quote(error) + "}");
+            return false;
+        }
+
+        if (!TryReadJsonNumberProperty(json, "x", out x) ||
+            !TryReadJsonNumberProperty(json, "z", out z) ||
+            float.IsNaN(x) || float.IsInfinity(x) ||
+            float.IsNaN(z) || float.IsInfinity(z) ||
+            ((double)x * x) + ((double)z * z) >
+            (double)MaximumPingWorldRadius * MaximumPingWorldRadius)
+        {
+            WriteJson(
+                response,
+                HttpStatusCode.BadRequest,
+                "{\"ok\":false,\"error\":\"invalid coordinates\"}");
+            return false;
+        }
+
+        if (TryFindJsonPropertyValue(json, "label", out int labelIndex))
+        {
+            if (!TryParseJsonString(json, labelIndex, out label))
+            {
+                WriteJson(
+                    response,
+                    HttpStatusCode.BadRequest,
+                    "{\"ok\":false,\"error\":\"invalid label\"}");
+                return false;
+            }
+
+            label = label.Trim();
+            if (label.Length == 0)
+            {
+                label = "Web ping";
+            }
+            else if (label.Length > MaximumPingLabelLength)
+            {
+                WriteJson(
+                    response,
+                    HttpStatusCode.BadRequest,
+                    "{\"ok\":false,\"error\":\"label too long\"}");
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static string BuildPingJson(MapPingSnapshot ping)
+    {
+        var json = new StringBuilder(96);
+        json.Append('{');
+        json.Append("\"x\":").Append(JsonWriter.Number(ping.X));
+        json.Append(",\"z\":").Append(JsonWriter.Number(ping.Z));
+        json.Append(",\"label\":").Append(JsonWriter.Quote(ping.Label));
+        json.Append(",\"unixMs\":").Append(
+            ping.UnixMs.ToString(CultureInfo.InvariantCulture));
+        json.Append('}');
+        return json.ToString();
     }
 
     private void ServeEntities(
@@ -1842,6 +1968,21 @@ internal sealed class LiveMapHttpServer
         out bool tooLarge)
     {
         value = string.Empty;
+        if (!TryReadRequestBody(request, out string json, out tooLarge))
+        {
+            return false;
+        }
+
+        return TryFindJsonPropertyValue(json, propertyName, out int valueIndex) &&
+               TryParseJsonString(json, valueIndex, out value);
+    }
+
+    private static bool TryReadRequestBody(
+        HttpListenerRequest request,
+        out string json,
+        out bool tooLarge)
+    {
+        json = string.Empty;
         tooLarge = request.ContentLength64 > MaximumRequestBodyBytes;
         if (tooLarge)
         {
@@ -1867,7 +2008,16 @@ internal sealed class LiveMapHttpServer
             return false;
         }
 
-        string json = Encoding.UTF8.GetString(bytes, 0, length);
+        json = Encoding.UTF8.GetString(bytes, 0, length);
+        return true;
+    }
+
+    private static bool TryFindJsonPropertyValue(
+        string json,
+        string propertyName,
+        out int valueIndex)
+    {
+        valueIndex = 0;
         string property = "\"" + propertyName + "\"";
         int searchIndex = 0;
         while (searchIndex < json.Length)
@@ -1878,7 +2028,7 @@ internal sealed class LiveMapHttpServer
                 return false;
             }
 
-            int valueIndex = propertyIndex + property.Length;
+            valueIndex = propertyIndex + property.Length;
             SkipJsonWhitespace(json, ref valueIndex);
             if (valueIndex >= json.Length || json[valueIndex] != ':')
             {
@@ -1888,15 +2038,43 @@ internal sealed class LiveMapHttpServer
 
             valueIndex++;
             SkipJsonWhitespace(json, ref valueIndex);
-            if (TryParseJsonString(json, valueIndex, out value))
-            {
-                return true;
-            }
-
-            searchIndex = valueIndex;
+            return valueIndex < json.Length;
         }
 
         return false;
+    }
+
+    private static bool TryReadJsonNumberProperty(
+        string json,
+        string propertyName,
+        out float value)
+    {
+        value = 0f;
+        if (!TryFindJsonPropertyValue(json, propertyName, out int valueIndex))
+        {
+            return false;
+        }
+
+        int endIndex = valueIndex;
+        while (endIndex < json.Length)
+        {
+            char character = json[endIndex];
+            if (character == ',' || character == '}' ||
+                character == ' ' || character == '\t' ||
+                character == '\r' || character == '\n')
+            {
+                break;
+            }
+
+            endIndex++;
+        }
+
+        return endIndex > valueIndex &&
+               float.TryParse(
+                   json.Substring(valueIndex, endIndex - valueIndex),
+                   NumberStyles.Float,
+                   CultureInfo.InvariantCulture,
+                   out value);
     }
 
     private static bool TryParseJsonString(string json, int startIndex, out string value)

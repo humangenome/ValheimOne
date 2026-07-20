@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Splatform;
 using UnityEngine;
 using ValheimOne.Infrastructure;
 
@@ -9,6 +10,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
 {
     private const float IdleUpdateSeconds = 30f;
     private const float FogUpdateSeconds = 2f;
+    private const int MaximumPendingPings = 4;
+    private const int PingType = 3;
 
     private LiveMapConfig? _config;
     private ModLogger? _log;
@@ -26,6 +29,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private readonly Dictionary<long, PlayerMotionState> _motion =
         new Dictionary<long, PlayerMotionState>();
     private readonly PositionHistory _positionHistory = new PositionHistory();
+    private readonly object _pendingPingsLock = new object();
+    private readonly Queue<PendingMapPing> _pendingPings = new Queue<PendingMapPing>();
     private string _worldName = string.Empty;
     private float _nextPlayerUpdate;
     private float _nextFogUpdate;
@@ -112,6 +117,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             TryStart();
             return;
         }
+
+        DrainPendingPings();
 
         float now = Time.realtimeSinceStartup;
         ZNet? network = ZNet.instance;
@@ -256,6 +263,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             GetEffectivePlayerUpdateSeconds,
             _fogTracker,
             _renderer,
+            TryEnqueueMapPing,
             config,
             _consoleBridge,
             _logRingBuffer,
@@ -266,6 +274,87 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _nextPlayerUpdate = now + GetEffectivePlayerUpdateSeconds();
         _nextFogUpdate = now + (_idle ? IdleUpdateSeconds : FogUpdateSeconds);
         _started = true;
+    }
+
+    private bool TryEnqueueMapPing(float x, float z, string label)
+    {
+        lock (_pendingPingsLock)
+        {
+            if (_pendingPings.Count >= MaximumPendingPings)
+            {
+                return false;
+            }
+
+            _pendingPings.Enqueue(new PendingMapPing(x, z, label));
+            return true;
+        }
+    }
+
+    private void DrainPendingPings()
+    {
+        for (int processed = 0;
+             processed < MaximumPendingPings && TryDequeueMapPing(out PendingMapPing pending);
+             processed++)
+        {
+            try
+            {
+                ZNet? network = ZNet.instance;
+                ZRoutedRpc? routedRpc = ZRoutedRpc.instance;
+                if (network == null || routedRpc == null ||
+                    !TryGetGroundHeight(pending.X, pending.Z, out float height))
+                {
+                    continue;
+                }
+
+                var position = new Vector3(pending.X, height, pending.Z);
+                var userInfo = new UserInfo
+                {
+                    Name = pending.Label,
+                    UserId = new PlatformUserID("Server"),
+                };
+                routedRpc.InvokeRoutedRPC(
+                    ZRoutedRpc.Everybody,
+                    "ChatMessage",
+                    position,
+                    PingType,
+                    userInfo,
+                    string.Empty);
+            }
+            catch (Exception exception)
+            {
+                _log?.Warning(
+                    $"[LiveMap] could not send map ping: " +
+                    $"{exception.GetType().Name}: {exception.Message}");
+            }
+        }
+    }
+
+    private bool TryDequeueMapPing(out PendingMapPing pending)
+    {
+        lock (_pendingPingsLock)
+        {
+            if (_pendingPings.Count == 0)
+            {
+                pending = default;
+                return false;
+            }
+
+            pending = _pendingPings.Dequeue();
+            return true;
+        }
+    }
+
+    internal static bool TryGetGroundHeight(float x, float z, out float height)
+    {
+        WorldGenerator? generator = WorldGenerator.instance;
+        if (generator == null)
+        {
+            height = 0f;
+            return false;
+        }
+
+        height = generator.GetHeight(x, z);
+        return true;
     }
 
     private void RefreshFogMode()
@@ -484,7 +573,27 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _fogTracker = null;
         _renderer?.Stop();
         _renderer = null;
+        lock (_pendingPingsLock)
+        {
+            _pendingPings.Clear();
+        }
         _started = false;
+    }
+
+    private readonly struct PendingMapPing
+    {
+        public PendingMapPing(float x, float z, string label)
+        {
+            X = x;
+            Z = z;
+            Label = label;
+        }
+
+        public float X { get; }
+
+        public float Z { get; }
+
+        public string Label { get; }
     }
 
     private sealed class PlayerMotionState
