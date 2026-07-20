@@ -9,6 +9,7 @@ internal sealed class LiveMapSnapshot
         string.Empty,
         0,
         0f,
+        0,
         Array.Empty<LiveMapPlayerSnapshot>());
 
     public LiveMapSnapshot(
@@ -16,12 +17,14 @@ internal sealed class LiveMapSnapshot
         string worldName,
         int day,
         float timeOfDay,
+        long unixMs,
         LiveMapPlayerSnapshot[] players)
     {
         ServerName = serverName;
         WorldName = worldName;
         Day = day;
         TimeOfDay = timeOfDay;
+        UnixMs = unixMs;
         Players = players;
     }
 
@@ -32,6 +35,8 @@ internal sealed class LiveMapSnapshot
     public int Day { get; }
 
     public float TimeOfDay { get; }
+
+    public long UnixMs { get; }
 
     public LiveMapPlayerSnapshot[] Players { get; }
 }

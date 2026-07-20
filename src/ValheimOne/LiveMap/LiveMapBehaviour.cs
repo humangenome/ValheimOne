@@ -258,6 +258,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             _worldName,
             day,
             timeOfDay,
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             players.ToArray());
     }
 

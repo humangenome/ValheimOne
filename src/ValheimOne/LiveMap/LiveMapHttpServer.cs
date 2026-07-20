@@ -534,6 +534,11 @@ internal sealed class LiveMapHttpServer
         RaidEventSnapshot? activeEvent = viewLevel == ViewLevel.Admin
             ? entitySnapshot.Event
             : null;
+        long snapshotAgeMs = snapshot.UnixMs == 0
+            ? 0
+            : Math.Max(0L, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - snapshot.UnixMs);
+        bool snapshotStale = snapshot.UnixMs != 0 &&
+                             snapshotAgeMs > Math.Max(0.25f, _config.PlayerUpdateSeconds) * 3000.0;
         var json = new StringBuilder(416);
         json.Append('{');
         json.Append("\"serverName\":").Append(JsonWriter.Quote(snapshot.ServerName));
@@ -565,7 +570,15 @@ internal sealed class LiveMapHttpServer
         json.Append("\"mode\":").Append(JsonWriter.Quote(fogMode));
         json.Append(",\"revision\":").Append(fogRevision.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"size\":").Append(FogTracker.Size.ToString(CultureInfo.InvariantCulture));
-        json.Append("}}}");
+        json.Append("}}");
+        json.Append(",\"unixMs\":").Append(snapshot.UnixMs.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"snapshotAgeMs\":").Append(snapshotAgeMs.ToString(CultureInfo.InvariantCulture));
+        if (snapshotStale)
+        {
+            json.Append(",\"stale\":true");
+        }
+
+        json.Append('}');
 
         var key = new StringBuilder(96);
         key.Append(snapshot.Day.ToString(CultureInfo.InvariantCulture)).Append('|');
@@ -574,7 +587,8 @@ internal sealed class LiveMapHttpServer
         key.Append(maxPlayers.ToString(CultureInfo.InvariantCulture)).Append('|');
         key.Append(mapState).Append('|');
         key.Append(mapProgress).Append('|');
-        key.Append(fogRevision.ToString(CultureInfo.InvariantCulture));
+        key.Append(fogRevision.ToString(CultureInfo.InvariantCulture)).Append('|');
+        key.Append(snapshotStale ? "stale" : "fresh");
         if (viewLevel == ViewLevel.Admin)
         {
             key.Append('|').Append(entitiesAvailable ? "entities" : "no-entities");
@@ -946,6 +960,11 @@ internal sealed class LiveMapHttpServer
     {
         bool seesAllPlayers = SeesAllPlayers(viewLevel);
         bool showNames = viewLevel == ViewLevel.Admin || _publicShowPlayerNames;
+        long snapshotAgeMs = snapshot.UnixMs == 0
+            ? 0
+            : Math.Max(0L, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - snapshot.UnixMs);
+        bool snapshotStale = snapshot.UnixMs != 0 &&
+                             snapshotAgeMs > Math.Max(0.25f, _config.PlayerUpdateSeconds) * 3000.0;
         var json = new StringBuilder(128 + (snapshot.Players.Length * 96));
         json.Append("{\"players\":[");
         bool needsComma = false;
@@ -971,7 +990,14 @@ internal sealed class LiveMapHttpServer
             needsComma = true;
         }
 
-        json.Append("]}");
+        json.Append("],\"unixMs\":").Append(snapshot.UnixMs.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"snapshotAgeMs\":").Append(snapshotAgeMs.ToString(CultureInfo.InvariantCulture));
+        if (snapshotStale)
+        {
+            json.Append(",\"stale\":true");
+        }
+
+        json.Append('}');
         return json.ToString();
     }
 
