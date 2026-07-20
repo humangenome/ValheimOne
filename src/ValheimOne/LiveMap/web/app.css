@@ -772,6 +772,11 @@ input {
     font-size: 17px;
 }
 
+.layer-swatch-tombstone {
+    color: #d8c8ad;
+    font-size: 13px;
+}
+
 .layer-swatch-raid {
     color: var(--raid);
     font-size: 15px;
@@ -1773,6 +1778,10 @@ body.is-measuring .compass-control {
     background: var(--frost);
 }
 
+#map.is-density-dots .entity-tombstone .entity-marker-shell {
+    background: #d8c8ad;
+}
+
 .entity-ship .entity-marker-shell {
     border-color: rgba(232, 220, 196, 0.62);
     color: var(--text);
@@ -1787,6 +1796,23 @@ body.is-measuring .compass-control {
     border-color: rgba(126, 177, 214, 0.78);
     color: var(--frost);
     font-size: 18px;
+}
+
+.entity-tombstone .entity-marker-shell {
+    width: 19px;
+    height: 19px;
+    border-color: rgba(216, 200, 173, 0.68);
+    border-radius: 6px;
+    color: #d8c8ad;
+    font-size: 11px;
+}
+
+.entity-tombstone:not(.is-newest-death) .entity-marker-shell {
+    opacity: 0.52;
+}
+
+.entity-tombstone.is-newest-death .entity-marker-shell {
+    animation: tombstone-pulse 2.4s ease-in-out infinite;
 }
 
 .pin-marker-shell {
@@ -2001,7 +2027,8 @@ body.is-measuring .compass-control {
 }
 
 .vo-copy,
-.vo-popup-action {
+.vo-popup-action,
+.vo-popup-row-action {
     min-height: 25px;
     border: 1px solid var(--border-strong);
     border-radius: 5px;
@@ -2022,7 +2049,9 @@ body.is-measuring .compass-control {
 .vo-copy:hover,
 .vo-copy:focus-visible,
 .vo-popup-action:hover,
-.vo-popup-action:focus-visible {
+.vo-popup-action:focus-visible,
+.vo-popup-row-action:hover,
+.vo-popup-row-action:focus-visible {
     border-color: var(--accent);
     outline: none;
     background: rgba(217, 177, 104, 0.1);
@@ -2045,6 +2074,13 @@ body.is-measuring .compass-control {
     min-width: 0;
     flex: 1 1 0;
     padding: 5px 8px;
+}
+
+.vo-popup-row-action {
+    min-width: 38px;
+    flex: 0 0 auto;
+    padding: 4px 6px;
+    color: var(--accent);
 }
 
 .vo-popup-footer {
@@ -3000,6 +3036,17 @@ body.is-measuring .compass-control {
 
     50% {
         box-shadow: 0 0 0 5px rgba(217, 177, 104, 0.05);
+    }
+}
+
+@keyframes tombstone-pulse {
+    0%,
+    100% {
+        box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.5), 0 0 7px rgba(216, 200, 173, 0.18);
+    }
+
+    50% {
+        box-shadow: 0 0 0 1px rgba(216, 200, 173, 0.2), 0 2px 6px rgba(0, 0, 0, 0.5), 0 0 13px rgba(216, 200, 173, 0.4);
     }
 }
 

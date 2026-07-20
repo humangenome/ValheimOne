@@ -32,6 +32,7 @@ internal sealed class EntityTracker
         new PrefabDefinition("portal", "portal_wood"),
         new PrefabDefinition("portal", "portal_stone"),
         new PrefabDefinition("portal", "portal"),
+        new PrefabDefinition("tombstone", "Player_tombstone"),
     };
 
     private readonly LiveMapConfig _config;
@@ -199,6 +200,27 @@ internal sealed class EntityTracker
                 string tag = string.Equals(prefab.Group, "portal", StringComparison.Ordinal)
                     ? zdo.GetString(ZDOVars.s_tag, string.Empty)
                     : string.Empty;
+                bool isTombstone = string.Equals(
+                    prefab.Group,
+                    "tombstone",
+                    StringComparison.Ordinal);
+                string owner = isTombstone
+                    ? zdo.GetString(ZDOVars.s_ownerName, string.Empty)
+                    : string.Empty;
+                double? deathAgeSec = null;
+                if (isTombstone)
+                {
+                    long timeOfDeath = zdo.GetLong(ZDOVars.s_timeOfDeath, 0L);
+                    ZNet? network = ZNet.instance;
+                    if (timeOfDeath != 0L && network != null)
+                    {
+                        long ageTicks = network.GetTime().Ticks - timeOfDeath;
+                        deathAgeSec = Math.Max(
+                            0d,
+                            ageTicks / (double)TimeSpan.TicksPerSecond);
+                    }
+                }
+
                 _pendingEntities.Add(new TrackedEntitySnapshot(
                     prefab.Group,
                     prefab.Name,
@@ -207,7 +229,9 @@ internal sealed class EntityTracker
                     position.z,
                     id,
                     rotationY,
-                    tag));
+                    tag,
+                    owner,
+                    deathAgeSec));
             }
         }
         catch (Exception exception)
@@ -550,7 +574,9 @@ internal sealed class TrackedEntitySnapshot
         float z,
         string id,
         float rotYDeg,
-        string tag)
+        string tag,
+        string owner,
+        double? deathAgeSec)
     {
         Group = group;
         Prefab = prefab;
@@ -560,6 +586,8 @@ internal sealed class TrackedEntitySnapshot
         Id = id;
         RotYDeg = rotYDeg;
         Tag = tag;
+        Owner = owner;
+        DeathAgeSec = deathAgeSec;
     }
 
     public string Group { get; }
@@ -577,6 +605,10 @@ internal sealed class TrackedEntitySnapshot
     public float RotYDeg { get; }
 
     public string Tag { get; }
+
+    public string Owner { get; }
+
+    public double? DeathAgeSec { get; }
 }
 
 internal sealed class EntityFocusSnapshot

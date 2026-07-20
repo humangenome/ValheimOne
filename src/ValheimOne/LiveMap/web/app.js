@@ -55,11 +55,12 @@
         other: { label: "Other", glyph: "◇" }
     };
 
-    var ENTITY_GROUP_ORDER = ["ship", "cart", "portal"];
+    var ENTITY_GROUP_ORDER = ["ship", "cart", "portal", "tombstone"];
     var ENTITY_GROUPS = {
         ship: { label: "Ships", glyph: "⛵" },
         cart: { label: "Carts", glyph: "▣" },
-        portal: { label: "Portals", glyph: "◊" }
+        portal: { label: "Portals", glyph: "◊" },
+        tombstone: { label: "Tombstones", glyph: "☠" }
     };
 
     var LAYER_DEFAULTS = {
@@ -79,6 +80,7 @@
         ship: true,
         cart: true,
         portal: true,
+        tombstone: false,
         densityDots: false,
         iconSize: "m",
         legendCollapsed: false
@@ -1654,6 +1656,20 @@
                 copy.setAttribute("aria-label", "Copy " + row.label.toLowerCase());
                 value.appendChild(copy);
             }
+            if (row.action) {
+                var rowAction = document.createElement("button");
+                rowAction.type = "button";
+                rowAction.className = "vo-popup-row-action";
+                rowAction.textContent = row.action.label;
+                rowAction.setAttribute("data-popup-action", row.action.action);
+                if (row.action.kind) {
+                    rowAction.setAttribute("data-trail-kind", row.action.kind);
+                }
+                if (row.action.key) {
+                    rowAction.setAttribute("data-target-key", row.action.key);
+                }
+                value.appendChild(rowAction);
+            }
             rowElement.appendChild(label);
             rowElement.appendChild(value);
             rows.appendChild(rowElement);
@@ -1695,6 +1711,7 @@
         marker._voPopupKind = metadata && metadata.kind ? metadata.kind : "";
         marker._voTrailKind = metadata && metadata.trailKind ? metadata.trailKind : "";
         marker._voTrailKey = metadata && metadata.trailKey ? metadata.trailKey : "";
+        marker._voEntityId = metadata && metadata.entityId ? metadata.entityId : "";
         marker.bindPopup(function () {
             return builder();
         }, {
@@ -1813,7 +1830,9 @@
                 return;
             }
 
-            var actionButton = target.closest(".vo-popup-action[data-popup-action]");
+            var actionButton = target.closest(
+                ".vo-popup-action[data-popup-action], .vo-popup-row-action[data-popup-action]"
+            );
             if (!actionButton) {
                 return;
             }
@@ -1832,6 +1851,8 @@
                 }
             } else if (action === "trail") {
                 toggleSelectedTrail(kind, key);
+            } else if (action === "jump-tombstone") {
+                jumpToTombstone(key);
             }
         });
     }
@@ -4003,6 +4024,20 @@
         } : null);
     }
 
+    function jumpToTombstone(id) {
+        var tombstone = latestEntities.find(function (entity) {
+            return entity.group === "tombstone" && entity.id === id;
+        });
+        if (!tombstone) {
+            return;
+        }
+
+        var latLng = worldToLatLng(tombstone.x, tombstone.z);
+        focusMapLocation(latLng, layerSettings.tombstone ? function () {
+            return findMarkerNearLayer(entityLayers.get("tombstone"), latLng);
+        } : null);
+    }
+
     function renderJumpChips() {
         var spawn = (poiRecords.get("spawn") || [])[0];
         var trader = (poiRecords.get("trader") || [])[0];
@@ -4659,6 +4694,56 @@
             : (distance / 1000).toFixed(1) + " km";
     }
 
+    function tombstoneAgeSec(entity) {
+        if (!entity || !Number.isFinite(entity.deathAgeSec)) {
+            return null;
+        }
+
+        var elapsedSec = Math.max(0, Date.now() - entity.deathAgeSampledAt) / 1000;
+        return Math.max(0, entity.deathAgeSec + elapsedSec);
+    }
+
+    function formatRelativeAge(ageSec) {
+        var seconds = Math.max(0, Math.floor(ageSec));
+        if (seconds < 60) {
+            return seconds + "s ago";
+        }
+
+        var minutes = Math.floor(seconds / 60);
+        if (minutes < 60) {
+            return minutes + "m ago";
+        }
+
+        var hours = Math.floor(minutes / 60);
+        if (hours < 24) {
+            return hours + "h " + (minutes % 60) + "m ago";
+        }
+
+        var days = Math.floor(hours / 24);
+        return days + "d " + (hours % 24) + "h ago";
+    }
+
+    function lastDeathForPlayer(player) {
+        if (!player.name) {
+            return null;
+        }
+
+        var newest = null;
+        latestEntities.forEach(function (entity) {
+            var ageSec = tombstoneAgeSec(entity);
+            if (entity.group !== "tombstone" || entity.owner !== player.name) {
+                return;
+            }
+            if (!newest || (ageSec !== null &&
+                (newest.ageSec === null || ageSec < newest.ageSec)) ||
+                (ageSec === null && newest.ageSec === null &&
+                    entity.id < newest.entity.id)) {
+                newest = { ageSec: ageSec, entity: entity };
+            }
+        });
+        return newest;
+    }
+
     function shipMovedRecently(entity) {
         if (!entity || !entity.trailKey) {
             return false;
@@ -4714,6 +4799,27 @@
             rows.push({
                 label: "Traveled today",
                 value: formatTraveledDistance(player.distanceTodayM)
+            });
+        }
+        var lastDeath = lastDeathForPlayer(player);
+        if (lastDeath) {
+            rows.push({
+                action: {
+                    action: "jump-tombstone",
+                    key: lastDeath.entity.id,
+                    kind: "tombstone",
+                    label: "Jump"
+                },
+                label: "Last death",
+                value: (lastDeath.ageSec === null
+                    ? "time unknown"
+                    : formatRelativeAge(lastDeath.ageSec)) + " · " +
+                    formatTraveledDistance(worldDistance(
+                        player.x,
+                        player.z,
+                        lastDeath.entity.x,
+                        lastDeath.entity.z
+                    )) + " away"
             });
         }
 
@@ -4907,6 +5013,25 @@
         });
     }
 
+    function buildTombstonePopup(entity) {
+        var ageSec = tombstoneAgeSec(entity);
+        return popupShell({
+            feed: "entities",
+            glyph: ENTITY_GROUPS.tombstone.glyph,
+            kicker: "TOMBSTONE",
+            rows: [{
+                label: "Owner",
+                value: entity.owner || "Unknown"
+            }, {
+                label: "Death",
+                value: ageSec === null
+                    ? "time unknown"
+                    : "died " + formatRelativeAge(ageSec)
+            }, positionPopupRow(entity.x, entity.z)],
+            title: "Tombstone"
+        });
+    }
+
     function buildEntityPopup(entity) {
         if (entity.group === "ship") {
             return buildShipPopup(entity);
@@ -4914,7 +5039,10 @@
         if (entity.group === "cart") {
             return buildCartPopup(entity);
         }
-        return buildPortalPopup(entity);
+        if (entity.group === "portal") {
+            return buildPortalPopup(entity);
+        }
+        return buildTombstonePopup(entity);
     }
 
     function buildRaidPopup() {
@@ -5095,8 +5223,8 @@
         return hasLiveAccess() && entityAvailability === "available";
     }
 
-    function anyEntityLayerEnabled() {
-        return ENTITY_GROUP_ORDER.some(function (group) {
+    function entityDataIsNeeded() {
+        return latestPlayers.length > 0 || ENTITY_GROUP_ORDER.some(function (group) {
             return layerSettings[group];
         });
     }
@@ -5142,6 +5270,13 @@
     function normalizeEntityPayload(payload) {
         var entities = payload && Array.isArray(payload.entities) ? payload.entities : [];
         var normalized = [];
+        var receivedAt = Date.now();
+        var previousById = new Map();
+        latestEntities.forEach(function (entity) {
+            if (entity.id) {
+                previousById.set(entity.id, entity);
+            }
+        });
         entities.forEach(function (entity) {
             var group = entity && typeof entity.group === "string"
                 ? entity.group.trim().toLowerCase()
@@ -5155,9 +5290,24 @@
                 ? entity.prefab.trim()
                 : ENTITY_GROUPS[group].label;
             var entityId = typeof entity.id === "string" ? entity.id.trim() : "";
+            var deathAgeSec = entity.deathAgeSec == null
+                ? null
+                : finiteNumberOrNull(entity.deathAgeSec);
+            if (deathAgeSec !== null) {
+                deathAgeSec = Math.max(0, deathAgeSec);
+            }
+            var deathAgeSampledAt = receivedAt;
+            var previous = previousById.get(entityId);
+            if (previous && previous.deathAgeSec === deathAgeSec) {
+                deathAgeSampledAt = previous.deathAgeSampledAt;
+            }
             normalized.push({
+                deathAgeSampledAt: deathAgeSampledAt,
+                deathAgeSec: deathAgeSec,
                 group: group,
                 id: entityId,
+                isNewestDeath: false,
+                owner: typeof entity.owner === "string" ? entity.owner.trim() : "",
                 prefab: prefab,
                 rotYDeg: finiteNumberOrNull(entity.rotYDeg),
                 tag: typeof entity.tag === "string" ? entity.tag.trim() : "",
@@ -5208,6 +5358,22 @@
                 nextShipTrackId++;
             }
         });
+        var newestTombstones = new Map();
+        normalized.forEach(function (entity) {
+            var ageSec = tombstoneAgeSec(entity);
+            if (entity.group !== "tombstone" || !entity.owner || ageSec === null) {
+                return;
+            }
+
+            var newest = newestTombstones.get(entity.owner);
+            if (!newest || ageSec < newest.ageSec ||
+                (ageSec === newest.ageSec && entity.id < newest.entity.id)) {
+                newestTombstones.set(entity.owner, { ageSec: ageSec, entity: entity });
+            }
+        });
+        newestTombstones.forEach(function (newest) {
+            newest.entity.isNewestDeath = true;
+        });
         return normalized;
     }
 
@@ -5217,6 +5383,7 @@
             (popupSource._voPopupKind === "ship" || popupSource._voPopupKind === "cart")
             ? popupSource._voTrailKey
             : "";
+        var reopenEntityId = popupSource ? popupSource._voEntityId : "";
         clearEntityLayers(true);
         var reopenMarker = null;
         entities.forEach(function (entity) {
@@ -5227,12 +5394,19 @@
                 iconAnchor: [11, 11],
                 iconSize: [22, 22]
             });
+            if (entity.isNewestDeath) {
+                icon.options.className += " is-newest-death";
+            }
             var marker = L.marker(worldToLatLng(entity.x, entity.z), {
                 icon: icon,
-                title: entity.prefab
+                title: entity.group === "tombstone" && entity.owner
+                    ? entity.owner + " · Tombstone"
+                    : entity.prefab
             });
             var tooltipContent = document.createElement("span");
-            tooltipContent.textContent = entity.prefab;
+            tooltipContent.textContent = entity.group === "tombstone" && entity.owner
+                ? entity.owner + " · Tombstone"
+                : entity.prefab;
             marker.bindTooltip(tooltipContent, {
                 className: "map-tooltip entity-tooltip",
                 direction: "top",
@@ -5243,6 +5417,7 @@
             bindMapPopup(marker, function () {
                 return buildEntityPopup(record.entity);
             }, {
+                entityId: entity.id,
                 kind: entity.group,
                 trailKey: entity.trailKey,
                 trailKind: entity.group === "ship" || entity.group === "cart"
@@ -5255,6 +5430,9 @@
                 if (entity.trailKey === reopenEntityKey) {
                     reopenMarker = marker;
                 }
+            }
+            if (entity.id && entity.id === reopenEntityId) {
+                reopenMarker = marker;
             }
         });
 
@@ -5287,7 +5465,7 @@
         window.clearTimeout(entityPollTimer);
         entityPollTimer = 0;
         if (!map || !hasLiveAccess() || entityAvailability === "unavailable" ||
-            entityRequestPending || !anyEntityLayerEnabled()) {
+            entityRequestPending || !entityDataIsNeeded()) {
             return;
         }
 
@@ -5796,6 +5974,7 @@
 
         feedLastUpdated.players = Date.now();
         setFeedState("players", true);
+        var hadPlayers = latestPlayers.length > 0;
         var previousPlayerNames = latestPlayers.map(function (player) {
             return player.name || "";
         }).sort().join("\n");
@@ -5810,6 +5989,9 @@
         renderPlayerList(latestPlayers);
         renderConsolePlayers();
         updatePlayerMarkers(latestPlayers);
+        if (hadPlayers !== (latestPlayers.length > 0)) {
+            updateEntityPolling(true);
+        }
         applyInitialPlayersView();
         updateLayerCounts();
         applyPendingHashFollow();

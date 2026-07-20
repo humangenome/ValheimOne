@@ -1422,6 +1422,15 @@ internal sealed class LiveMapHttpServer
             {
                 json.Append(",\"tag\":").Append(JsonWriter.Quote(entity.Tag));
             }
+            if (string.Equals(entity.Group, "tombstone", StringComparison.Ordinal))
+            {
+                json.Append(",\"owner\":").Append(JsonWriter.Quote(entity.Owner));
+                if (entity.DeathAgeSec.HasValue)
+                {
+                    json.Append(",\"deathAgeSec\":").Append(JsonWriter.Number(
+                        Math.Round(entity.DeathAgeSec.Value, 1)));
+                }
+            }
 
             json.Append('}');
         }
