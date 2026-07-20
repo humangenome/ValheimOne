@@ -2,6 +2,12 @@
 
 All notable changes to ValheimOne will be documented in this file. This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and intends to use [Semantic Versioning](https://semver.org/spec/v2.0.0.html) after its first release.
 
+## [Unreleased]
+
+### Fixed
+
+- The world render no longer shows red garbage outside the playable circle (square texture corners and a band past the southern edge, from out-of-range WorldGenerator biome samples): both the base render and on-demand detail tiles now clamp everything beyond the world edge to deep ocean, with a soft fade from normal shading to the deep-ocean page color over the last ~300 m inside the edge so the boundary reads like the game's edge mist. Renderer cache version bumped — servers re-render the world map (~2 min) on next boot.
+
 ## [0.7.1] - 2026-07-19
 
 ### Fixed

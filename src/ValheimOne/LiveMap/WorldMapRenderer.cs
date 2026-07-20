@@ -14,7 +14,7 @@ internal sealed class WorldMapRenderer
 {
     public const float PixelSize = 12f;
     public const int WorldRadius = 10500;
-    public const int RendererVersion = 3;
+    public const int RendererVersion = 4;
 
     // Deepest zoom served through on-demand detail tiles (about 0.375 m/px for a
     // 2048 base at 12 m/px, providing sub-meter detail).
@@ -220,9 +220,21 @@ internal sealed class WorldMapRenderer
             for (int px = 0; px < TextureSize; px++)
             {
                 float worldX = ((px - half) * PixelSize) + (PixelSize / 2f);
+                int pixelIndex = (py * TextureSize) + px;
+
+                // Beyond the playable edge WorldGenerator returns garbage biomes;
+                // clamp to flat deep ocean and skip relief (constant height).
+                if (MapShading.EdgeOceanFactor(worldX, worldZ) >= 1f)
+                {
+                    heights[pixelIndex] = -100f;
+                    land[pixelIndex] = false;
+                    MapShading.Compose(Heightmap.Biome.Ocean, -100f, 0f, worldX, worldZ)
+                        .WriteRgba(pixels, pixelIndex * 4);
+                    continue;
+                }
+
                 Heightmap.Biome biome = _generator.GetBiome(worldX, worldZ);
                 float height = _generator.GetBiomeHeight(biome, worldX, worldZ, out Color mask);
-                int pixelIndex = (py * TextureSize) + px;
                 heights[pixelIndex] = height;
 
                 bool isLand = height >= MapShading.WaterLevel;

@@ -295,9 +295,21 @@ internal sealed class DetailTileRenderer
             for (int sx = 0; sx < sampleSize; sx++)
             {
                 float worldX = originX + ((sx - 1 + 0.5f) * pixelSpan);
+                int index = (sy * sampleSize) + sx;
+
+                // Match the base render's world-edge clamp: beyond the playable
+                // circle the generator returns garbage biomes, so sample flat
+                // deep ocean instead (also skips relief via the height gate).
+                if (MapShading.EdgeOceanFactor(worldX, worldZ) >= 1f)
+                {
+                    biomes[index] = Heightmap.Biome.Ocean;
+                    heights[index] = -100f;
+                    lavaMasks[index] = 0f;
+                    continue;
+                }
+
                 Heightmap.Biome biome = _generator.GetBiome(worldX, worldZ);
                 float height = _generator.GetBiomeHeight(biome, worldX, worldZ, out Color mask);
-                int index = (sy * sampleSize) + sx;
                 biomes[index] = biome;
                 heights[index] = height;
                 lavaMasks[index] = biome == Heightmap.Biome.AshLands ? mask.a : 0f;

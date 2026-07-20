@@ -12,6 +12,15 @@ internal static class MapShading
 {
     public const float WaterLevel = 30f;
 
+    // World-edge treatment shared by the base render and detail tiles: beyond the
+    // playable circle WorldGenerator returns garbage biomes (an Ashlands-red band
+    // past the southern edge and square texture corners), so the last stretch
+    // inside the edge fades to deep ocean and everything past EdgeOceanRadius is
+    // pure deep ocean. EdgeOceanRadius sits inside WorldRadius so no garbage
+    // sample survives the clamp, and the fade reads like the game's edge mist.
+    public const float EdgeFadeStartRadius = 10150f;
+    public const float EdgeOceanRadius = 10470f;
+
     private const float StippleCellMeters = 6f;
 
     private static readonly MapColor ShallowWater = new MapColor(0.290f, 0.446f, 0.600f);
@@ -20,6 +29,18 @@ internal static class MapShading
     private static readonly MapColor MistlandsSpeck = new MapColor(0.300f, 0.300f, 0.340f);
     private static readonly MapColor AshlandsGlow = new MapColor(0.850f, 0.320f, 0.150f);
 
+    // 0 = inside the fade band, 1 = fully beyond the playable edge (deep ocean only).
+    public static float EdgeOceanFactor(float worldX, float worldZ)
+    {
+        float distanceSquared = (worldX * worldX) + (worldZ * worldZ);
+        if (distanceSquared <= EdgeFadeStartRadius * EdgeFadeStartRadius)
+        {
+            return 0f;
+        }
+
+        return SmoothStep(EdgeFadeStartRadius, EdgeOceanRadius, (float)Math.Sqrt(distanceSquared));
+    }
+
     public static MapColor Compose(
         Heightmap.Biome biome,
         float height,
@@ -27,13 +48,17 @@ internal static class MapShading
         float worldX,
         float worldZ)
     {
-        MapColor landColor = BiomePalette.Get(biome, height);
-        if (height < WaterLevel)
+        float edge = EdgeOceanFactor(worldX, worldZ);
+        if (edge >= 1f)
         {
-            return ComposeWater(landColor, height, worldX, worldZ);
+            return DeepWater;
         }
 
-        return ComposeLand(landColor, biome, lavaMask, worldX, worldZ);
+        MapColor landColor = BiomePalette.Get(biome, height);
+        MapColor color = height < WaterLevel
+            ? ComposeWater(landColor, height, worldX, worldZ)
+            : ComposeLand(landColor, biome, lavaMask, worldX, worldZ);
+        return edge > 0f ? MapColor.Lerp(color, DeepWater, edge) : color;
     }
 
     private static MapColor ComposeLand(
