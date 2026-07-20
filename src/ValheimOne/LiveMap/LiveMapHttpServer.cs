@@ -20,14 +20,17 @@ internal sealed class LiveMapHttpServer
     private enum ViewLevel
     {
         Admin,
+        Shared,
         Public,
     }
 
     private readonly int _port;
     private readonly string _bindIp;
     private readonly string _accessToken;
+    private readonly string _shareToken;
     private readonly bool _adminSeesAll;
     private readonly bool _publicView;
+    private readonly bool _respectInGameVisibility;
     private readonly bool _publicShowPlayerNames;
     private readonly Func<LiveMapSnapshot> _getSnapshot;
     private readonly Func<PoiCatalog> _getPoiCatalog;
@@ -58,8 +61,10 @@ internal sealed class LiveMapHttpServer
         int port,
         string bindIp,
         string accessToken,
+        string shareToken,
         bool adminSeesAll,
         bool publicView,
+        bool respectInGameVisibility,
         bool publicShowPlayerNames,
         Func<LiveMapSnapshot> getSnapshot,
         Func<PoiCatalog> getPoiCatalog,
@@ -78,8 +83,10 @@ internal sealed class LiveMapHttpServer
         _port = port;
         _bindIp = bindIp.Trim();
         _accessToken = accessToken;
+        _shareToken = shareToken;
         _adminSeesAll = adminSeesAll;
         _publicView = publicView;
+        _respectInGameVisibility = respectInGameVisibility;
         _publicShowPlayerNames = publicShowPlayerNames;
         _getSnapshot = getSnapshot;
         _getPoiCatalog = getPoiCatalog;
@@ -410,8 +417,25 @@ internal sealed class LiveMapHttpServer
         string headerToken = request.Headers["X-LiveMap-Token"] ?? string.Empty;
         bool isAdmin = FixedTimeEquals(_accessToken, queryToken);
         isAdmin |= FixedTimeEquals(_accessToken, headerToken);
-        viewLevel = isAdmin ? ViewLevel.Admin : ViewLevel.Public;
-        return isAdmin || _publicView;
+        if (isAdmin)
+        {
+            viewLevel = ViewLevel.Admin;
+            return true;
+        }
+
+        if (!string.IsNullOrEmpty(_shareToken))
+        {
+            bool isShared = FixedTimeEquals(_shareToken, queryToken);
+            isShared |= FixedTimeEquals(_shareToken, headerToken);
+            if (isShared)
+            {
+                viewLevel = ViewLevel.Shared;
+                return true;
+            }
+        }
+
+        viewLevel = ViewLevel.Public;
+        return _publicView;
     }
 
     private bool HasConsoleToken(HttpListenerRequest request)
@@ -439,7 +463,9 @@ internal sealed class LiveMapHttpServer
     private void ServeIndex(HttpListenerResponse response, ViewLevel viewLevel)
     {
         string html = Encoding.UTF8.GetString(EmbeddedAssets.Get("index.html"));
-        string token = viewLevel == ViewLevel.Admin ? _accessToken : string.Empty;
+        string token = viewLevel == ViewLevel.Admin
+            ? _accessToken
+            : viewLevel == ViewLevel.Shared ? _shareToken : string.Empty;
         string tokenQuery = string.IsNullOrEmpty(token)
             ? string.Empty
             : "?token=" + Uri.EscapeDataString(token);
@@ -567,7 +593,8 @@ internal sealed class LiveMapHttpServer
                                 _config.ConsoleEnabled &&
                                 !string.IsNullOrEmpty(_config.AccessToken) &&
                                 _consoleBridge != null;
-        bool entitiesAvailable = viewLevel == ViewLevel.Admin && _config.EntityLayer;
+        bool hasSharedMapAccess = viewLevel != ViewLevel.Public;
+        bool entitiesAvailable = hasSharedMapAccess && _config.EntityLayer;
         string mapState = _renderer.StateName;
         string mapProgress = JsonWriter.Number(_renderer.Progress);
         string fogMode = GetEffectiveFogMode(viewLevel);
@@ -575,7 +602,7 @@ internal sealed class LiveMapHttpServer
         long fogRevision = fogMode == "off" ? 0 : fogSnapshot.Revision;
         double exploredPct = GetExploredPercentage(fogSnapshot);
         EntityMapSnapshot entitySnapshot = _getEntitySnapshot();
-        RaidEventSnapshot? activeEvent = viewLevel == ViewLevel.Admin
+        RaidEventSnapshot? activeEvent = hasSharedMapAccess
             ? entitySnapshot.Event
             : null;
         long snapshotAgeMs = snapshot.UnixMs == 0
@@ -596,9 +623,11 @@ internal sealed class LiveMapHttpServer
         int maxPlayers = ValheimOne.Modules.ServerHostModule.EffectiveMaxPlayers();
         json.Append(",\"maxPlayers\":").Append(maxPlayers.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"view\":").Append(JsonWriter.Quote(
-            viewLevel == ViewLevel.Admin ? "admin" : "public"));
+            viewLevel == ViewLevel.Admin
+                ? "admin"
+                : viewLevel == ViewLevel.Shared ? "shared" : "public"));
         json.Append(",\"console\":").Append(consoleAvailable ? "true" : "false");
-        if (viewLevel == ViewLevel.Admin)
+        if (hasSharedMapAccess)
         {
             json.Append(",\"entities\":").Append(entitiesAvailable ? "true" : "false");
             json.Append(",\"event\":");
@@ -641,7 +670,7 @@ internal sealed class LiveMapHttpServer
         key.Append(mapProgress).Append('|');
         key.Append(fogRevision.ToString(CultureInfo.InvariantCulture)).Append('|');
         key.Append(snapshotStale ? "stale" : "fresh");
-        if (viewLevel == ViewLevel.Admin)
+        if (hasSharedMapAccess)
         {
             key.Append('|').Append(entitiesAvailable ? "entities" : "no-entities");
             key.Append('|');
@@ -1097,7 +1126,8 @@ internal sealed class LiveMapHttpServer
     private string BuildPlayersJson(LiveMapSnapshot snapshot, ViewLevel viewLevel)
     {
         bool seesAllPlayers = SeesAllPlayers(viewLevel);
-        bool showNames = viewLevel == ViewLevel.Admin || _publicShowPlayerNames;
+        bool hasSharedMapAccess = viewLevel != ViewLevel.Public;
+        bool showNames = hasSharedMapAccess || _publicShowPlayerNames;
         long snapshotAgeMs = snapshot.UnixMs == 0
             ? 0
             : Math.Max(0L, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - snapshot.UnixMs);
@@ -1124,7 +1154,7 @@ internal sealed class LiveMapHttpServer
             json.Append(",\"x\":").Append(JsonWriter.Number(player.X));
             json.Append(",\"y\":").Append(JsonWriter.Number(player.Y));
             json.Append(",\"z\":").Append(JsonWriter.Number(player.Z));
-            if (viewLevel == ViewLevel.Admin)
+            if (hasSharedMapAccess)
             {
                 json.Append(",\"id\":").Append(JsonWriter.Quote(
                     player.Id.ToString(CultureInfo.InvariantCulture)));
@@ -1184,7 +1214,7 @@ internal sealed class LiveMapHttpServer
 
     private void ServeEntities(HttpListenerResponse response, ViewLevel viewLevel)
     {
-        if (viewLevel != ViewLevel.Admin || !_config.EntityLayer)
+        if (viewLevel == ViewLevel.Public || !_config.EntityLayer)
         {
             WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
             return;
@@ -1391,13 +1421,17 @@ internal sealed class LiveMapHttpServer
 
     private bool SeesAllPlayers(ViewLevel viewLevel)
     {
-        return viewLevel == ViewLevel.Admin &&
-               (!string.IsNullOrEmpty(_accessToken) || _adminSeesAll);
+        if (viewLevel == ViewLevel.Admin)
+        {
+            return !string.IsNullOrEmpty(_accessToken) || _adminSeesAll;
+        }
+
+        return !_respectInGameVisibility;
     }
 
     private string GetEffectiveFogMode(ViewLevel viewLevel)
     {
-        return viewLevel == ViewLevel.Admin ? "off" : _getFogMode();
+        return viewLevel != ViewLevel.Public ? "off" : _getFogMode();
     }
 
     private double GetExploredPercentage(FogMaskSnapshot snapshot)

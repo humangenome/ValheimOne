@@ -6,6 +6,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Added
 
+- LiveMap now supports a `ShareToken` spectator tier with names, full map layers, POIs, and follow without console or admin access, plus `RespectInGameVisibility` to control whether shared and public views honor players' in-game position-sharing preference.
 - LiveMap's web console now offers a categorized command helper dropdown with click and keyboard completion, including live player-name completion for commands that target a player.
 - The web console now renders `help`, `vo help`, and `/help` as a rich in-terminal command reference and includes a collapsible Commands panel for browsing all available commands.
 - The LiveMap sidebar footer now includes a subtle SurvivalServers.com hosting attribution link.
