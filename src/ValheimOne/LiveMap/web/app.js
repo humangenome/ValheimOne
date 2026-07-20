@@ -15,6 +15,13 @@
     var POI_CLUSTER_GRID_PX = 64;
     var SSE_RETRY_INITIAL_MS = 5000;
     var SSE_RETRY_MAX_MS = 60000;
+    var TRAIL_MAX_AGE_MS = 30 * 60 * 1000;
+    var TRAIL_TARGET_AGE_MS = 15 * 60 * 1000;
+    var TRAIL_ALL_PLAYERS_AGE_MS = 5 * 60 * 1000;
+    var TRAIL_EVICT_AGE_MS = 10 * 60 * 1000;
+    var TRAIL_MAX_POINTS = 900;
+    var TRAIL_BUCKET_COUNT = 10;
+    var SHIP_MATCH_DISTANCE = 40;
     var LAYER_STORAGE_KEY = "vo-livemap-layers";
     var TAB_SESSION_KEY = "vo-livemap-active-tab";
     var CONSOLE_CATEGORY_ORDER = ["server", "players", "moderation", "world", "diagnostics"];
@@ -56,6 +63,7 @@
     var LAYER_DEFAULTS = {
         players: true,
         pins: true,
+        trails: false,
         spawn: true,
         trader: true,
         boss: true,
@@ -76,14 +84,22 @@
     var consecutiveStatusFailures = 0;
     var markerRecords = new Map();
     var latestPlayers = [];
+    var latestEntities = [];
     var latestPlayerCount = 0;
     var map = null;
     var tileLayer = null;
     var mapMetrics = null;
     var worldBounds = null;
     var followedPlayer = null;
+    var followPill = null;
     var playerLayer = null;
     var pinLayer = null;
+    var trailLayer = null;
+    var trailBuffers = new Map();
+    var selectedTrailTargets = new Map();
+    var openPopupTrailTarget = null;
+    var popupRefreshTimer = 0;
+    var nextShipTrackId = 1;
     var poiLayers = new Map();
     var poiRecords = new Map();
     var availablePoiGroups = new Set();
@@ -92,6 +108,7 @@
     var entityRequestPending = false;
     var entityPollTimer = 0;
     var entityRevision = null;
+    var entityMarkerRecords = new Map();
     var raidCircle = null;
     var currentRaidEvent = null;
     var layerSettings = loadLayerSettings();
@@ -137,6 +154,13 @@
     var eventSourceLogFlowing = false;
     var eventSourceRetryTimer = 0;
     var eventSourceRetryDelay = SSE_RETRY_INITIAL_MS;
+    var feedLastUpdated = {
+        entities: 0,
+        pins: 0,
+        players: 0,
+        pois: 0,
+        status: 0
+    };
 
     var elements = {
         bannedCount: document.getElementById("console-banned-count"),
@@ -1500,6 +1524,521 @@
         }
     }
 
+    function popupStalenessText(feed) {
+        var updatedAt = feedLastUpdated[feed] || Date.now();
+        var seconds = Math.max(0, Math.floor((Date.now() - updatedAt) / 1000));
+        if (seconds < 60) {
+            return "as of " + seconds + "s ago";
+        }
+
+        return "as of " + Math.floor(seconds / 60) + "m ago";
+    }
+
+    function popupShell(options) {
+        var shell = document.createElement("div");
+        var header = document.createElement("div");
+        var glyph = document.createElement("span");
+        var heading = document.createElement("div");
+        var kicker = document.createElement("div");
+        var title = document.createElement("div");
+        var rows = document.createElement("div");
+
+        shell.className = "vo-popup";
+        header.className = "vo-popup-header";
+        glyph.className = "vo-popup-glyph";
+        glyph.textContent = options.glyph || "•";
+        glyph.setAttribute("aria-hidden", "true");
+        heading.className = "vo-popup-heading";
+        kicker.className = "vo-popup-kicker";
+        kicker.textContent = options.kicker || "MAP";
+        title.className = "vo-popup-title";
+        title.textContent = options.title || "Point of interest";
+        rows.className = "vo-popup-rows";
+
+        heading.appendChild(kicker);
+        heading.appendChild(title);
+        header.appendChild(glyph);
+        header.appendChild(heading);
+        shell.appendChild(header);
+
+        (options.rows || []).forEach(function (row) {
+            var rowElement = document.createElement("div");
+            var label = document.createElement("span");
+            var value = document.createElement("span");
+            var valueText = document.createElement("span");
+            rowElement.className = "vo-popup-row";
+            label.className = "vo-popup-label";
+            label.textContent = row.label;
+            value.className = "vo-popup-value";
+            valueText.textContent = row.value;
+            value.appendChild(valueText);
+            if (typeof row.copy === "string") {
+                var copy = document.createElement("button");
+                copy.type = "button";
+                copy.className = "vo-copy";
+                copy.textContent = "Copy";
+                copy.setAttribute("data-copy", row.copy);
+                copy.setAttribute("aria-label", "Copy " + row.label.toLowerCase());
+                value.appendChild(copy);
+            }
+            rowElement.appendChild(label);
+            rowElement.appendChild(value);
+            rows.appendChild(rowElement);
+        });
+        shell.appendChild(rows);
+
+        if (options.actions && options.actions.length > 0) {
+            var actions = document.createElement("div");
+            actions.className = "vo-popup-actions";
+            options.actions.forEach(function (action) {
+                var button = document.createElement("button");
+                button.type = "button";
+                button.className = "vo-popup-action" + (action.active ? " is-active" : "");
+                button.textContent = action.label;
+                button.setAttribute("data-popup-action", action.action);
+                if (action.kind) {
+                    button.setAttribute("data-trail-kind", action.kind);
+                }
+                if (action.key) {
+                    button.setAttribute("data-target-key", action.key);
+                }
+                if (action.action === "trail") {
+                    button.setAttribute("aria-pressed", String(action.active === true));
+                }
+                actions.appendChild(button);
+            });
+            shell.appendChild(actions);
+        }
+
+        var footer = document.createElement("div");
+        footer.className = "vo-popup-footer";
+        footer.setAttribute("data-feed", options.feed);
+        footer.textContent = popupStalenessText(options.feed);
+        shell.appendChild(footer);
+        return shell;
+    }
+
+    function bindMapPopup(marker, builder, metadata) {
+        marker._voPopupKind = metadata && metadata.kind ? metadata.kind : "";
+        marker._voTrailKind = metadata && metadata.trailKind ? metadata.trailKind : "";
+        marker._voTrailKey = metadata && metadata.trailKey ? metadata.trailKey : "";
+        marker.bindPopup(function () {
+            return builder();
+        }, {
+            autoPan: true,
+            className: "vo-popup-wrap",
+            closeButton: true,
+            maxWidth: 280
+        });
+    }
+
+    function refreshOpenPopupFooter() {
+        if (!map || !map._popup || !map._popup.getElement()) {
+            return;
+        }
+
+        var footers = map._popup.getElement().querySelectorAll(".vo-popup-footer[data-feed]");
+        Array.prototype.forEach.call(footers, function (footer) {
+            footer.textContent = popupStalenessText(footer.getAttribute("data-feed"));
+        });
+    }
+
+    function refreshOpenPopupContent() {
+        if (!map || !map._popup) {
+            return;
+        }
+
+        var content = map._popup.getContent();
+        if (typeof content === "function") {
+            map._popup.setContent(content);
+        }
+        refreshOpenPopupFooter();
+    }
+
+    function fallbackCopyText(text) {
+        return new Promise(function (resolve, reject) {
+            var textarea = document.createElement("textarea");
+            var activeElement = document.activeElement;
+            textarea.value = text;
+            textarea.setAttribute("readonly", "");
+            textarea.style.position = "fixed";
+            textarea.style.opacity = "0";
+            document.body.appendChild(textarea);
+            textarea.select();
+            var copied = false;
+            try {
+                copied = document.execCommand("copy");
+            } catch (error) {
+                copied = false;
+            }
+            document.body.removeChild(textarea);
+            if (activeElement && typeof activeElement.focus === "function") {
+                activeElement.focus();
+            }
+            if (copied) {
+                resolve();
+            } else {
+                reject(new Error("Copy failed"));
+            }
+        });
+    }
+
+    function copyText(text) {
+        if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+            return navigator.clipboard.writeText(text).catch(function () {
+                return fallbackCopyText(text);
+            });
+        }
+        return fallbackCopyText(text);
+    }
+
+    function flashCopyButton(button) {
+        window.clearTimeout(button._voCopyTimer);
+        if (!button._voCopyLabel) {
+            button._voCopyLabel = button.textContent;
+        }
+        button.textContent = "✓";
+        button.classList.add("is-copied");
+        button._voCopyTimer = window.setTimeout(function () {
+            button.textContent = button._voCopyLabel;
+            button.classList.remove("is-copied");
+            button._voCopyTimer = 0;
+        }, 1200);
+    }
+
+    function trailTargetId(kind, key) {
+        return kind + ":" + key;
+    }
+
+    function toggleSelectedTrail(kind, key) {
+        var id = trailTargetId(kind, key);
+        if (selectedTrailTargets.has(id)) {
+            selectedTrailTargets.delete(id);
+        } else {
+            selectedTrailTargets.set(id, { kind: kind, key: key });
+        }
+        renderTrails();
+        refreshOpenPopupContent();
+    }
+
+    function bindPopupDocumentEvents() {
+        document.addEventListener("click", function (event) {
+            var target = event.target;
+            if (!target || typeof target.closest !== "function") {
+                return;
+            }
+
+            var copyButton = target.closest(".vo-copy[data-copy]");
+            if (copyButton) {
+                event.preventDefault();
+                copyText(copyButton.getAttribute("data-copy")).then(function () {
+                    flashCopyButton(copyButton);
+                }).catch(function () {
+                    return;
+                });
+                return;
+            }
+
+            var actionButton = target.closest(".vo-popup-action[data-popup-action]");
+            if (!actionButton) {
+                return;
+            }
+
+            event.preventDefault();
+            var action = actionButton.getAttribute("data-popup-action");
+            var key = actionButton.getAttribute("data-target-key") || "";
+            if (action === "follow") {
+                if (followedPlayer === key) {
+                    clearFollow();
+                } else {
+                    followPlayer(key);
+                }
+            } else if (action === "trail") {
+                toggleSelectedTrail(
+                    actionButton.getAttribute("data-trail-kind") || "player",
+                    key
+                );
+            }
+        });
+    }
+
+    function worldDistance(leftX, leftZ, rightX, rightZ) {
+        var deltaX = rightX - leftX;
+        var deltaZ = rightZ - leftZ;
+        return Math.sqrt((deltaX * deltaX) + (deltaZ * deltaZ));
+    }
+
+    function calculateDerivedMotion(samples) {
+        if (!samples || samples.length < 2) {
+            return null;
+        }
+
+        var recent = samples.slice(Math.max(0, samples.length - 3));
+        var speed = null;
+        for (var index = 1; index < recent.length; index++) {
+            var elapsed = (recent[index].t - recent[index - 1].t) / 1000;
+            if (elapsed <= 0) {
+                continue;
+            }
+            var segmentSpeed = worldDistance(
+                recent[index - 1].x,
+                recent[index - 1].z,
+                recent[index].x,
+                recent[index].z
+            ) / elapsed;
+            speed = speed == null ? segmentSpeed : (segmentSpeed * 0.55) + (speed * 0.45);
+        }
+        if (speed == null) {
+            return null;
+        }
+
+        var first = recent[0];
+        var last = recent[recent.length - 1];
+        var heading = Math.atan2(last.x - first.x, last.z - first.z) * 180 / Math.PI;
+        heading = (heading + 360) % 360;
+        return {
+            headingDeg: heading,
+            speedMps: speed
+        };
+    }
+
+    function appendTrailSample(key, kind, x, z, timestamp) {
+        var buffer = trailBuffers.get(key);
+        if (!buffer) {
+            buffer = {
+                kind: kind,
+                lastMovedAt: 0,
+                lastSeen: timestamp,
+                motion: null,
+                samples: []
+            };
+            trailBuffers.set(key, buffer);
+        }
+
+        buffer.kind = kind;
+        buffer.lastSeen = timestamp;
+        var last = buffer.samples.length > 0 ? buffer.samples[buffer.samples.length - 1] : null;
+        var distance = last ? worldDistance(last.x, last.z, x, z) : 0;
+        if (!last || distance > 0.5 || timestamp - last.t > 5000) {
+            buffer.samples.push({ t: timestamp, x: x, z: z });
+            if (last && distance > 0.5) {
+                buffer.lastMovedAt = timestamp;
+            }
+        }
+
+        var oldestAllowed = timestamp - TRAIL_MAX_AGE_MS;
+        while (buffer.samples.length > 0 && buffer.samples[0].t < oldestAllowed) {
+            buffer.samples.shift();
+        }
+        if (buffer.samples.length > TRAIL_MAX_POINTS) {
+            buffer.samples.splice(0, buffer.samples.length - TRAIL_MAX_POINTS);
+        }
+        buffer.motion = calculateDerivedMotion(buffer.samples);
+        return buffer;
+    }
+
+    function evictTrailBuffers(timestamp) {
+        trailBuffers.forEach(function (buffer, key) {
+            if (timestamp - buffer.lastSeen <= TRAIL_EVICT_AGE_MS) {
+                return;
+            }
+
+            trailBuffers.delete(key);
+            selectedTrailTargets.forEach(function (target, id) {
+                if (target.key === key) {
+                    selectedTrailTargets.delete(id);
+                }
+            });
+        });
+    }
+
+    function derivedMotion(key) {
+        var buffer = trailBuffers.get(key);
+        return buffer ? buffer.motion : null;
+    }
+
+    function recordPlayerTrails(players) {
+        var timestamp = Date.now();
+        players.forEach(function (player) {
+            appendTrailSample(player.key, "player", player.x, player.z, timestamp);
+        });
+        evictTrailBuffers(timestamp);
+    }
+
+    function recordEntityTrails(entities) {
+        var timestamp = Date.now();
+        entities.forEach(function (entity) {
+            if (entity.group === "ship" && entity.trailKey) {
+                appendTrailSample(entity.trailKey, "ship", entity.x, entity.z, timestamp);
+            }
+        });
+        evictTrailBuffers(timestamp);
+    }
+
+    function addVisibleTrailTarget(targets, kind, key, windowMs) {
+        if (!key) {
+            return;
+        }
+
+        var id = trailTargetId(kind, key);
+        var target = targets.get(id);
+        if (!target) {
+            targets.set(id, { kind: kind, key: key, windowMs: windowMs });
+            return;
+        }
+        target.windowMs = Math.max(target.windowMs, windowMs);
+    }
+
+    function trailStrokeColor(kind) {
+        var token = kind === "ship" ? "--frost" : "--accent";
+        var color = window.getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+        return color || (kind === "ship" ? "#7eb1d6" : "#d9b168");
+    }
+
+    function renderTrailBuffer(buffer, windowMs, timestamp) {
+        var samples = buffer.samples.filter(function (sample) {
+            return timestamp - sample.t <= windowMs;
+        });
+        if (samples.length < 2) {
+            return;
+        }
+
+        var segmentsByBucket = [];
+        for (var bucketIndex = 0; bucketIndex < TRAIL_BUCKET_COUNT; bucketIndex++) {
+            segmentsByBucket.push([]);
+        }
+        for (var sampleIndex = 1; sampleIndex < samples.length; sampleIndex++) {
+            var age = Math.max(0, timestamp - samples[sampleIndex].t);
+            var bucket = Math.min(
+                TRAIL_BUCKET_COUNT - 1,
+                Math.floor(age / windowMs * TRAIL_BUCKET_COUNT)
+            );
+            segmentsByBucket[bucket].push([
+                worldToLatLng(samples[sampleIndex - 1].x, samples[sampleIndex - 1].z),
+                worldToLatLng(samples[sampleIndex].x, samples[sampleIndex].z)
+            ]);
+        }
+
+        var color = trailStrokeColor(buffer.kind);
+        segmentsByBucket.forEach(function (segments, bucket) {
+            if (segments.length === 0) {
+                return;
+            }
+            var ageAmount = bucket / (TRAIL_BUCKET_COUNT - 1);
+            L.polyline(segments, {
+                color: color,
+                interactive: false,
+                opacity: 0.85 - (0.77 * ageAmount),
+                pane: "trailPane",
+                weight: 2.5 - (1.25 * ageAmount)
+            }).addTo(trailLayer);
+        });
+
+        var drawnMinute = -1;
+        for (var dotIndex = samples.length - 1; dotIndex >= 0; dotIndex--) {
+            var dotAge = Math.max(0, timestamp - samples[dotIndex].t);
+            var minute = Math.floor(dotAge / 60000);
+            if (minute < 1 || minute === drawnMinute) {
+                continue;
+            }
+            drawnMinute = minute;
+            var dotAgeAmount = Math.min(1, dotAge / windowMs);
+            L.circleMarker(worldToLatLng(samples[dotIndex].x, samples[dotIndex].z), {
+                color: color,
+                fillColor: color,
+                fillOpacity: 0.78 - (0.62 * dotAgeAmount),
+                interactive: false,
+                opacity: 0.82 - (0.66 * dotAgeAmount),
+                pane: "trailPane",
+                radius: 1.5,
+                stroke: false
+            }).addTo(trailLayer);
+        }
+    }
+
+    function renderTrails() {
+        if (!map || !trailLayer) {
+            return;
+        }
+
+        trailLayer.clearLayers();
+        var targets = new Map();
+        selectedTrailTargets.forEach(function (target) {
+            addVisibleTrailTarget(targets, target.kind, target.key, TRAIL_TARGET_AGE_MS);
+        });
+        if (followedPlayer) {
+            addVisibleTrailTarget(targets, "player", followedPlayer, TRAIL_TARGET_AGE_MS);
+        }
+        if (openPopupTrailTarget) {
+            addVisibleTrailTarget(
+                targets,
+                openPopupTrailTarget.kind,
+                openPopupTrailTarget.key,
+                TRAIL_TARGET_AGE_MS
+            );
+        }
+        if (layerSettings.trails) {
+            latestPlayers.forEach(function (player) {
+                addVisibleTrailTarget(
+                    targets,
+                    "player",
+                    player.key,
+                    TRAIL_ALL_PLAYERS_AGE_MS
+                );
+            });
+        }
+
+        var timestamp = Date.now();
+        targets.forEach(function (target) {
+            var buffer = trailBuffers.get(target.key);
+            if (buffer && buffer.kind === target.kind) {
+                renderTrailBuffer(buffer, target.windowMs, timestamp);
+            }
+        });
+    }
+
+    function bindMapPopupEvents() {
+        map.on("popupopen", function (event) {
+            var source = event.popup && event.popup._source;
+            openPopupTrailTarget = source && source._voTrailKind && source._voTrailKey
+                ? { kind: source._voTrailKind, key: source._voTrailKey }
+                : null;
+            window.clearInterval(popupRefreshTimer);
+            refreshOpenPopupFooter();
+            popupRefreshTimer = window.setInterval(refreshOpenPopupFooter, 5000);
+            renderTrails();
+        });
+        map.on("popupclose", function () {
+            openPopupTrailTarget = null;
+            window.clearInterval(popupRefreshTimer);
+            popupRefreshTimer = 0;
+            renderTrails();
+        });
+    }
+
+    function ensureFollowPill() {
+        if (followPill) {
+            return;
+        }
+
+        followPill = document.createElement("button");
+        followPill.type = "button";
+        followPill.className = "follow-pill";
+        followPill.hidden = true;
+        followPill.addEventListener("click", clearFollow);
+        elements.mapPane.appendChild(followPill);
+        L.DomEvent.disableClickPropagation(followPill);
+    }
+
+    function updateFollowPill() {
+        ensureFollowPill();
+        var record = followedPlayer ? markerRecords.get(followedPlayer) : null;
+        followPill.hidden = !record;
+        followPill.textContent = record
+            ? "Following " + record.player.displayName + " — click to release"
+            : "";
+    }
+
     function renderWorldTime(day, timeOfDay) {
         var dayNumber = Number(day);
         elements.dayNumber.textContent = "Day " +
@@ -1643,6 +2182,9 @@
         map.createPane("fogPane");
         map.getPane("fogPane").style.zIndex = "350";
         map.getPane("fogPane").style.pointerEvents = "none";
+        map.createPane("trailPane");
+        map.getPane("trailPane").style.zIndex = "380";
+        map.getPane("trailPane").style.pointerEvents = "none";
 
         // With fog active, keep an ocean-colored cover over the pane until the
         // fog image has loaded so the unfogged world never flashes on first paint.
@@ -1663,6 +2205,8 @@
 
         tileLayer.addTo(map);
         initialiseDataLayers();
+        bindMapPopupEvents();
+        ensureFollowPill();
         createLayersControl();
         map.setView(worldToLatLng(0, 0), Math.max(0, overviewZoom - 1));
         map.on("dragstart", clearFollow);
@@ -1679,6 +2223,7 @@
     function initialiseDataLayers() {
         playerLayer = L.layerGroup();
         pinLayer = L.layerGroup();
+        trailLayer = L.layerGroup().addTo(map);
         POI_GROUP_ORDER.forEach(function (group) {
             poiLayers.set(group, L.layerGroup());
             poiRecords.set(group, []);
@@ -1755,6 +2300,7 @@
         legendContent = null;
         appendLayerRow("players", "Players", "●", "players");
         appendLayerRow("pins", "Pins", "⌖", "pins");
+        appendLayerRow("trails", "Trails", "〰", "trails");
 
         POI_GROUP_ORDER.forEach(function (group) {
             if (availablePoiGroups.has(group)) {
@@ -1874,6 +2420,9 @@
         if (layerSettings.pins) {
             appendLegendItem("⌖", "Pins", "pins");
         }
+        if (layerSettings.trails) {
+            appendLegendItem("〰", "Trails", "trails");
+        }
         POI_GROUP_ORDER.forEach(function (group) {
             if (availablePoiGroups.has(group) && layerSettings[group]) {
                 appendLegendItem(POI_GROUPS[group].glyph, POI_GROUPS[group].label, group);
@@ -1917,6 +2466,9 @@
 
         setLayerVisible(playerLayer, layerSettings.players);
         setLayerVisible(pinLayer, layerSettings.pins);
+        markerRecords.forEach(function (record) {
+            updatePlayerMarkerMotion(record);
+        });
         POI_GROUP_ORDER.forEach(function (group) {
             setLayerVisible(
                 poiLayers.get(group),
@@ -1930,6 +2482,7 @@
                 entityLayersAreAvailable() && layerSettings[group]
             );
         });
+        renderTrails();
         renderLegend();
     }
 
@@ -1966,17 +2519,43 @@
         });
     }
 
+    function updatePlayerMarkerMotion(record) {
+        var markerElement = record.marker.getElement();
+        if (!markerElement) {
+            return;
+        }
+
+        var chevron = markerElement.querySelector(".player-marker-chevron");
+        if (!chevron) {
+            return;
+        }
+        var motion = derivedMotion(record.player.key);
+        var showHeading = Boolean(motion && motion.speedMps >= 0.3);
+        chevron.hidden = !showHeading;
+        if (showHeading) {
+            chevron.style.transform = "rotate(" + motion.headingDeg.toFixed(1) + "deg)";
+        }
+    }
+
     function createPlayerMarker(player) {
         var tooltipContent = document.createElement("span");
         tooltipContent.textContent = player.displayName;
-        var marker = L.circleMarker(worldToLatLng(player.x, player.z), {
-            className: "player-marker",
-            color: "#f7fbff",
-            fillColor: "#4d9fec",
-            fillOpacity: 0.95,
-            radius: 6,
-            weight: 2
+        var icon = L.divIcon({
+            className: "player-div-icon",
+            html: '<span class="player-marker-shell"><span class="player-marker-dot"></span>' +
+                '<span class="player-marker-chevron" style="transform: rotate(0deg)" hidden></span></span>',
+            iconAnchor: [12, 12],
+            iconSize: [24, 24]
+        });
+        var marker = L.marker(worldToLatLng(player.x, player.z), {
+            icon: icon,
+            title: player.displayName
         }).addTo(playerLayer);
+        var record = {
+            animationFrame: 0,
+            marker: marker,
+            player: player
+        };
         marker.bindTooltip(tooltipContent, {
             className: "player-tooltip",
             direction: "top",
@@ -1984,15 +2563,15 @@
             opacity: 1,
             permanent: !player.anonymous
         });
-        marker.on("click", function () {
-            followPlayer(player.key);
+        bindMapPopup(marker, function () {
+            return buildPlayerPopup(record.player);
+        }, {
+            kind: "player",
+            trailKey: player.key,
+            trailKind: "player"
         });
-
-        return {
-            animationFrame: 0,
-            marker: marker,
-            player: player
-        };
+        updatePlayerMarkerMotion(record);
+        return record;
     }
 
     function updatePlayerMarkers(players) {
@@ -2001,6 +2580,7 @@
         }
 
         var activeKeys = new Set();
+        var followWasCleared = false;
         players.forEach(function (player) {
             activeKeys.add(player.key);
             var target = worldToLatLng(player.x, player.z);
@@ -2012,6 +2592,7 @@
                 record.player = player;
                 animateMarker(record, target);
             }
+            updatePlayerMarkerMotion(record);
         });
 
         markerRecords.forEach(function (record, key) {
@@ -2024,10 +2605,16 @@
             markerRecords.delete(key);
             if (followedPlayer === key) {
                 followedPlayer = null;
+                followWasCleared = true;
             }
         });
 
         updateFollowStyles();
+        updateFollowPill();
+        renderTrails();
+        if (followWasCleared) {
+            renderPlayerList(latestPlayers);
+        }
     }
 
     function animateMarker(record, target) {
@@ -2065,7 +2652,10 @@
 
         followedPlayer = key;
         updateFollowStyles();
+        updateFollowPill();
         renderPlayerList(latestPlayers);
+        renderTrails();
+        refreshOpenPopupContent();
         map.panTo(record.marker.getLatLng(), {
             animate: true,
             duration: 0.35
@@ -2083,7 +2673,10 @@
 
         followedPlayer = null;
         updateFollowStyles();
+        updateFollowPill();
         renderPlayerList(latestPlayers);
+        renderTrails();
+        refreshOpenPopupContent();
     }
 
     function updateFollowStyles() {
@@ -2159,6 +2752,260 @@
         return pretty || "Point of interest";
     }
 
+    function prettifyEntityName(name) {
+        var pretty = typeof name === "string" ? name.trim() : "";
+        pretty = pretty.replace(/[_-]+/g, " ");
+        pretty = pretty.replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2");
+        pretty = pretty.replace(/([a-z0-9])([A-Z])/g, "$1 $2");
+        pretty = pretty.replace(/\s+/g, " ").trim();
+        return pretty || "Entity";
+    }
+
+    function positionPopupRow(x, z) {
+        var roundedX = Math.round(x);
+        var roundedZ = Math.round(z);
+        return {
+            copy: roundedX + ", " + roundedZ,
+            label: "Position",
+            value: "X " + roundedX + " · Z " + roundedZ
+        };
+    }
+
+    function headingLabel(degrees) {
+        var normalized = (degrees + 360) % 360;
+        var directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+        return directions[Math.round(normalized / 45) % directions.length] +
+            " · " + Math.round(normalized) + "°";
+    }
+
+    function shipMovedRecently(entity) {
+        if (!entity || !entity.trailKey) {
+            return false;
+        }
+
+        var buffer = trailBuffers.get(entity.trailKey);
+        return Boolean(buffer && buffer.lastMovedAt && Date.now() - buffer.lastMovedAt <= 25000);
+    }
+
+    function playerMovementMode(player, motion) {
+        var aboardShip = latestEntities.some(function (entity) {
+            return entity.group === "ship" && shipMovedRecently(entity) &&
+                worldDistance(player.x, player.z, entity.x, entity.z) <= 12;
+        });
+        if (aboardShip) {
+            return "aboard ship";
+        }
+        if (motion.speedMps < 0.2) {
+            return "rest";
+        }
+        if (motion.speedMps < 2.6) {
+            return "walking";
+        }
+        return "running";
+    }
+
+    function trailIsSelected(kind, key) {
+        return selectedTrailTargets.has(trailTargetId(kind, key));
+    }
+
+    function buildPlayerPopup(player) {
+        var motion = derivedMotion(player.key);
+        var rows = [positionPopupRow(player.x, player.z)];
+        if (motion) {
+            rows.push({
+                label: "Speed",
+                value: motion.speedMps.toFixed(1) + " m/s · " + playerMovementMode(player, motion)
+            });
+            if (motion.speedMps >= 0.3) {
+                rows.push({ label: "Heading", value: headingLabel(motion.headingDeg) });
+            }
+        }
+
+        var trailSelected = trailIsSelected("player", player.key);
+        return popupShell({
+            actions: [{
+                action: "follow",
+                key: player.key,
+                label: followedPlayer === player.key ? "Unfollow" : "Follow"
+            }, {
+                action: "trail",
+                active: trailSelected,
+                key: player.key,
+                kind: "player",
+                label: trailSelected ? "Hide trail" : "Trail 15m"
+            }],
+            feed: "players",
+            glyph: "●",
+            kicker: "PLAYER",
+            rows: rows,
+            title: player.displayName
+        });
+    }
+
+    function poiPopupKicker(group) {
+        var labels = {
+            boss: "BOSS ALTAR",
+            dungeon: "DUNGEON",
+            misc: "POINT OF INTEREST",
+            other: "POINT OF INTEREST",
+            spawn: "SPAWN",
+            spawner: "SPAWNER",
+            trader: "TRADER"
+        };
+        return labels[group] || "POINT OF INTEREST";
+    }
+
+    function buildPoiPopup(record) {
+        return popupShell({
+            feed: "pois",
+            glyph: POI_GROUPS[record.group].glyph,
+            kicker: poiPopupKicker(record.group),
+            rows: [positionPopupRow(record.x, record.z)],
+            title: record.title
+        });
+    }
+
+    function buildPinPopup(pin) {
+        var rows = [];
+        if (pin.checked) {
+            rows.push({ label: "Status", value: "✓ charted-off" });
+        }
+        if (pin.author) {
+            rows.push({ label: "Charted by", value: pin.author });
+        }
+        rows.push(positionPopupRow(pin.x, pin.z));
+        return popupShell({
+            feed: "pins",
+            glyph: "⌖",
+            kicker: "CHARTED PIN",
+            rows: rows,
+            title: pin.name
+        });
+    }
+
+    function shipDisplayName(prefab) {
+        var normalized = prefab.replace(/[^a-z0-9]/gi, "").toLowerCase();
+        if (normalized.indexOf("ashlands") !== -1 || normalized.indexOf("drakkar") !== -1) {
+            return "Drakkar";
+        }
+        if (normalized.indexOf("vikingship") !== -1 || normalized.indexOf("longship") !== -1) {
+            return "Longship";
+        }
+        if (normalized.indexOf("karve") !== -1) {
+            return "Karve";
+        }
+        if (normalized.indexOf("raft") !== -1) {
+            return "Raft";
+        }
+        return prettifyEntityName(prefab);
+    }
+
+    function nearbyPlayers(x, z, radius) {
+        return latestPlayers.filter(function (player) {
+            return worldDistance(x, z, player.x, player.z) <= radius;
+        });
+    }
+
+    function nearestPlayer(x, z, radius) {
+        var nearest = null;
+        latestPlayers.forEach(function (player) {
+            var distance = worldDistance(x, z, player.x, player.z);
+            if (distance <= radius && (!nearest || distance < nearest.distance)) {
+                nearest = { distance: distance, player: player };
+            }
+        });
+        return nearest;
+    }
+
+    function buildShipPopup(entity) {
+        var rows = [positionPopupRow(entity.x, entity.z)];
+        var motion = derivedMotion(entity.trailKey);
+        if (motion) {
+            rows.push({
+                label: "Speed",
+                value: motion.speedMps.toFixed(1) + " m/s · " +
+                    (motion.speedMps * 1.9438).toFixed(1) + " kn"
+            });
+            if (motion.speedMps >= 0.3) {
+                rows.push({ label: "Heading", value: headingLabel(motion.headingDeg) });
+            }
+        }
+        var crew = nearbyPlayers(entity.x, entity.z, 12).map(function (player) {
+            return player.displayName;
+        });
+        rows.push({ label: "Crew", value: crew.length > 0 ? crew.join(", ") : "None nearby" });
+
+        var trailSelected = trailIsSelected("ship", entity.trailKey);
+        return popupShell({
+            actions: [{
+                action: "trail",
+                active: trailSelected,
+                key: entity.trailKey,
+                kind: "ship",
+                label: trailSelected ? "Hide trail" : "Trail 15m"
+            }],
+            feed: "entities",
+            glyph: ENTITY_GROUPS.ship.glyph,
+            kicker: "SHIP",
+            rows: rows,
+            title: shipDisplayName(entity.prefab)
+        });
+    }
+
+    function buildCartPopup(entity) {
+        var rows = [positionPopupRow(entity.x, entity.z)];
+        var puller = nearestPlayer(entity.x, entity.z, 6);
+        if (puller) {
+            rows.push({ label: "Pulled by", value: puller.player.displayName });
+        } else {
+            rows.push({ label: "Status", value: "Idle" });
+        }
+        return popupShell({
+            feed: "entities",
+            glyph: ENTITY_GROUPS.cart.glyph,
+            kicker: "CART",
+            rows: rows,
+            title: "Cart"
+        });
+    }
+
+    function buildPortalPopup(entity) {
+        return popupShell({
+            feed: "entities",
+            glyph: ENTITY_GROUPS.portal.glyph,
+            kicker: "PORTAL",
+            rows: [positionPopupRow(entity.x, entity.z)],
+            title: "Portal"
+        });
+    }
+
+    function buildEntityPopup(entity) {
+        if (entity.group === "ship") {
+            return buildShipPopup(entity);
+        }
+        if (entity.group === "cart") {
+            return buildCartPopup(entity);
+        }
+        return buildPortalPopup(entity);
+    }
+
+    function buildRaidPopup() {
+        var event = currentRaidEvent;
+        return popupShell({
+            feed: "status",
+            glyph: "◯",
+            kicker: "RAID EVENT",
+            rows: [{
+                label: "Radius",
+                value: Math.round(event.radius) + " m"
+            }, {
+                label: "Vikings inside",
+                value: String(nearbyPlayers(event.x, event.z, event.radius).length)
+            }],
+            title: event.name
+        });
+    }
+
     function clearPoiLayers() {
         poiLayers.forEach(function (layer) {
             layer.clearLayers();
@@ -2192,6 +3039,9 @@
             offset: [0, -10],
             opacity: 1
         });
+        bindMapPopup(marker, function () {
+            return buildPoiPopup(record);
+        }, { kind: "poi" });
         return marker;
     }
 
@@ -2283,11 +3133,14 @@
                     group: group,
                     latLng: worldToLatLng(Number(poi.x), Number(poi.z)),
                     placed: poi.placed !== false,
-                    title: title
+                    title: title,
+                    x: Number(poi.x),
+                    z: Number(poi.z)
                 });
                 availablePoiGroups.add(group);
             });
 
+            feedLastUpdated.pois = Date.now();
             setFeedState("pois", true);
             renderPoiLayers();
             renderLayerRows();
@@ -2309,11 +3162,15 @@
         });
     }
 
-    function clearEntityLayers() {
+    function clearEntityLayers(preserveState) {
         entityLayers.forEach(function (layer) {
             layer.clearLayers();
         });
-        entityRevision = null;
+        entityMarkerRecords.clear();
+        if (!preserveState) {
+            entityRevision = null;
+            latestEntities = [];
+        }
     }
 
     function updateEntityAvailability(status) {
@@ -2340,9 +3197,9 @@
         }
     }
 
-    function renderEntityPayload(payload) {
-        clearEntityLayers();
+    function normalizeEntityPayload(payload) {
         var entities = payload && Array.isArray(payload.entities) ? payload.entities : [];
+        var normalized = [];
         entities.forEach(function (entity) {
             var group = entity && typeof entity.group === "string"
                 ? entity.group.trim().toLowerCase()
@@ -2355,26 +3212,115 @@
             var prefab = typeof entity.prefab === "string" && entity.prefab.trim()
                 ? entity.prefab.trim()
                 : ENTITY_GROUPS[group].label;
+            normalized.push({
+                group: group,
+                prefab: prefab,
+                trailKey: "",
+                x: Number(entity.x),
+                y: Number(entity.y),
+                z: Number(entity.z)
+            });
+        });
+
+        var previousShips = latestEntities.filter(function (entity) {
+            return entity.group === "ship" && entity.trailKey;
+        });
+        var currentShips = normalized.filter(function (entity) {
+            return entity.group === "ship";
+        });
+        var matches = [];
+        currentShips.forEach(function (entity, currentIndex) {
+            previousShips.forEach(function (previous, previousIndex) {
+                var distance = worldDistance(entity.x, entity.z, previous.x, previous.z);
+                if (distance <= SHIP_MATCH_DISTANCE) {
+                    matches.push({
+                        currentIndex: currentIndex,
+                        distance: distance,
+                        previousIndex: previousIndex
+                    });
+                }
+            });
+        });
+        matches.sort(function (left, right) {
+            return left.distance - right.distance;
+        });
+        var assignedCurrent = new Set();
+        var assignedPrevious = new Set();
+        matches.forEach(function (match) {
+            if (assignedCurrent.has(match.currentIndex) || assignedPrevious.has(match.previousIndex)) {
+                return;
+            }
+            currentShips[match.currentIndex].trailKey = previousShips[match.previousIndex].trailKey;
+            assignedCurrent.add(match.currentIndex);
+            assignedPrevious.add(match.previousIndex);
+        });
+        currentShips.forEach(function (entity) {
+            if (!entity.trailKey) {
+                entity.trailKey = "ship:" + nextShipTrackId;
+                nextShipTrackId++;
+            }
+        });
+        return normalized;
+    }
+
+    function renderEntityPayload(entities) {
+        var popupSource = map && map._popup ? map._popup._source : null;
+        var reopenShipKey = popupSource && popupSource._voPopupKind === "ship"
+            ? popupSource._voTrailKey
+            : "";
+        clearEntityLayers(true);
+        var reopenMarker = null;
+        entities.forEach(function (entity) {
             var icon = L.divIcon({
-                className: "entity-div-icon entity-" + group,
+                className: "entity-div-icon entity-" + entity.group,
                 html: '<span class="entity-marker-shell" aria-hidden="true">' +
-                    ENTITY_GROUPS[group].glyph + "</span>",
+                    ENTITY_GROUPS[entity.group].glyph + "</span>",
                 iconAnchor: [11, 11],
                 iconSize: [22, 22]
             });
-            var marker = L.marker(worldToLatLng(Number(entity.x), Number(entity.z)), {
+            var marker = L.marker(worldToLatLng(entity.x, entity.z), {
                 icon: icon,
-                title: prefab
+                title: entity.prefab
             });
             var tooltipContent = document.createElement("span");
-            tooltipContent.textContent = prefab;
+            tooltipContent.textContent = entity.prefab;
             marker.bindTooltip(tooltipContent, {
                 className: "map-tooltip entity-tooltip",
                 direction: "top",
                 offset: [0, -11],
                 opacity: 1
             });
-            marker.addTo(entityLayers.get(group));
+            var record = { entity: entity, marker: marker };
+            bindMapPopup(marker, function () {
+                return buildEntityPopup(record.entity);
+            }, {
+                kind: entity.group,
+                trailKey: entity.trailKey,
+                trailKind: entity.group === "ship" ? "ship" : ""
+            });
+            marker.addTo(entityLayers.get(entity.group));
+            if (entity.group === "ship") {
+                entityMarkerRecords.set(entity.trailKey, record);
+                if (entity.trailKey === reopenShipKey) {
+                    reopenMarker = marker;
+                }
+            }
+        });
+
+        if (reopenMarker) {
+            window.setTimeout(function () {
+                if (map && reopenMarker._map) {
+                    reopenMarker.openPopup();
+                }
+            }, 0);
+        }
+    }
+
+    function updateEntityMarkerRecords(entities) {
+        entities.forEach(function (entity) {
+            if (entity.group === "ship" && entityMarkerRecords.has(entity.trailKey)) {
+                entityMarkerRecords.get(entity.trailKey).entity = entity;
+            }
         });
     }
 
@@ -2422,18 +3368,25 @@
             }
             var wasAvailable = entityAvailability === "available";
             entityAvailability = "available";
+            feedLastUpdated.entities = Date.now();
             setFeedState("entities", true);
+            var entities = normalizeEntityPayload(payload);
+            recordEntityTrails(entities);
+            latestEntities = entities;
             var nextRevision = payload && payload.revision != null
                 ? String(payload.revision)
                 : "";
             if (nextRevision !== entityRevision) {
-                renderEntityPayload(payload);
+                renderEntityPayload(entities);
                 entityRevision = nextRevision;
+            } else {
+                updateEntityMarkerRecords(entities);
             }
             if (!wasAvailable) {
                 renderLayerRows();
             }
             syncLayerVisibility();
+            renderTrails();
         } catch (error) {
             setFeedState("entities", false);
         } finally {
@@ -2486,16 +3439,19 @@
         var center = worldToLatLng(currentRaidEvent.x, currentRaidEvent.z);
         var radius = worldDistanceToMap(currentRaidEvent.radius);
         if (!raidCircle) {
+            var raidColor = window.getComputedStyle(document.documentElement)
+                .getPropertyValue("--raid").trim() || "#c96a52";
             raidCircle = L.circle(center, {
                 className: "raid-ring",
-                color: "#c9514b",
-                fillColor: "#6e1619",
+                color: raidColor,
+                fillColor: raidColor,
                 fillOpacity: 0.22,
-                interactive: false,
+                interactive: true,
                 opacity: 0.78,
                 radius: radius,
                 weight: 2
             }).addTo(map);
+            bindMapPopup(raidCircle, buildRaidPopup, { kind: "raid" });
         } else {
             raidCircle.setLatLng(center);
             raidCircle.setRadius(radius);
@@ -2542,6 +3498,13 @@
                 }
 
                 var isChecked = pin.checked === true;
+                var pinRecord = {
+                    author: typeof pin.author === "string" ? pin.author.trim() : "",
+                    checked: isChecked,
+                    name: typeof pin.name === "string" && pin.name.trim() ? pin.name.trim() : "Pin",
+                    x: Number(pin.x),
+                    z: Number(pin.z)
+                };
                 var icon = L.divIcon({
                     className: "pin-div-icon" + (isChecked ? " is-checked" : ""),
                     html: '<span class="pin-marker-shell"><span class="pin-marker-glyph">' +
@@ -2549,22 +3512,22 @@
                     iconAnchor: [10, 19],
                     iconSize: [20, 20]
                 });
-                var marker = L.marker(worldToLatLng(Number(pin.x), Number(pin.z)), {
+                var marker = L.marker(worldToLatLng(pinRecord.x, pinRecord.z), {
                     icon: icon,
-                    title: typeof pin.name === "string" ? pin.name : "Pin"
+                    title: pinRecord.name
                 });
-                marker.bindTooltip(createPinTooltip({
-                    author: pin.author,
-                    checked: isChecked,
-                    name: pin.name
-                }), {
+                marker.bindTooltip(createPinTooltip(pinRecord), {
                     className: "map-tooltip pin-tooltip",
                     direction: "top",
                     offset: [0, -17],
                     opacity: 1
                 });
+                bindMapPopup(marker, function () {
+                    return buildPinPopup(pinRecord);
+                }, { kind: "pin" });
                 marker.addTo(pinLayer);
             });
+            feedLastUpdated.pins = Date.now();
             setFeedState("pins", true);
         } catch (error) {
             setFeedState("pins", false);
@@ -2743,6 +3706,7 @@
             throw new Error("Invalid status payload");
         }
 
+        feedLastUpdated.status = Date.now();
         setFeedState("status", true);
         elements.serverName.textContent = textOrDash(status.serverName);
         elements.worldName.textContent = textOrDash(status.worldName);
@@ -2762,11 +3726,13 @@
             throw new Error("Invalid players payload");
         }
 
+        feedLastUpdated.players = Date.now();
         setFeedState("players", true);
         var previousPlayerNames = latestPlayers.map(function (player) {
             return player.name || "";
         }).sort().join("\n");
         latestPlayers = normalizePlayers(payload);
+        recordPlayerTrails(latestPlayers);
         var currentPlayerNames = latestPlayers.map(function (player) {
             return player.name || "";
         }).sort().join("\n");
@@ -2903,6 +3869,7 @@
     }
 
     bindConsoleEvents();
+    bindPopupDocumentEvents();
     renderPlayerCount(latestPlayerCount);
     renderConsolePlayers();
     startPolling(pollStatus, POLL_INTERVAL_MS);
@@ -2910,6 +3877,7 @@
     connectEventStream();
     window.addEventListener("beforeunload", function () {
         window.clearTimeout(eventSourceRetryTimer);
+        window.clearInterval(popupRefreshTimer);
         if (eventSource) {
             eventSource.close();
         }

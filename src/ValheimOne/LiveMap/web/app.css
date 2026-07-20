@@ -670,6 +670,11 @@ input {
     font-size: 15px;
 }
 
+.layer-swatch-trails {
+    color: var(--accent);
+    font-size: 15px;
+}
+
 .layer-swatch-spawn {
     color: var(--frost);
 }
@@ -1028,12 +1033,199 @@ input {
 .leaflet-popup-content-wrapper,
 .leaflet-popup-tip {
     border: 1px solid var(--border-strong);
-    background: rgba(20, 15, 10, 0.92);
+    background: var(--panel);
     color: var(--text);
 }
 
 .leaflet-popup-content-wrapper {
-    box-shadow: 0 5px 18px rgb(0 0 0 / 32%);
+    box-shadow: 0 5px 18px rgba(18, 14, 10, 0.72);
+}
+
+.vo-popup-wrap .leaflet-popup-content-wrapper,
+.vo-popup-wrap .leaflet-popup-tip {
+    border-color: var(--border-strong);
+    background: var(--panel);
+}
+
+.vo-popup-wrap .leaflet-popup-content-wrapper {
+    overflow: hidden;
+    border-radius: 8px;
+    box-shadow:
+        inset 0 0 0 1px rgba(232, 220, 196, 0.04),
+        0 8px 24px rgba(18, 14, 10, 0.78);
+}
+
+.vo-popup-wrap .leaflet-popup-content {
+    margin: 0;
+    color: var(--text);
+}
+
+.vo-popup-wrap .leaflet-popup-close-button {
+    top: 4px;
+    right: 4px;
+    width: 25px;
+    height: 25px;
+    color: var(--secondary);
+    font-size: 19px;
+    line-height: 24px;
+}
+
+.vo-popup-wrap .leaflet-popup-close-button:hover,
+.vo-popup-wrap .leaflet-popup-close-button:focus-visible {
+    outline: none;
+    color: var(--accent);
+}
+
+.vo-popup {
+    width: 248px;
+    max-width: calc(100vw - 80px);
+}
+
+.vo-popup-header {
+    display: flex;
+    min-height: 52px;
+    align-items: center;
+    gap: 9px;
+    padding: 10px 32px 9px 11px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(217, 177, 104, 0.045);
+}
+
+.vo-popup-glyph {
+    display: grid;
+    width: 29px;
+    height: 29px;
+    flex: 0 0 29px;
+    place-items: center;
+    border: 1px solid var(--border-strong);
+    border-radius: 7px;
+    background: rgba(18, 14, 10, 0.56);
+    color: var(--accent);
+    font-size: 15px;
+    line-height: 1;
+}
+
+.vo-popup-heading {
+    min-width: 0;
+}
+
+.vo-popup-kicker {
+    overflow: hidden;
+    color: var(--accent);
+    font-family: var(--font-display);
+    font-size: 8px;
+    letter-spacing: 0.11em;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.vo-popup-title {
+    margin-top: 2px;
+    overflow: hidden;
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.vo-popup-rows {
+    padding: 7px 11px;
+}
+
+.vo-popup-row {
+    display: grid;
+    min-height: 27px;
+    grid-template-columns: 72px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid var(--border);
+}
+
+.vo-popup-row:last-child {
+    border-bottom: 0;
+}
+
+.vo-popup-label {
+    color: var(--secondary);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.045em;
+    text-transform: uppercase;
+}
+
+.vo-popup-value {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    color: var(--text);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.3;
+    text-align: right;
+    overflow-wrap: anywhere;
+}
+
+.vo-copy,
+.vo-popup-action {
+    min-height: 25px;
+    border: 1px solid var(--border-strong);
+    border-radius: 5px;
+    background: rgba(18, 14, 10, 0.48);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 10px;
+    line-height: 1;
+}
+
+.vo-copy {
+    min-width: 38px;
+    flex: 0 0 auto;
+    padding: 4px 6px;
+    color: var(--accent);
+}
+
+.vo-copy:hover,
+.vo-copy:focus-visible,
+.vo-popup-action:hover,
+.vo-popup-action:focus-visible {
+    border-color: var(--accent);
+    outline: none;
+    background: rgba(217, 177, 104, 0.1);
+}
+
+.vo-copy.is-copied,
+.vo-popup-action.is-active {
+    border-color: var(--accent);
+    background: rgba(217, 177, 104, 0.14);
+    color: var(--accent);
+}
+
+.vo-popup-actions {
+    display: flex;
+    gap: 6px;
+    padding: 0 11px 9px;
+}
+
+.vo-popup-action {
+    min-width: 0;
+    flex: 1 1 0;
+    padding: 5px 8px;
+}
+
+.vo-popup-footer {
+    padding: 6px 11px 7px;
+    border-top: 1px solid var(--border);
+    color: var(--secondary);
+    font-size: 9px;
+    font-style: italic;
+    line-height: 1;
+    text-align: right;
 }
 
 .leaflet-control-attribution {
@@ -1045,17 +1237,96 @@ input {
     color: var(--accent);
 }
 
-.player-marker {
-    transition: fill 120ms ease;
+.player-div-icon {
+    border: 0;
+    background: transparent;
 }
 
-.player-marker.is-followed {
+.player-marker-shell {
+    position: relative;
+    display: block;
+    width: 24px;
+    height: 24px;
+}
+
+.player-marker-dot {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--text);
+    border-radius: 50%;
+    background: var(--frost);
+    box-shadow:
+        0 0 0 1px rgba(18, 14, 10, 0.7),
+        0 0 8px rgba(126, 177, 214, 0.72);
+}
+
+.player-marker-chevron {
+    position: absolute;
+    top: -2px;
+    left: 9px;
+    width: 0;
+    height: 0;
+    border-right: 3px solid transparent;
+    border-bottom: 7px solid var(--accent);
+    border-left: 3px solid transparent;
+    filter: drop-shadow(0 0 2px rgba(18, 14, 10, 0.9));
+    transform-origin: 3px 14px;
+    transition: transform 180ms ease;
+}
+
+.player-marker-chevron[hidden] {
+    display: none;
+}
+
+.player-div-icon.is-followed .player-marker-shell {
     animation: marker-pulse 1.8s ease-in-out infinite;
 }
 
 .raid-ring {
     animation: raid-ring-pulse 1.8s ease-in-out infinite;
-    pointer-events: none;
+    pointer-events: auto;
+}
+
+.follow-pill {
+    position: absolute;
+    z-index: 850;
+    bottom: 22px;
+    left: 50%;
+    max-width: calc(100% - 40px);
+    min-height: 34px;
+    padding: 7px 14px;
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    background: var(--panel);
+    box-shadow:
+        inset 0 0 0 1px rgba(232, 220, 196, 0.04),
+        0 0 18px rgba(217, 177, 104, 0.24),
+        0 6px 18px rgba(18, 14, 10, 0.72);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.2;
+    text-align: center;
+    transform: translateX(-50%);
+    white-space: nowrap;
+}
+
+.follow-pill:hover,
+.follow-pill:focus-visible {
+    outline: none;
+    background: rgba(217, 177, 104, 0.12);
+    box-shadow:
+        inset 0 0 0 1px rgba(232, 220, 196, 0.06),
+        0 0 22px rgba(217, 177, 104, 0.34),
+        0 6px 18px rgba(18, 14, 10, 0.72);
+}
+
+.follow-pill[hidden] {
+    display: none;
 }
 
 .console-pane {
@@ -1905,6 +2176,24 @@ input {
     #map,
     .render-status {
         left: 0;
+    }
+
+    .vo-popup {
+        width: 232px;
+        max-width: calc(100vw - 72px);
+    }
+
+    .vo-popup-row {
+        grid-template-columns: 66px minmax(0, 1fr);
+    }
+
+    .follow-pill {
+        bottom: 14px;
+        max-width: calc(100% - 24px);
+        overflow: hidden;
+        padding-right: 12px;
+        padding-left: 12px;
+        text-overflow: ellipsis;
     }
 
     .console-pane {
