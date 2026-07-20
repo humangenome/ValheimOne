@@ -65,6 +65,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
             mapSharingModule,
             new ValheimOne.LiveMap.LiveMapModule(settings.Features),
             new ValheimOne.Query.QueryModule(settings.Features),
+            new ServerHostModule(serverConfig),
         };
 
         settings.WriteDefaultsIfNeeded();

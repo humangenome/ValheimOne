@@ -24,6 +24,17 @@ public sealed class ServerConfig
             "HandshakeGraceSeconds",
             defaultValue: 15,
             "Seconds after peer setup to wait for VO_Hello before classifying a client as vanilla and, when EnforceMod is enabled, kicking it.");
+        MaxPlayers = _feature.Int(
+            "MaxPlayers",
+            defaultValue: 0,
+            "Gameplay-effective player cap for the dedicated server. Zero keeps Valheim's default cap of 10. " +
+            "Values above 10 raise the real join limit (clamped 1..127). The direct join gate hot-reloads; " +
+            "on crossplay the PlayFab lobby capacity is applied once at boot.");
+        NoPasswordRequired = _feature.Bool(
+            "NoPasswordRequired",
+            defaultValue: false,
+            "Allow starting a public dedicated server without a join password by skipping the vanilla " +
+            "minimum-password startup validation. Does not remove or bypass a password that is set.");
     }
 
     public bool Enabled => _feature.Enabled.Value;
@@ -33,4 +44,8 @@ public sealed class ServerConfig
     public ConfigEntryBool SyncConfig { get; }
 
     public ConfigEntryInt HandshakeGraceSeconds { get; }
+
+    public ConfigEntryInt MaxPlayers { get; }
+
+    public ConfigEntryBool NoPasswordRequired { get; }
 }

@@ -27,11 +27,7 @@ public sealed class QueryModule : IFeatureModule
             "PublicPlayerNames",
             false,
             "Report real player names in A2S_PLAYER replies. When disabled, report generic slots.");
-        ConfigEntryInt maxPlayers = _feature.Int(
-            "MaxPlayers",
-            10,
-            "Reported maximum player count. Vanilla dedicated servers allow 10 players.");
-        _config = new QueryConfig(queryPort, publicPlayerNames, maxPlayers);
+        _config = new QueryConfig(queryPort, publicPlayerNames);
     }
 
     public string Name => "Server query";

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using UnityEngine;
 using ValheimOne.Infrastructure;
 
@@ -25,6 +26,8 @@ internal sealed class QueryBehaviour : MonoBehaviour
     private int _gamePort = DefaultGamePort;
     private int _responderPort;
     private int _lastInvalidQueryPort = int.MinValue;
+    private int _deprecatedMaxPlayers;
+    private bool _deprecatedMaxPlayersChecked;
     private bool _passworded;
     private bool _versionDetected;
     private bool _sessionActive;
@@ -130,6 +133,16 @@ internal sealed class QueryBehaviour : MonoBehaviour
             serverName = worldName;
         }
 
+        int maxPlayers = Modules.ServerHostModule.EffectiveMaxPlayers();
+        if (maxPlayers == Modules.ServerHostModule.VanillaPlayerLimit)
+        {
+            int deprecated = GetDeprecatedQueryMaxPlayers();
+            if (deprecated > 0)
+            {
+                maxPlayers = deprecated;
+            }
+        }
+
         var playerNames = new List<string>();
         List<ZNetPeer> peers = QueryGameAccess.GetPeers(network);
         for (int index = 0; index < peers.Count; index++)
@@ -152,12 +165,72 @@ internal sealed class QueryBehaviour : MonoBehaviour
             worldName,
             names.Length,
             names,
-            config.MaxPlayers,
+            maxPlayers,
             _gamePort,
             _passworded,
             _gameVersion,
             ValheimOnePlugin.PluginVersion,
             _startTimeUtc);
+    }
+
+    // Deprecated [Query] MaxPlayers fallback: the key moved to [Server] MaxPlayers. The old
+    // key is no longer registered, so read it once from the raw config file and warn.
+    private int GetDeprecatedQueryMaxPlayers()
+    {
+        if (_deprecatedMaxPlayersChecked)
+        {
+            return _deprecatedMaxPlayers;
+        }
+
+        _deprecatedMaxPlayersChecked = true;
+        try
+        {
+            string configPath = Path.Combine(BepInEx.Paths.ConfigPath, "valheimone.cfg");
+            if (!File.Exists(configPath))
+            {
+                return 0;
+            }
+
+            bool inQuerySection = false;
+            foreach (string rawLine in File.ReadAllLines(configPath))
+            {
+                string line = rawLine.Trim();
+                if (line.StartsWith("[", StringComparison.Ordinal))
+                {
+                    inQuerySection = string.Equals(line, "[Query]", StringComparison.OrdinalIgnoreCase);
+                    continue;
+                }
+
+                if (!inQuerySection || !line.StartsWith("MaxPlayers", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                int separator = line.IndexOf('=');
+                if (separator < 0 ||
+                    !int.TryParse(
+                        line.Substring(separator + 1).Trim(),
+                        NumberStyles.Integer,
+                        CultureInfo.InvariantCulture,
+                        out int value) ||
+                    value <= 0 || value == 10)
+                {
+                    continue;
+                }
+
+                _deprecatedMaxPlayers = Math.Min(value, 255);
+                _log?.Warning(
+                    "[Query] MaxPlayers is deprecated; move the value to [Server] MaxPlayers. " +
+                    "This fallback will be removed in the next release.");
+                break;
+            }
+        }
+        catch (Exception)
+        {
+            // A malformed config never breaks snapshot refreshes.
+        }
+
+        return _deprecatedMaxPlayers;
     }
 
     private int GetEffectiveQueryPort(QueryConfig config, ModLogger log)

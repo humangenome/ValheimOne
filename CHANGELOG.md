@@ -2,6 +2,18 @@
 
 All notable changes to ValheimOne will be documented in this file. This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and intends to use [Semantic Versioning](https://semver.org/spec/v2.0.0.html) after its first release.
 
+## [Unreleased]
+
+### Added
+
+- `[Server] MaxPlayers`: gameplay-effective player cap override for the dedicated server (0 keeps Valheim's cap of 10; higher values raise the real join limit, clamped 1..127). Patches the join gate in `ZNet.RPC_PeerInfo` and, for crossplay, the PlayFab lobby capacity, network configuration, and advertised session capacity at boot. The join gate hot-reloads; lobby capacity applies at startup. A2S `max_players` and `/api/status` follow the effective cap.
+- `[Server] NoPasswordRequired`: allow starting a public dedicated server without a join password by skipping the vanilla minimum-password startup validation (`FejdStartup.IsPublicPasswordValid`). It does not remove or bypass a password that is set — join-side password checks are untouched.
+- `/api/status` now reports `maxPlayers` (the effective gameplay cap) on both view levels.
+
+### Changed
+
+- **Breaking:** `[Query] MaxPlayers` is replaced by `[Server] MaxPlayers`. A2S reporting now always follows the effective gameplay cap. An existing `[Query] MaxPlayers` value in the config file is still honored as a reporting fallback for this release (with a deprecation warning) when `[Server] MaxPlayers` is unset; the fallback will be removed in the next release.
+
 ## [0.6.1] - 2026-07-19
 
 ### Added

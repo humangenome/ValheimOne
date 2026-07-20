@@ -541,6 +541,8 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"day\":").Append(snapshot.Day.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"timeOfDay\":").Append(JsonWriter.Number(snapshot.TimeOfDay));
         json.Append(",\"players\":").Append(visiblePlayers.ToString(CultureInfo.InvariantCulture));
+        int maxPlayers = ValheimOne.Modules.ServerHostModule.EffectiveMaxPlayers();
+        json.Append(",\"maxPlayers\":").Append(maxPlayers.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"view\":").Append(JsonWriter.Quote(
             viewLevel == ViewLevel.Admin ? "admin" : "public"));
         json.Append(",\"console\":").Append(consoleAvailable ? "true" : "false");
@@ -569,6 +571,7 @@ internal sealed class LiveMapHttpServer
         key.Append(snapshot.Day.ToString(CultureInfo.InvariantCulture)).Append('|');
         key.Append(JsonWriter.Number(Math.Round(snapshot.TimeOfDay, 3))).Append('|');
         key.Append(visiblePlayers.ToString(CultureInfo.InvariantCulture)).Append('|');
+        key.Append(maxPlayers.ToString(CultureInfo.InvariantCulture)).Append('|');
         key.Append(mapState).Append('|');
         key.Append(mapProgress).Append('|');
         key.Append(fogRevision.ToString(CultureInfo.InvariantCulture));

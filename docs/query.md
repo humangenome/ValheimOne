@@ -82,7 +82,6 @@ Enable it in `valheimone.cfg`:
 Enabled = true
 QueryPort = 0
 PublicPlayerNames = false
-MaxPlayers = 10
 ```
 
 | Key | Default | Meaning |
@@ -90,7 +89,8 @@ MaxPlayers = 10
 | `Enabled` | `false` | Starts the standalone UDP responder. Changes hot-reload and start or stop the listener. |
 | `QueryPort` | `0` | UDP listen port. `0` selects the game port plus 4; port changes hot-reload and restart the listener. |
 | `PublicPlayerNames` | `false` | Returns real player names from A2S_PLAYER when enabled; otherwise returns generic `Player N` slots. |
-| `MaxPlayers` | `10` | Maximum player count reported by A2S_INFO. |
+
+A2S `max_players` reports the effective gameplay cap: `[Server] MaxPlayers` when set, otherwise Valheim's default of 10. (`[Query] MaxPlayers` is deprecated; an existing value in the config file is still honored as a reporting fallback for this release when `[Server] MaxPlayers` is unset.)
 
 The automatic port is the Valheim game port plus 4. Vanilla non-crossplay Valheim already answers Steam queries on the game port plus 1, so the separate default avoids colliding with that listener. Open the selected port for inbound UDP traffic.
 
