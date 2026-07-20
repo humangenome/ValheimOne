@@ -11,6 +11,9 @@ All notable changes to ValheimOne will be documented in this file. This project 
 - The LiveMap sidebar footer now includes a subtle SurvivalServers.com hosting attribution link.
 - Server-side `vo` administration commands now provide categorized self-help, privacy-aware player and session details, moderation and save actions, server diagnostics, weather and boss status, and LiveMap entity summaries from both the native console and web console; `/api/console/meta` now publishes usage, category, examples, and player-argument metadata for these commands and the curated vanilla command set.
 - LiveMap `/api/status` and `/api/players` now report snapshot timestamps and ages through `unixMs` and `snapshotAgeMs`, with a `stale` flag when player data has missed three update intervals.
+- LiveMap admin player and entity data now includes stable IDs, with player biome, speed, heading, session start, daily distance, and entity rotation and portal tags.
+- LiveMap status now reports wind direction, wind intensity, and explored-world percentage, while POIs report whether they have been explored.
+- LiveMap now provides `/api/height` for invariant, validated world-height sampling.
 
 ### Changed
 

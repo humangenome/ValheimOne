@@ -9,6 +9,8 @@ internal sealed class LiveMapSnapshot
         string.Empty,
         0,
         0f,
+        0f,
+        0f,
         0,
         Array.Empty<LiveMapPlayerSnapshot>());
 
@@ -17,6 +19,8 @@ internal sealed class LiveMapSnapshot
         string worldName,
         int day,
         float timeOfDay,
+        float windDirDeg,
+        float windIntensity,
         long unixMs,
         LiveMapPlayerSnapshot[] players)
     {
@@ -24,6 +28,8 @@ internal sealed class LiveMapSnapshot
         WorldName = worldName;
         Day = day;
         TimeOfDay = timeOfDay;
+        WindDirDeg = windDirDeg;
+        WindIntensity = windIntensity;
         UnixMs = unixMs;
         Players = players;
     }
@@ -36,6 +42,10 @@ internal sealed class LiveMapSnapshot
 
     public float TimeOfDay { get; }
 
+    public float WindDirDeg { get; }
+
+    public float WindIntensity { get; }
+
     public long UnixMs { get; }
 
     public LiveMapPlayerSnapshot[] Players { get; }
@@ -43,13 +53,30 @@ internal sealed class LiveMapSnapshot
 
 internal sealed class LiveMapPlayerSnapshot
 {
-    public LiveMapPlayerSnapshot(string name, float x, float y, float z, bool isPublic)
+    public LiveMapPlayerSnapshot(
+        string name,
+        float x,
+        float y,
+        float z,
+        bool isPublic,
+        long id,
+        string biome,
+        float speedMps,
+        float headingDeg,
+        long sessionStartUnixMs,
+        float distanceTodayM)
     {
         Name = name;
         X = x;
         Y = y;
         Z = z;
         IsPublic = isPublic;
+        Id = id;
+        Biome = biome;
+        SpeedMps = speedMps;
+        HeadingDeg = headingDeg;
+        SessionStartUnixMs = sessionStartUnixMs;
+        DistanceTodayM = distanceTodayM;
     }
 
     public string Name { get; }
@@ -61,4 +88,16 @@ internal sealed class LiveMapPlayerSnapshot
     public float Z { get; }
 
     public bool IsPublic { get; }
+
+    public long Id { get; }
+
+    public string Biome { get; }
+
+    public float SpeedMps { get; }
+
+    public float HeadingDeg { get; }
+
+    public long SessionStartUnixMs { get; }
+
+    public float DistanceTodayM { get; }
 }

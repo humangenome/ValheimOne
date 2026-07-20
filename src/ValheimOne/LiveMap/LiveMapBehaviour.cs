@@ -23,6 +23,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private volatile LiveMapSnapshot _snapshot = LiveMapSnapshot.Empty;
     private volatile PoiCatalog _poiCatalog = PoiCatalog.Empty;
     private volatile string _fogMode = "off";
+    private readonly Dictionary<long, PlayerMotionState> _motion =
+        new Dictionary<long, PlayerMotionState>();
     private string _worldName = string.Empty;
     private float _nextPlayerUpdate;
     private float _nextFogUpdate;
@@ -279,8 +281,32 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             return;
         }
 
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        double seconds = network.GetTimeSeconds();
+        EnvMan? environmentManager = EnvMan.instance;
+        float dayLength = environmentManager != null && environmentManager.m_dayLengthSec > 0f
+            ? environmentManager.m_dayLengthSec
+            : 1800f;
+        int day = (int)Math.Floor(seconds / dayLength);
+        float timeOfDay = (float)((seconds % dayLength) / dayLength);
+        if (timeOfDay < 0f)
+        {
+            timeOfDay += 1f;
+        }
+
+        float windDirDeg = 0f;
+        float windIntensity = 0f;
+        if (environmentManager != null)
+        {
+            Vector3 windDir = environmentManager.GetWindDir();
+            windDirDeg = (float)(((Math.Atan2(windDir.x, windDir.z) * 180.0 / Math.PI) + 360.0) % 360.0);
+            windIntensity = Math.Max(0f, Math.Min(1f, environmentManager.GetWindIntensity()));
+        }
+
         var players = new List<LiveMapPlayerSnapshot>();
+        var presentIds = new HashSet<long>();
         List<ZNetPeer> peers = GameAccess.GetPeers(network);
+        WorldGenerator? worldGenerator = WorldGenerator.instance;
         for (int index = 0; index < peers.Count; index++)
         {
             ZNetPeer peer = peers[index];
@@ -290,23 +316,86 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             }
 
             Vector3 position = peer.m_refPos;
+            long id = peer.m_characterID.UserID;
+            presentIds.Add(id);
+            if (!_motion.TryGetValue(id, out PlayerMotionState? motion))
+            {
+                motion = new PlayerMotionState
+                {
+                    LastX = position.x,
+                    LastZ = position.z,
+                    LastUnixMs = nowMs,
+                    SessionStartUnixMs = nowMs,
+                    LastDay = day,
+                };
+                _motion.Add(id, motion);
+            }
+            else
+            {
+                if (day != motion.LastDay)
+                {
+                    motion.DistanceTodayM = 0f;
+                    motion.LastDay = day;
+                }
+
+                double deltaSeconds = (nowMs - motion.LastUnixMs) / 1000.0;
+                if (deltaSeconds >= 0.5)
+                {
+                    float deltaX = position.x - motion.LastX;
+                    float deltaZ = position.z - motion.LastZ;
+                    float distance = (float)Math.Sqrt((deltaX * deltaX) + (deltaZ * deltaZ));
+                    if (distance > 200f)
+                    {
+                        motion.SpeedMps = 0f;
+                    }
+                    else
+                    {
+                        float speed = distance / (float)deltaSeconds;
+                        motion.SpeedMps = (0.6f * speed) + (0.4f * motion.SpeedMps);
+                        if (distance >= 0.05f)
+                        {
+                            motion.HeadingDeg =
+                                (float)(((Math.Atan2(deltaX, deltaZ) * 180.0 / Math.PI) + 360.0) % 360.0);
+                        }
+
+                        motion.DistanceTodayM += distance;
+                    }
+
+                    motion.LastX = position.x;
+                    motion.LastZ = position.z;
+                    motion.LastUnixMs = nowMs;
+                }
+            }
+
+            string biome = worldGenerator == null
+                ? string.Empty
+                : worldGenerator.GetBiome(position.x, position.z).ToString();
             players.Add(new LiveMapPlayerSnapshot(
                 peer.m_playerName ?? string.Empty,
                 position.x,
                 position.y,
                 position.z,
-                peer.m_publicRefPos));
+                peer.m_publicRefPos,
+                id,
+                biome,
+                motion.SpeedMps,
+                motion.HeadingDeg,
+                motion.SessionStartUnixMs,
+                motion.DistanceTodayM));
         }
 
-        double seconds = network.GetTimeSeconds();
-        float dayLength = EnvMan.instance != null && EnvMan.instance.m_dayLengthSec > 0f
-            ? EnvMan.instance.m_dayLengthSec
-            : 1800f;
-        int day = (int)Math.Floor(seconds / dayLength);
-        float timeOfDay = (float)((seconds % dayLength) / dayLength);
-        if (timeOfDay < 0f)
+        var departedIds = new List<long>();
+        foreach (long id in _motion.Keys)
         {
-            timeOfDay += 1f;
+            if (!presentIds.Contains(id))
+            {
+                departedIds.Add(id);
+            }
+        }
+
+        for (int index = 0; index < departedIds.Count; index++)
+        {
+            _motion.Remove(departedIds[index]);
         }
 
         _snapshot = new LiveMapSnapshot(
@@ -314,7 +403,9 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             _worldName,
             day,
             timeOfDay,
-            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            windDirDeg,
+            windIntensity,
+            nowMs,
             players.ToArray());
     }
 
@@ -365,5 +456,24 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _renderer?.Stop();
         _renderer = null;
         _started = false;
+    }
+
+    private sealed class PlayerMotionState
+    {
+        public float LastX { get; set; }
+
+        public float LastZ { get; set; }
+
+        public long LastUnixMs { get; set; }
+
+        public long SessionStartUnixMs { get; set; }
+
+        public float DistanceTodayM { get; set; }
+
+        public int LastDay { get; set; }
+
+        public float SpeedMps { get; set; }
+
+        public float HeadingDeg { get; set; }
     }
 }

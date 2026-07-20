@@ -43,10 +43,13 @@ internal sealed class LiveMapHttpServer
     private readonly LogRingBuffer? _logRingBuffer;
     private readonly ModLogger _log;
     private readonly object _fogPngLock = new object();
+    private readonly object _exploredPctLock = new object();
     private HttpListener? _listener;
     private Thread? _listenerThread;
     private byte[]? _fogPng;
     private long _fogPngRevision = -1;
+    private long _exploredPctRevision = -1;
+    private double _exploredPctValue;
     private bool _consoleTokenWarningLogged;
     private int _eventStreamCount;
     private volatile bool _stopping;
@@ -302,6 +305,10 @@ internal sealed class LiveMapHttpServer
             else if (isGet && path == "/api/players")
             {
                 ServePlayers(response, viewLevel);
+            }
+            else if (isGet && path == "/api/height")
+            {
+                ServeHeight(request, response);
             }
             else if (isGet && path == "/api/entities")
             {
@@ -566,6 +573,7 @@ internal sealed class LiveMapHttpServer
         string fogMode = GetEffectiveFogMode(viewLevel);
         FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
         long fogRevision = fogMode == "off" ? 0 : fogSnapshot.Revision;
+        double exploredPct = GetExploredPercentage(fogSnapshot);
         EntityMapSnapshot entitySnapshot = _getEntitySnapshot();
         RaidEventSnapshot? activeEvent = viewLevel == ViewLevel.Admin
             ? entitySnapshot.Event
@@ -581,6 +589,9 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"worldName\":").Append(JsonWriter.Quote(snapshot.WorldName));
         json.Append(",\"day\":").Append(snapshot.Day.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"timeOfDay\":").Append(JsonWriter.Number(snapshot.TimeOfDay));
+        json.Append(",\"windDirDeg\":").Append(JsonWriter.Number(Math.Round(snapshot.WindDirDeg, 1)));
+        json.Append(",\"windIntensity\":").Append(JsonWriter.Number(Math.Round(snapshot.WindIntensity, 3)));
+        json.Append(",\"exploredPct\":").Append(JsonWriter.Number(Math.Round(exploredPct, 1)));
         json.Append(",\"players\":").Append(visiblePlayers.ToString(CultureInfo.InvariantCulture));
         int maxPlayers = ValheimOne.Modules.ServerHostModule.EffectiveMaxPlayers();
         json.Append(",\"maxPlayers\":").Append(maxPlayers.ToString(CultureInfo.InvariantCulture));
@@ -619,6 +630,11 @@ internal sealed class LiveMapHttpServer
         var key = new StringBuilder(96);
         key.Append(snapshot.Day.ToString(CultureInfo.InvariantCulture)).Append('|');
         key.Append(JsonWriter.Number(Math.Round(snapshot.TimeOfDay, 3))).Append('|');
+        double roundedWindDir = (Math.Round(snapshot.WindDirDeg / 5.0) * 5.0) % 360.0;
+        key.Append(JsonWriter.Number(roundedWindDir)).Append('|');
+        double roundedWindIntensity = Math.Round(snapshot.WindIntensity / 0.05) * 0.05;
+        key.Append(JsonWriter.Number(roundedWindIntensity)).Append('|');
+        key.Append(JsonWriter.Number(Math.Round(exploredPct, 1))).Append('|');
         key.Append(visiblePlayers.ToString(CultureInfo.InvariantCulture)).Append('|');
         key.Append(maxPlayers.ToString(CultureInfo.InvariantCulture)).Append('|');
         key.Append(mapState).Append('|');
@@ -1108,6 +1124,21 @@ internal sealed class LiveMapHttpServer
             json.Append(",\"x\":").Append(JsonWriter.Number(player.X));
             json.Append(",\"y\":").Append(JsonWriter.Number(player.Y));
             json.Append(",\"z\":").Append(JsonWriter.Number(player.Z));
+            if (viewLevel == ViewLevel.Admin)
+            {
+                json.Append(",\"id\":").Append(JsonWriter.Quote(
+                    player.Id.ToString(CultureInfo.InvariantCulture)));
+                json.Append(",\"biome\":").Append(JsonWriter.Quote(player.Biome));
+                json.Append(",\"speedMps\":").Append(JsonWriter.Number(
+                    Math.Round(player.SpeedMps, 2)));
+                json.Append(",\"headingDeg\":").Append(JsonWriter.Number(
+                    Math.Round(player.HeadingDeg, 1)));
+                json.Append(",\"sessionStartUnixMs\":").Append(
+                    player.SessionStartUnixMs.ToString(CultureInfo.InvariantCulture));
+                json.Append(",\"distanceTodayM\":").Append(JsonWriter.Number(
+                    Math.Round(player.DistanceTodayM, 1)));
+            }
+
             json.Append('}');
             needsComma = true;
         }
@@ -1121,6 +1152,34 @@ internal sealed class LiveMapHttpServer
 
         json.Append('}');
         return json.ToString();
+    }
+
+    private static void ServeHeight(
+        HttpListenerRequest request,
+        HttpListenerResponse response)
+    {
+        if (!TryParseWorldCoordinate(request.QueryString["x"], out float x) ||
+            !TryParseWorldCoordinate(request.QueryString["z"], out float z))
+        {
+            WriteJson(response, HttpStatusCode.BadRequest, "{\"error\":\"bad request\"}");
+            return;
+        }
+
+        WorldGenerator? generator = WorldGenerator.instance;
+        if (generator == null)
+        {
+            WriteJson(response, HttpStatusCode.ServiceUnavailable, "{\"error\":\"not ready\"}");
+            return;
+        }
+
+        float height = generator.GetHeight(x, z);
+        var json = new StringBuilder(64);
+        json.Append('{');
+        json.Append("\"x\":").Append(JsonWriter.Number(x));
+        json.Append(",\"z\":").Append(JsonWriter.Number(z));
+        json.Append(",\"height\":").Append(JsonWriter.Number(height));
+        json.Append('}');
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
 
     private void ServeEntities(HttpListenerResponse response, ViewLevel viewLevel)
@@ -1147,11 +1206,19 @@ internal sealed class LiveMapHttpServer
 
             TrackedEntitySnapshot entity = snapshot.Entities[index];
             json.Append('{');
-            json.Append("\"group\":").Append(JsonWriter.Quote(entity.Group));
+            json.Append("\"id\":").Append(JsonWriter.Quote(entity.Id));
+            json.Append(",\"group\":").Append(JsonWriter.Quote(entity.Group));
             json.Append(",\"prefab\":").Append(JsonWriter.Quote(entity.Prefab));
             json.Append(",\"x\":").Append(JsonWriter.Number(entity.X));
             json.Append(",\"y\":").Append(JsonWriter.Number(entity.Y));
             json.Append(",\"z\":").Append(JsonWriter.Number(entity.Z));
+            json.Append(",\"rotYDeg\":").Append(JsonWriter.Number(
+                Math.Round(entity.RotYDeg, 1)));
+            if (!string.IsNullOrEmpty(entity.Tag))
+            {
+                json.Append(",\"tag\":").Append(JsonWriter.Quote(entity.Tag));
+            }
+
             json.Append('}');
         }
 
@@ -1182,6 +1249,7 @@ internal sealed class LiveMapHttpServer
     private void ServePois(HttpListenerResponse response, ViewLevel viewLevel)
     {
         IReadOnlyList<PoiSnapshot> pois = _getPoiCatalog().ServedPois;
+        FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
         var json = new StringBuilder(16 + (pois.Count * 96));
         json.Append("{\"pois\":[");
         bool needsComma = false;
@@ -1204,6 +1272,8 @@ internal sealed class LiveMapHttpServer
             json.Append(",\"x\":").Append(JsonWriter.NumberOneDecimal(poi.X));
             json.Append(",\"z\":").Append(JsonWriter.NumberOneDecimal(poi.Z));
             json.Append(",\"placed\":").Append(poi.Placed ? "true" : "false");
+            json.Append(",\"explored\":").Append(
+                FogTracker.IsExplored(fogSnapshot, poi.X, poi.Z) ? "true" : "false");
             json.Append('}');
             needsComma = true;
         }
@@ -1328,6 +1398,47 @@ internal sealed class LiveMapHttpServer
     private string GetEffectiveFogMode(ViewLevel viewLevel)
     {
         return viewLevel == ViewLevel.Admin ? "off" : _getFogMode();
+    }
+
+    private double GetExploredPercentage(FogMaskSnapshot snapshot)
+    {
+        lock (_exploredPctLock)
+        {
+            if (_exploredPctRevision == snapshot.Revision)
+            {
+                return _exploredPctValue;
+            }
+
+            const double halfWorld = FogTracker.WorldSpan / 2.0;
+            double radiusSquared =
+                (double)WorldMapRenderer.WorldRadius * WorldMapRenderer.WorldRadius;
+            int revealedCells = 0;
+            int worldCells = 0;
+            for (int y = 0; y < FogTracker.Size; y++)
+            {
+                double worldZ = halfWorld - ((y + 0.5) * FogTracker.MetersPerPixel);
+                for (int x = 0; x < FogTracker.Size; x++)
+                {
+                    double worldX = -halfWorld + ((x + 0.5) * FogTracker.MetersPerPixel);
+                    if ((worldX * worldX) + (worldZ * worldZ) > radiusSquared)
+                    {
+                        continue;
+                    }
+
+                    worldCells++;
+                    if (snapshot.Mask[(y * FogTracker.Size) + x] != 0)
+                    {
+                        revealedCells++;
+                    }
+                }
+            }
+
+            _exploredPctValue = worldCells == 0
+                ? 0.0
+                : revealedCells * 100.0 / worldCells;
+            _exploredPctRevision = snapshot.Revision;
+            return _exploredPctValue;
+        }
     }
 
     private static bool IsPublicPoi(PoiSnapshot poi)
@@ -1675,6 +1786,18 @@ internal sealed class LiveMapHttpServer
         return long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsed)
             ? parsed
             : fallback;
+    }
+
+    private static bool TryParseWorldCoordinate(string? value, out float coordinate)
+    {
+        return float.TryParse(
+                   value,
+                   NumberStyles.Float,
+                   CultureInfo.InvariantCulture,
+                   out coordinate) &&
+               !float.IsNaN(coordinate) &&
+               !float.IsInfinity(coordinate) &&
+               Math.Abs(coordinate) <= 100000f;
     }
 
     private static void WriteEventStreamEvent(Stream output, string eventName, string json)

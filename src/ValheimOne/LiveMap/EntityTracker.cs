@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Reflection;
 using System.Threading;
 using HarmonyLib;
@@ -167,12 +168,22 @@ internal sealed class EntityTracker
                 }
 
                 Vector3 position = zdo.GetPosition();
+                ZDOID uid = zdo.m_uid;
+                string id = uid.UserID.ToString(CultureInfo.InvariantCulture) + ":" +
+                            uid.ID.ToString(CultureInfo.InvariantCulture);
+                float rotationY = zdo.GetRotation().eulerAngles.y;
+                string tag = string.Equals(prefab.Group, "portal", StringComparison.Ordinal)
+                    ? zdo.GetString(ZDOVars.s_tag, string.Empty)
+                    : string.Empty;
                 _pendingEntities.Add(new TrackedEntitySnapshot(
                     prefab.Group,
                     prefab.Name,
                     position.x,
                     position.y,
-                    position.z));
+                    position.z,
+                    id,
+                    rotationY,
+                    tag));
             }
         }
         catch (Exception exception)
@@ -338,13 +349,24 @@ internal sealed class EntityMapSnapshot
 
 internal sealed class TrackedEntitySnapshot
 {
-    public TrackedEntitySnapshot(string group, string prefab, float x, float y, float z)
+    public TrackedEntitySnapshot(
+        string group,
+        string prefab,
+        float x,
+        float y,
+        float z,
+        string id,
+        float rotYDeg,
+        string tag)
     {
         Group = group;
         Prefab = prefab;
         X = x;
         Y = y;
         Z = z;
+        Id = id;
+        RotYDeg = rotYDeg;
+        Tag = tag;
     }
 
     public string Group { get; }
@@ -356,6 +378,12 @@ internal sealed class TrackedEntitySnapshot
     public float Y { get; }
 
     public float Z { get; }
+
+    public string Id { get; }
+
+    public float RotYDeg { get; }
+
+    public string Tag { get; }
 }
 
 internal sealed class RaidEventSnapshot

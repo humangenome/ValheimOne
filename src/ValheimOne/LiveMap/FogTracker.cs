@@ -52,6 +52,24 @@ internal sealed class FogTracker
 
     public FogMaskSnapshot Snapshot => Volatile.Read(ref _snapshot);
 
+    internal static bool IsExplored(
+        FogMaskSnapshot snapshot,
+        float worldX,
+        float worldZ)
+    {
+        if (snapshot.Mask.Length != CellCount ||
+            float.IsNaN(worldX) || float.IsInfinity(worldX) ||
+            float.IsNaN(worldZ) || float.IsInfinity(worldZ))
+        {
+            return false;
+        }
+
+        const float halfWorld = WorldSpan / 2f;
+        int x = ClampCell((int)Math.Floor((worldX + halfWorld) / MetersPerPixel));
+        int y = ClampCell((int)Math.Floor((halfWorld - worldZ) / MetersPerPixel));
+        return snapshot.Mask[(y * Size) + x] != 0;
+    }
+
     public void Tick(IReadOnlyList<LiveMapPlayerSnapshot> players)
     {
         if (_stopped)
