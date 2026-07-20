@@ -11,6 +11,8 @@ All notable changes to ValheimOne will be documented in this file. This project 
 ### Changed
 
 - Periodic fog-of-war cache writes now run off the main thread to avoid simulation hitches from disk I/O, and fog snapshot revisions are batched to no more than one update every ~10 seconds during normal operation, reducing viewer refresh work on busy servers.
+- LiveMap's web dashboard now wears a Valheim-lore visual reskin: a warm dark-oak, parchment, and gold palette replaces the old grey theme, with candlelit texture and vignette, a Vegvisir rune-compass brand mark beside the VALHEIMONE wordmark, lore-minded labels such as World Chart, Longhouse Console, and “No vikings ashore,” an ember-toned raid banner, and gold-glow map markers.
+- This is a pure reskin: layout, sizes, and behavior are unchanged. The OFL-licensed Metamorphous and Averia Serif Libre fonts are bundled, embedded, and served by the plugin, so the dashboard makes no external font or CDN requests.
 
 ## [0.7.2] - 2026-07-20
 

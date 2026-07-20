@@ -468,6 +468,34 @@ internal sealed class LiveMapHttpServer
                 assetName = "icon-64.png";
                 contentType = "image/png";
                 break;
+            case "metamorphous-v22-latin-regular.woff2":
+                assetName = "metamorphous-v22-latin-regular.woff2";
+                contentType = "font/woff2";
+                break;
+            case "averia-serif-libre-v19-latin-regular.woff2":
+                assetName = "averia-serif-libre-v19-latin-regular.woff2";
+                contentType = "font/woff2";
+                break;
+            case "averia-serif-libre-v19-latin-italic.woff2":
+                assetName = "averia-serif-libre-v19-latin-italic.woff2";
+                contentType = "font/woff2";
+                break;
+            case "averia-serif-libre-v19-latin-700.woff2":
+                assetName = "averia-serif-libre-v19-latin-700.woff2";
+                contentType = "font/woff2";
+                break;
+            case "averia-serif-libre-v19-latin-700italic.woff2":
+                assetName = "averia-serif-libre-v19-latin-700italic.woff2";
+                contentType = "font/woff2";
+                break;
+            case "OFL-Metamorphous.txt":
+                assetName = "OFL-Metamorphous.txt";
+                contentType = "text/plain; charset=utf-8";
+                break;
+            case "OFL-AveriaSerifLibre.txt":
+                assetName = "OFL-AveriaSerifLibre.txt";
+                contentType = "text/plain; charset=utf-8";
+                break;
             default:
                 assetName = null;
                 contentType = null;

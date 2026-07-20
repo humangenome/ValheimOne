@@ -760,7 +760,7 @@
         if (latestPlayers.length === 0) {
             var empty = document.createElement("li");
             empty.className = "console-empty-list";
-            empty.textContent = "No players online";
+            empty.textContent = "No vikings ashore";
             elements.consolePlayerList.appendChild(empty);
             return;
         }
@@ -1618,7 +1618,7 @@
         if (players.length === 0) {
             var empty = document.createElement("li");
             empty.className = "empty-player-list";
-            empty.textContent = "No players online";
+            empty.textContent = "No vikings ashore";
             elements.playerList.appendChild(empty);
             return;
         }

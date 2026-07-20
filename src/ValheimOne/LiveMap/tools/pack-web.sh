@@ -14,6 +14,13 @@ ASSET_NAMES=(
     "icon-192.png"
     "icon-64.png"
     "favicon.ico"
+    "metamorphous-v22-latin-regular.woff2"
+    "averia-serif-libre-v19-latin-regular.woff2"
+    "averia-serif-libre-v19-latin-italic.woff2"
+    "averia-serif-libre-v19-latin-700.woff2"
+    "averia-serif-libre-v19-latin-700italic.woff2"
+    "OFL-Metamorphous.txt"
+    "OFL-AveriaSerifLibre.txt"
 )
 
 ASSET_PATHS=(
@@ -25,6 +32,13 @@ ASSET_PATHS=(
     "$LIVEMAP_DIR/web/icon-192.png"
     "$LIVEMAP_DIR/web/icon-64.png"
     "$LIVEMAP_DIR/web/favicon.ico"
+    "$LIVEMAP_DIR/web/vendor/fonts/metamorphous-v22-latin-regular.woff2"
+    "$LIVEMAP_DIR/web/vendor/fonts/averia-serif-libre-v19-latin-regular.woff2"
+    "$LIVEMAP_DIR/web/vendor/fonts/averia-serif-libre-v19-latin-italic.woff2"
+    "$LIVEMAP_DIR/web/vendor/fonts/averia-serif-libre-v19-latin-700.woff2"
+    "$LIVEMAP_DIR/web/vendor/fonts/averia-serif-libre-v19-latin-700italic.woff2"
+    "$LIVEMAP_DIR/web/vendor/fonts/OFL-Metamorphous.txt"
+    "$LIVEMAP_DIR/web/vendor/fonts/OFL-AveriaSerifLibre.txt"
 )
 
 for asset_path in "${ASSET_PATHS[@]}"; do

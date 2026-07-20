@@ -3,12 +3,53 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>ValheimOne Live Map</title>
+    <title>ValheimOne — Longhouse</title>
     <link rel="icon" href="/favicon.ico{{TOKEN_QUERY}}" sizes="32x32">
     <link rel="icon" type="image/png" href="/assets/icon-192.png{{TOKEN_QUERY}}" sizes="192x192">
     <link rel="apple-touch-icon" href="/assets/icon-192.png{{TOKEN_QUERY}}">
     <link rel="stylesheet" href="/assets/leaflet.css{{TOKEN_QUERY}}">
     <link rel="stylesheet" href="/assets/app.css{{TOKEN_QUERY}}">
+    <style>
+        @font-face {
+            font-family: "Metamorphous";
+            font-style: normal;
+            font-weight: 400;
+            font-display: swap;
+            src: url("/assets/metamorphous-v22-latin-regular.woff2{{TOKEN_QUERY}}") format("woff2");
+        }
+
+        @font-face {
+            font-family: "Averia Serif Libre";
+            font-style: normal;
+            font-weight: 400;
+            font-display: swap;
+            src: url("/assets/averia-serif-libre-v19-latin-regular.woff2{{TOKEN_QUERY}}") format("woff2");
+        }
+
+        @font-face {
+            font-family: "Averia Serif Libre";
+            font-style: italic;
+            font-weight: 400;
+            font-display: swap;
+            src: url("/assets/averia-serif-libre-v19-latin-italic.woff2{{TOKEN_QUERY}}") format("woff2");
+        }
+
+        @font-face {
+            font-family: "Averia Serif Libre";
+            font-style: normal;
+            font-weight: 700;
+            font-display: swap;
+            src: url("/assets/averia-serif-libre-v19-latin-700.woff2{{TOKEN_QUERY}}") format("woff2");
+        }
+
+        @font-face {
+            font-family: "Averia Serif Libre";
+            font-style: italic;
+            font-weight: 700;
+            font-display: swap;
+            src: url("/assets/averia-serif-libre-v19-latin-700italic.woff2{{TOKEN_QUERY}}") format("woff2");
+        }
+    </style>
     <script src="/assets/leaflet.js{{TOKEN_QUERY}}" defer></script>
     <script src="/assets/app.js{{TOKEN_QUERY}}" defer></script>
 </head>
@@ -22,11 +63,27 @@
 
     <aside id="sidebar" aria-label="Live map details">
         <header class="brand">
-            <img class="brand-mark" src="/assets/icon-64.png{{TOKEN_QUERY}}" alt="" aria-hidden="true"
-                 width="40" height="40">
+            <div class="brand-mark" aria-hidden="true">
+                <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="32" cy="32" r="29" stroke="currentColor" stroke-opacity="0.35"
+                            stroke-width="2" />
+                    <circle cx="32" cy="32" r="3.5" fill="currentColor" />
+                    <g stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                       stroke-linejoin="round">
+                        <path d="M32 28V7M32 7V3M32 7L26 12M32 7L38 12" />
+                        <path d="M36 32H57M57 26V38M52 27V37" />
+                        <path d="M32 36V57M26 53L32 57L38 53M28 49H36" />
+                        <path d="M28 32H7M7 26V38M12 32A3 3 0 1 0 18 32A3 3 0 1 0 12 32" />
+                        <path d="M29 29L14 14M14 14L10 10M14 14L9 16M14 14L16 9" />
+                        <path d="M35 29L50 14M50 14L54 10M46 10L54 18M47 17L51 21" />
+                        <path d="M29 35L14 50M14 50L10 54M10 46L18 54M17 47L21 51" />
+                        <path d="M35 35L50 50M50 50L54 54M50 50L55 48M50 50L48 55" />
+                    </g>
+                </svg>
+            </div>
             <div class="brand-copy">
-                <div class="brand-name">ValheimOne</div>
-                <div class="brand-subtitle">Live Map</div>
+                <div class="brand-name">VALHEIM<span class="accent">ONE</span></div>
+                <div class="brand-subtitle">World Chart</div>
             </div>
             <div class="brand-badges">
                 <span id="public-view-badge" class="public-view-badge" hidden>Public view</span>
@@ -36,7 +93,7 @@
 
         <nav id="view-tabs" class="view-tabs" aria-label="Admin views" role="tablist" hidden>
             <button id="map-tab" class="view-tab is-active" type="button" role="tab"
-                    aria-controls="map" aria-selected="true">Map</button>
+                    aria-controls="map" aria-selected="true">Chart</button>
             <button id="console-tab" class="view-tab" type="button" role="tab"
                     aria-controls="console-pane" aria-selected="false" tabindex="-1">Console</button>
         </nav>
@@ -67,13 +124,13 @@
                 <span class="player-count" id="player-count">0 online</span>
             </div>
             <ul class="player-list" id="player-list">
-                <li class="empty-player-list">No players online</li>
+                <li class="empty-player-list">No vikings ashore</li>
             </ul>
         </section>
 
         <footer class="sidebar-footer">
             <span class="footer-tag">ValheimOne</span>
-            <span>World services</span>
+            <span>Longhouse services</span>
         </footer>
     </aside>
 
@@ -84,7 +141,7 @@
             <section class="console-terminal" aria-labelledby="console-heading">
                 <header class="console-terminal-header">
                     <div>
-                        <h1 id="console-heading">Server console</h1>
+                        <h1 id="console-heading">Longhouse Console</h1>
                         <span>Live log · streaming with polling fallback</span>
                     </div>
                     <span class="console-live-indicator">Live</span>
@@ -135,7 +192,7 @@
                         <span id="console-player-count">0 online</span>
                     </div>
                     <ul id="console-player-list" class="console-admin-list">
-                        <li class="console-empty-list">No players online</li>
+                        <li class="console-empty-list">No vikings ashore</li>
                     </ul>
                 </section>
 
