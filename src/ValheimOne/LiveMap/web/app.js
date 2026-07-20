@@ -102,6 +102,8 @@
     var pendingHashFollowName = "";
     var followedPlayer = null;
     var followPill = null;
+    var compassButton = null;
+    var compassWindNeedle = null;
     var scaleBarElement = null;
     var coordinateChip = null;
     var coordinateUsesMapCenter = window.matchMedia("(hover: none), (pointer: coarse)").matches;
@@ -139,6 +141,7 @@
     var raidCircle = null;
     var currentRaidEvent = null;
     var currentTimeOfDay = null;
+    var latestWind = null;
     var tintOverlay = null;
     var layerSettings = loadLayerSettings();
     var layersRows = null;
@@ -218,6 +221,7 @@
         consoleResume: document.getElementById("console-resume"),
         consoleTab: document.getElementById("console-tab"),
         dayNumber: document.getElementById("day-number"),
+        exploredChip: document.getElementById("explored-chip"),
         mapPane: document.getElementById("map"),
         mapTab: document.getElementById("map-tab"),
         mapStatus: document.getElementById("render-status"),
@@ -238,13 +242,19 @@
         statPlayers: document.getElementById("console-stat-players"),
         statUptime: document.getElementById("console-stat-uptime"),
         statZdo: document.getElementById("console-stat-zdo"),
+        statusChips: document.getElementById("status-chips"),
         suggestionList: document.getElementById("console-suggestions"),
         tabList: document.getElementById("view-tabs"),
         consolePlayerCount: document.getElementById("console-player-count"),
         consolePlayerList: document.getElementById("console-player-list"),
         worldClock: document.getElementById("world-clock"),
-        worldName: document.getElementById("world-name")
+        worldName: document.getElementById("world-name"),
+        windChip: document.getElementById("wind-chip")
     };
+
+    function hasLiveAccess() {
+        return currentView !== "public";
+    }
 
     function authorizedUrl(path) {
         if (!token) {
@@ -1533,6 +1543,11 @@
         return typeof value === "string" && value.trim() ? value : "—";
     }
 
+    function finiteNumberOrNull(value) {
+        var number = Number(value);
+        return Number.isFinite(number) ? number : null;
+    }
+
     function loadLayerSettings() {
         var settings = {};
         Object.keys(LAYER_DEFAULTS).forEach(function (key) {
@@ -2056,7 +2071,7 @@
                 : null;
             window.clearInterval(popupRefreshTimer);
             refreshOpenPopupFooter();
-            popupRefreshTimer = window.setInterval(refreshOpenPopupFooter, 5000);
+            popupRefreshTimer = window.setInterval(refreshOpenPopupContent, 5000);
             renderTrails();
         });
         map.on("popupclose", function () {
@@ -2116,6 +2131,54 @@
         elements.skyIndicator.classList.toggle("is-moon", !isDaytime);
         elements.skyIndicator.setAttribute("aria-label", isDaytime ? "Daytime" : "Nighttime");
         updateDayNightTint();
+    }
+
+    function renderWindStatus() {
+        if (!latestWind) {
+            return;
+        }
+
+        var direction = compassLabel(latestWind.fromDeg);
+        var intensityPct = Math.round(latestWind.intensity * 100);
+        elements.windChip.textContent = "⤢ " + direction + " " + intensityPct + "%";
+        elements.windChip.hidden = false;
+        elements.statusChips.hidden = false;
+
+        if (!compassButton || !compassWindNeedle) {
+            return;
+        }
+
+        // The server reports where wind comes from; the needle points where it blows toward.
+        var towardDeg = (latestWind.fromDeg + 180) % 360;
+        var scale = 0.3 + (0.7 * latestWind.intensity);
+        compassWindNeedle.style.opacity = String(0.3 + (0.7 * latestWind.intensity));
+        compassWindNeedle.style.transform = "rotate(" + towardDeg.toFixed(1) +
+            "deg) scaleY(" + scale.toFixed(3) + ")";
+        compassWindNeedle.classList.add("is-visible");
+        compassButton.title = "Wind from " + direction + " · " + intensityPct + "%";
+        compassButton.setAttribute("aria-label", compassButton.title);
+    }
+
+    function updateWorldMetrics(status) {
+        var exploredPct = finiteNumberOrNull(status.exploredPct);
+        if (exploredPct !== null) {
+            exploredPct = Math.max(0, Math.min(100, exploredPct));
+            elements.exploredChip.textContent = "Explored " + exploredPct.toFixed(1) + "%";
+            elements.exploredChip.hidden = false;
+            elements.statusChips.hidden = false;
+        }
+
+        var windDirDeg = finiteNumberOrNull(status.windDirDeg);
+        var windIntensity = finiteNumberOrNull(status.windIntensity);
+        if (windDirDeg === null || windIntensity === null) {
+            return;
+        }
+
+        latestWind = {
+            fromDeg: ((windDirDeg % 360) + 360) % 360,
+            intensity: Math.max(0, Math.min(1, windIntensity))
+        };
+        renderWindStatus();
     }
 
     function tintOpacityForTime(fraction) {
@@ -2401,6 +2464,9 @@
                     '<g class="compass-cardinals"><text class="compass-north" x="40" y="8">N</text>' +
                     '<text x="74" y="43">E</text><text x="40" y="78">S</text>' +
                     '<text x="6" y="43">W</text></g></svg>';
+                compassButton = button;
+                compassWindNeedle = button.querySelector(".compass-wind-needle");
+                renderWindStatus();
 
                 button.addEventListener("click", function () {
                     window.clearTimeout(clickTimer);
@@ -3391,11 +3457,11 @@
         legendContent = null;
         renderJumpChips();
 
-        var liveFeeds = currentView === "admin" ? ["players", "entities"] : ["players"];
+        var liveFeeds = hasLiveAccess() ? ["players", "entities"] : ["players"];
         var liveBody = appendLayerSection("live", "Live", liveFeeds);
         appendLayerRow(liveBody, "players", "Players", "●", "players");
         appendLayerRow(liveBody, "trails", "Trails", "〰", "trails");
-        if (currentView === "admin" && entityAvailability !== "unavailable") {
+        if (hasLiveAccess() && entityAvailability !== "unavailable") {
             ENTITY_GROUP_ORDER.forEach(function (group) {
                 appendLayerRow(
                     liveBody,
@@ -3408,7 +3474,7 @@
             if (entityAvailability === "unknown") {
                 appendLayerStatus(liveBody, "Entity data: no data yet");
             }
-        } else if (currentView === "admin") {
+        } else if (hasLiveAccess()) {
             appendLayerStatus(liveBody, "Entity data unavailable");
         }
         if (currentRaidEvent) {
@@ -4051,8 +4117,11 @@
                 Number.isFinite(Number(player.x)) && Number.isFinite(Number(player.z));
         }).map(function (player) {
             var rawName = player.name.trim();
+            var playerId = typeof player.id === "string" ? player.id.trim() : "";
             var key;
-            if (!rawName) {
+            if (playerId) {
+                key = "id:" + playerId;
+            } else if (!rawName) {
                 key = "anonymous:" + anonymousIndex;
                 anonymousIndex++;
             } else {
@@ -4062,9 +4131,15 @@
 
             return {
                 anonymous: !rawName,
+                biome: typeof player.biome === "string" ? player.biome.trim() : "",
                 displayName: rawName || "Explorer",
+                distanceTodayM: finiteNumberOrNull(player.distanceTodayM),
+                headingDeg: finiteNumberOrNull(player.headingDeg),
+                id: playerId,
                 key: key,
                 name: rawName,
+                sessionStartUnixMs: finiteNumberOrNull(player.sessionStartUnixMs),
+                speedMps: finiteNumberOrNull(player.speedMps),
                 x: Number(player.x),
                 y: Number(player.y),
                 z: Number(player.z)
@@ -4082,8 +4157,9 @@
         if (!chevron) {
             return;
         }
-        var motion = derivedMotion(record.player.key);
-        var showHeading = Boolean(motion && motion.speedMps >= 0.3);
+        var motion = playerMotion(record.player);
+        var showHeading = Boolean(motion && motion.speedMps >= 0.3 &&
+            Number.isFinite(motion.headingDeg));
         chevron.hidden = !showHeading;
         if (showHeading) {
             chevron.style.transform = "rotate(" + motion.headingDeg.toFixed(1) + "deg)";
@@ -4355,11 +4431,47 @@
         };
     }
 
+    function compassLabel(degrees) {
+        var normalized = (degrees + 360) % 360;
+        var directions = [
+            "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+            "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"
+        ];
+        return directions[Math.round(normalized / 22.5) % directions.length];
+    }
+
     function headingLabel(degrees) {
         var normalized = (degrees + 360) % 360;
-        var directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
-        return directions[Math.round(normalized / 45) % directions.length] +
-            " · " + Math.round(normalized) + "°";
+        return compassLabel(normalized) + " · " + Math.round(normalized) + "°";
+    }
+
+    function playerMotion(player) {
+        var fallback = derivedMotion(player.key);
+        var speedMps = Number.isFinite(player.speedMps)
+            ? player.speedMps
+            : fallback && Number.isFinite(fallback.speedMps) ? fallback.speedMps : null;
+        var headingDeg = Number.isFinite(player.headingDeg)
+            ? player.headingDeg
+            : fallback && Number.isFinite(fallback.headingDeg) ? fallback.headingDeg : null;
+        return speedMps === null && headingDeg === null
+            ? null
+            : { headingDeg: headingDeg, speedMps: speedMps };
+    }
+
+    function formatSessionDuration(sessionStartUnixMs) {
+        var elapsedMinutes = Math.max(0, Math.floor(
+            (Date.now() - sessionStartUnixMs) / 60000
+        ));
+        var hours = Math.floor(elapsedMinutes / 60);
+        var minutes = elapsedMinutes % 60;
+        return hours > 0 ? hours + "h " + minutes + "m" : minutes + "m";
+    }
+
+    function formatTraveledDistance(distanceM) {
+        var distance = Math.max(0, distanceM);
+        return distance < 1000
+            ? Math.round(distance) + " m"
+            : (distance / 1000).toFixed(1) + " km";
     }
 
     function shipMovedRecently(entity) {
@@ -4393,16 +4505,31 @@
     }
 
     function buildPlayerPopup(player) {
-        var motion = derivedMotion(player.key);
+        var motion = playerMotion(player);
         var rows = [positionPopupRow(player.x, player.z)];
-        if (motion) {
+        if (motion && Number.isFinite(motion.speedMps)) {
             rows.push({
                 label: "Speed",
                 value: motion.speedMps.toFixed(1) + " m/s · " + playerMovementMode(player, motion)
             });
-            if (motion.speedMps >= 0.3) {
+            if (motion.speedMps >= 0.3 && Number.isFinite(motion.headingDeg)) {
                 rows.push({ label: "Heading", value: headingLabel(motion.headingDeg) });
             }
+        }
+        if (player.biome) {
+            rows.push({ label: "Biome", value: player.biome });
+        }
+        if (Number.isFinite(player.sessionStartUnixMs) && player.sessionStartUnixMs > 0) {
+            rows.push({
+                label: "Session",
+                value: formatSessionDuration(player.sessionStartUnixMs)
+            });
+        }
+        if (Number.isFinite(player.distanceTodayM)) {
+            rows.push({
+                label: "Traveled today",
+                value: formatTraveledDistance(player.distanceTodayM)
+            });
         }
 
         var trailSelected = trailIsSelected("player", player.key);
@@ -4512,6 +4639,19 @@
             });
             if (motion.speedMps >= 0.3) {
                 rows.push({ label: "Heading", value: headingLabel(motion.headingDeg) });
+                if (latestWind) {
+                    var windTowardDeg = (latestWind.fromDeg + 180) % 360;
+                    var relativeDeg = Math.abs(
+                        ((motion.headingDeg - windTowardDeg + 540) % 360) - 180
+                    );
+                    var alignment = relativeDeg < 45
+                        ? "Wind astern"
+                        : relativeDeg < 100 ? "Wind abeam" : "Headwind";
+                    rows.push({
+                        label: "Wind",
+                        value: alignment + " · " + Math.round(latestWind.intensity * 100) + "%"
+                    });
+                }
             }
         }
         var crew = nearbyPlayers(entity.x, entity.z, 12).map(function (player) {
@@ -4694,19 +4834,21 @@
     }
 
     async function loadPoisForCurrentView() {
-        if (!map || !currentView || lastPoiRequestedView === currentView) {
+        var accessKey = hasLiveAccess() ? "live" : "public";
+        if (!map || !currentView || lastPoiRequestedView === accessKey) {
             return;
         }
 
-        lastPoiRequestedView = currentView;
-        var requestView = currentView;
+        lastPoiRequestedView = accessKey;
+        var requestView = accessKey;
         var requestSequence = ++poiRequestSequence;
         poiLoadPending = true;
         clearPoiLayers();
 
         try {
             var payload = await fetchJson("/api/pois");
-            if (requestSequence !== poiRequestSequence || requestView !== currentView) {
+            if (requestSequence !== poiRequestSequence ||
+                requestView !== (hasLiveAccess() ? "live" : "public")) {
                 return;
             }
 
@@ -4736,7 +4878,8 @@
             renderLayerRows();
             syncLayerVisibility();
         } catch (error) {
-            if (requestSequence === poiRequestSequence && requestView === currentView) {
+            if (requestSequence === poiRequestSequence &&
+                requestView === (hasLiveAccess() ? "live" : "public")) {
                 poiLoadPending = false;
                 setFeedState("pois", false);
                 renderLayerRows();
@@ -4745,7 +4888,7 @@
     }
 
     function entityLayersAreAvailable() {
-        return currentView === "admin" && entityAvailability === "available";
+        return hasLiveAccess() && entityAvailability === "available";
     }
 
     function anyEntityLayerEnabled() {
@@ -4766,7 +4909,7 @@
     }
 
     function updateEntityAvailability(status) {
-        if (status.view !== "admin" || typeof status.entities !== "boolean") {
+        if (!hasLiveAccess() || typeof status.entities !== "boolean") {
             return;
         }
 
@@ -4804,10 +4947,14 @@
             var prefab = typeof entity.prefab === "string" && entity.prefab.trim()
                 ? entity.prefab.trim()
                 : ENTITY_GROUPS[group].label;
+            var entityId = typeof entity.id === "string" ? entity.id.trim() : "";
             normalized.push({
                 group: group,
+                id: entityId,
                 prefab: prefab,
-                trailKey: "",
+                rotYDeg: finiteNumberOrNull(entity.rotYDeg),
+                tag: typeof entity.tag === "string" ? entity.tag.trim() : "",
+                trailKey: group === "ship" && entityId ? "ship:" + entityId : "",
                 x: Number(entity.x),
                 y: Number(entity.y),
                 z: Number(entity.z)
@@ -4815,10 +4962,10 @@
         });
 
         var previousShips = latestEntities.filter(function (entity) {
-            return entity.group === "ship" && entity.trailKey;
+            return entity.group === "ship" && !entity.id && entity.trailKey;
         });
         var currentShips = normalized.filter(function (entity) {
-            return entity.group === "ship";
+            return entity.group === "ship" && !entity.trailKey;
         });
         var matches = [];
         currentShips.forEach(function (entity, currentIndex) {
@@ -4919,7 +5066,7 @@
     function updateEntityPolling(immediate) {
         window.clearTimeout(entityPollTimer);
         entityPollTimer = 0;
-        if (!map || currentView !== "admin" || entityAvailability === "unavailable" ||
+        if (!map || !hasLiveAccess() || entityAvailability === "unavailable" ||
             entityRequestPending || !anyEntityLayerEnabled()) {
             return;
         }
@@ -4931,7 +5078,7 @@
     }
 
     async function pollEntities() {
-        if (!map || currentView !== "admin" || entityRequestPending ||
+        if (!map || !hasLiveAccess() || entityRequestPending ||
             entityAvailability === "unavailable") {
             return;
         }
@@ -4989,7 +5136,7 @@
     }
 
     function ensureEntityFeed() {
-        if (!map || currentView !== "admin" || entityAvailability === "unavailable") {
+        if (!map || !hasLiveAccess() || entityAvailability === "unavailable") {
             return;
         }
 
@@ -5001,7 +5148,7 @@
     }
 
     function normalizeRaidEvent(value) {
-        if (currentView !== "admin" || !value ||
+        if (!hasLiveAccess() || !value ||
             !Number.isFinite(Number(value.x)) || !Number.isFinite(Number(value.z)) ||
             !Number.isFinite(Number(value.radius)) || Number(value.radius) <= 0) {
             return null;
@@ -5157,8 +5304,11 @@
     }
 
     function updateView(view) {
-        var nextView = view === "admin" ? "admin" : "public";
-        elements.publicViewBadge.hidden = nextView !== "public";
+        var nextView = view === "admin" || view === "shared" ? view : "public";
+        elements.publicViewBadge.hidden = nextView === "admin";
+        elements.publicViewBadge.textContent = nextView === "shared"
+            ? "Shared view"
+            : "Public view";
         if (nextView === currentView) {
             return;
         }
@@ -5168,7 +5318,7 @@
             loadPoisForCurrentView();
             renderLayerRows();
             syncLayerVisibility();
-            if (currentView === "admin") {
+            if (hasLiveAccess()) {
                 ensureEntityFeed();
             } else {
                 window.clearTimeout(entityPollTimer);
@@ -5190,7 +5340,7 @@
         };
 
         var wasAvailable = fogAvailable;
-        fogAvailable = fogStatus.mode !== "off" && currentView !== "admin";
+        fogAvailable = fogStatus.mode !== "off" && !hasLiveAccess();
         if (wasAvailable !== fogAvailable) {
             renderLayerRows();
         }
@@ -5326,10 +5476,11 @@
         elements.serverName.textContent = textOrDash(status.serverName);
         elements.worldName.textContent = textOrDash(status.worldName);
         renderWorldTime(status.day, status.timeOfDay);
+        updateWorldMetrics(status);
         renderPlayerCount(status.players);
         updateRenderStatus(status.map);
-        updateEntityAvailability(status);
         updateView(status.view);
+        updateEntityAvailability(status);
         updateConsoleAvailability(status);
         updateFogStatus(status.map && status.map.fog);
         ensureMap(status.map);

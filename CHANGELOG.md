@@ -14,6 +14,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 - LiveMap `/api/status` and `/api/players` now report snapshot timestamps and ages through `unixMs` and `snapshotAgeMs`, with a `stale` flag when player data has missed three update intervals.
 - LiveMap admin player and entity data now includes stable IDs, with player biome, speed, heading, session start, daily distance, and entity rotation and portal tags.
 - LiveMap status now reports wind direction, wind intensity, and explored-world percentage, while POIs report whether they have been explored.
+- LiveMap's web client now uses stable player and ship tracking IDs, gives shared spectators all non-console live-map features, and surfaces wind, exploration, player session details, daily travel, and ship wind alignment.
 - LiveMap now provides `/api/height` for invariant, validated world-height sampling.
 
 ### Changed

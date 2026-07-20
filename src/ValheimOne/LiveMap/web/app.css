@@ -276,6 +276,36 @@ input {
     line-height: 1;
 }
 
+.status-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 9px;
+}
+
+.status-chips[hidden] {
+    display: none;
+}
+
+.status-chip {
+    display: inline-flex;
+    padding: 3px 7px;
+    border: 1px solid rgba(138, 116, 88, 0.42);
+    border-radius: 999px;
+    background: rgba(138, 116, 88, 0.1);
+    color: #baa98e;
+    font-size: 9px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    letter-spacing: 0.025em;
+    line-height: 1.25;
+    white-space: nowrap;
+}
+
+.status-chip[hidden] {
+    display: none;
+}
+
 .raid-badge {
     display: inline-flex;
     max-width: 150px;
@@ -1092,9 +1122,15 @@ input {
 }
 
 .compass-wind-needle {
-    display: none;
     stroke: var(--sun);
     stroke-width: 2.5;
+    transform-origin: 40px 40px;
+    transition: opacity 600ms ease, transform 600ms ease;
+    visibility: hidden;
+}
+
+.compass-wind-needle.is-visible {
+    visibility: visible;
 }
 
 .compass-hub {
