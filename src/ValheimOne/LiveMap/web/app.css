@@ -874,9 +874,30 @@ input {
     color: var(--dungeon);
 }
 
+.layer-swatch[class*="layer-swatch-dungeon_"] {
+    color: var(--dungeon);
+}
+
 .layer-swatch-spawner {
     color: var(--spawner);
     font-size: 16px;
+}
+
+.layer-swatch[class*="layer-swatch-spawner_"] {
+    color: var(--spawner);
+}
+
+.layer-swatch[class*="layer-swatch-ore_"] {
+    color: var(--sun);
+    font-size: 9px;
+}
+
+.layer-swatch[class*="layer-swatch-forage_"] {
+    color: var(--moss);
+}
+
+.layer-swatch[class*="layer-swatch-structure_"] {
+    color: var(--marker-muted);
 }
 
 .layer-swatch-misc,
@@ -941,6 +962,16 @@ input {
     font-variant-numeric: tabular-nums;
     font-weight: 700;
     line-height: 1;
+}
+
+.poi-category .layer-count::before {
+    content: "· ";
+}
+
+.layer-count.is-surveying {
+    color: var(--accent);
+    font-style: italic;
+    font-weight: 550;
 }
 
 .layer-section + .layer-section {
@@ -1037,6 +1068,80 @@ input {
     color: var(--secondary);
     font-size: 9px;
     font-style: italic;
+}
+
+.poi-category {
+    margin: 4px 2px 0;
+    padding: 2px 0 3px;
+    border-left: 1px solid rgba(217, 177, 104, 0.14);
+}
+
+.poi-category + .poi-category {
+    margin-top: 5px;
+    border-top: 1px solid rgba(217, 177, 104, 0.1);
+}
+
+.poi-category-header,
+.poi-category-actions {
+    display: flex;
+    align-items: center;
+}
+
+.poi-category-header {
+    min-height: 23px;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 2px 3px 2px 7px;
+}
+
+.poi-category-name {
+    min-width: 0;
+    overflow: hidden;
+    color: #bdaa8b;
+    font-family: var(--font-display);
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.065em;
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.poi-category-actions {
+    flex: 0 0 auto;
+    gap: 3px;
+}
+
+.poi-category-count {
+    color: var(--secondary);
+    font-size: 8px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+}
+
+.poi-category-mini {
+    min-width: 25px;
+    min-height: 17px;
+    padding: 1px 3px;
+    border: 1px solid rgba(190, 150, 90, 0.16);
+    border-radius: 4px;
+    background: rgba(18, 14, 10, 0.68);
+    color: var(--secondary);
+    cursor: pointer;
+    font-size: 7px;
+    line-height: 1;
+    text-transform: uppercase;
+}
+
+.poi-category-mini:hover,
+.poi-category-mini:focus-visible {
+    border-color: var(--border-strong);
+    outline: none;
+    color: var(--accent);
+}
+
+.poi-category-body .layer-row {
+    padding-left: 7px;
 }
 
 .layer-row.is-display-only {
@@ -1875,10 +1980,36 @@ body.is-pinging #map .leaflet-overlay-pane path {
     color: #c1acd7;
 }
 
+.poi-div-icon[class*="poi-dungeon_"] .poi-marker-shell {
+    border-color: rgba(151, 126, 177, 0.74);
+    color: #c1acd7;
+}
+
 .poi-spawner .poi-marker-shell {
     border-color: rgba(193, 106, 139, 0.72);
     color: #e0a0b7;
     font-size: 17px;
+}
+
+.poi-div-icon[class*="poi-spawner_"] .poi-marker-shell {
+    border-color: rgba(193, 106, 139, 0.72);
+    color: #e0a0b7;
+}
+
+.poi-div-icon[class*="poi-ore_"] .poi-marker-shell {
+    border-color: rgba(224, 168, 60, 0.72);
+    color: #e8c47f;
+    font-size: 9px;
+}
+
+.poi-div-icon[class*="poi-forage_"] .poi-marker-shell {
+    border-color: rgba(163, 194, 106, 0.72);
+    color: #bad787;
+}
+
+.poi-div-icon[class*="poi-structure_"] .poi-marker-shell {
+    border-color: rgba(180, 166, 143, 0.62);
+    color: #c6b79d;
 }
 
 .poi-misc .poi-marker-shell,
@@ -1940,9 +2071,34 @@ body.is-pinging #map .leaflet-overlay-pane path {
     color: #c1acd7;
 }
 
+.poi-div-icon[class*="poi-dungeon_"] .poi-cluster-shell {
+    border-color: rgba(151, 126, 177, 0.76);
+    color: #c1acd7;
+}
+
 .poi-spawner .poi-cluster-shell {
     border-color: rgba(193, 106, 139, 0.74);
     color: #e0a0b7;
+}
+
+.poi-div-icon[class*="poi-spawner_"] .poi-cluster-shell {
+    border-color: rgba(193, 106, 139, 0.74);
+    color: #e0a0b7;
+}
+
+.poi-div-icon[class*="poi-ore_"] .poi-cluster-shell {
+    border-color: rgba(224, 168, 60, 0.74);
+    color: #e8c47f;
+}
+
+.poi-div-icon[class*="poi-forage_"] .poi-cluster-shell {
+    border-color: rgba(163, 194, 106, 0.74);
+    color: #bad787;
+}
+
+.poi-div-icon[class*="poi-structure_"] .poi-cluster-shell {
+    border-color: rgba(180, 166, 143, 0.64);
+    color: #c6b79d;
 }
 
 .poi-other .poi-cluster-shell {
@@ -2000,8 +2156,28 @@ body.is-pinging #map .leaflet-overlay-pane path {
     background: var(--dungeon);
 }
 
+#map.is-density-dots .poi-div-icon[class*="poi-dungeon_"] .poi-marker-shell {
+    background: var(--dungeon);
+}
+
 #map.is-density-dots .poi-spawner .poi-marker-shell {
     background: var(--spawner);
+}
+
+#map.is-density-dots .poi-div-icon[class*="poi-spawner_"] .poi-marker-shell {
+    background: var(--spawner);
+}
+
+#map.is-density-dots .poi-div-icon[class*="poi-ore_"] .poi-marker-shell {
+    background: var(--sun);
+}
+
+#map.is-density-dots .poi-div-icon[class*="poi-forage_"] .poi-marker-shell {
+    background: var(--moss);
+}
+
+#map.is-density-dots .poi-div-icon[class*="poi-structure_"] .poi-marker-shell {
+    background: var(--marker-muted);
 }
 
 #map.is-density-dots .entity-ship .entity-marker-shell {

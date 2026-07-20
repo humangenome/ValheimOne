@@ -13,6 +13,8 @@
     var WORLD_UNITS = 256;
     var POI_CLUSTER_ZOOM = 2;
     var POI_CLUSTER_GRID_PX = 64;
+    var RESOURCE_POI_POLL_INTERVAL_MS = 5000;
+    var RESOURCE_POI_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
     var SSE_RETRY_INITIAL_MS = 5000;
     var SSE_RETRY_MAX_MS = 60000;
     var TRAIL_MAX_AGE_MS = 30 * 60 * 1000;
@@ -43,25 +45,141 @@
         diagnostics: "Diagnostics"
     };
 
-    var POI_GROUP_ORDER = [
-        "spawn",
-        "trader",
-        "boss",
-        "dungeon",
-        "spawner",
-        "misc",
-        "other"
+    var POI_CATEGORIES = [
+        {
+            key: "bosses",
+            label: "Bosses & Trader",
+            groups: ["spawn", "boss", "trader"]
+        },
+        {
+            key: "dungeons",
+            label: "Dungeons",
+            groups: [
+                "dungeon_crypt",
+                "dungeon_sunkencrypt",
+                "dungeon_trollcave",
+                "dungeon_frostcave",
+                "dungeon_mine",
+                "dungeon_ashlands"
+            ]
+        },
+        {
+            key: "spawners",
+            label: "Spawners",
+            groups: [
+                "spawner_greydwarf",
+                "spawner_bonepile",
+                "spawner_draugrpile",
+                "spawner_firehole",
+                "spawner_other"
+            ]
+        },
+        {
+            key: "ores",
+            label: "Ores & Deposits",
+            groups: [
+                "ore_copper",
+                "ore_tin",
+                "ore_iron",
+                "ore_silver",
+                "ore_obsidian",
+                "ore_meteorite",
+                "ore_leviathan"
+            ]
+        },
+        {
+            key: "forage",
+            label: "Forage",
+            groups: [
+                "forage_berries",
+                "forage_thistle",
+                "forage_mushroom",
+                "forage_seeds",
+                "forage_crops",
+                "forage_dragonegg",
+                "forage_blackcore"
+            ]
+        },
+        {
+            key: "structures",
+            label: "Structures",
+            groups: [
+                "structure_camp",
+                "structure_tarpit",
+                "structure_shipwreck",
+                "structure_ruins",
+                "structure_mistlands",
+                "structure_runestone",
+                "misc"
+            ]
+        }
     ];
 
     var POI_GROUPS = {
-        spawn: { label: "Spawn", glyph: "⌂" },
-        trader: { label: "Trader", glyph: "◉" },
-        boss: { label: "Boss altars", glyph: "☠" },
-        dungeon: { label: "Dungeons", glyph: "∩" },
-        spawner: { label: "Spawners", glyph: "•" },
-        misc: { label: "Misc", glyph: "◆" },
-        other: { label: "Other", glyph: "◇" }
+        spawn: { label: "Spawn", glyph: "⌂", category: "bosses" },
+        boss: { label: "Boss altars", glyph: "☠", category: "bosses" },
+        trader: { label: "Traders", glyph: "◉", category: "bosses" },
+        dungeon_crypt: { label: "Burial Chambers", glyph: "∩", category: "dungeons" },
+        dungeon_sunkencrypt: { label: "Sunken Crypts", glyph: "≋", category: "dungeons" },
+        dungeon_trollcave: { label: "Troll Caves", glyph: "△", category: "dungeons" },
+        dungeon_frostcave: { label: "Frost Caves", glyph: "❄", category: "dungeons" },
+        dungeon_mine: { label: "Infested Mines", glyph: "⛏", category: "dungeons" },
+        dungeon_ashlands: { label: "Ashlands Ruins", glyph: "♨", category: "dungeons" },
+        spawner_greydwarf: { label: "Greydwarf Nests", glyph: "♣", category: "spawners" },
+        spawner_bonepile: { label: "Skeleton Spawners", glyph: "☠", category: "spawners" },
+        spawner_draugrpile: { label: "Draugr Spawners", glyph: "⚔", category: "spawners" },
+        spawner_firehole: { label: "Surtling Geysers", glyph: "♨", category: "spawners" },
+        spawner_other: { label: "Other Spawners", glyph: "•", category: "spawners" },
+        ore_copper: { label: "Copper", glyph: "Cu", category: "ores", resource: true },
+        ore_tin: { label: "Tin", glyph: "Sn", category: "ores", resource: true },
+        ore_iron: { label: "Muddy Scrap Piles", glyph: "Fe", category: "ores", resource: true },
+        ore_silver: { label: "Silver Veins", glyph: "Ag", category: "ores", resource: true },
+        ore_obsidian: { label: "Obsidian", glyph: "◆", category: "ores", resource: true },
+        ore_meteorite: { label: "Meteorite", glyph: "✦", category: "ores", resource: true },
+        ore_leviathan: { label: "Leviathans", glyph: "◉", category: "ores", resource: true },
+        forage_berries: {
+            label: "Berry Bushes", glyph: "●", category: "forage", resource: true,
+            searchGroupOnly: true
+        },
+        forage_thistle: {
+            label: "Thistle", glyph: "✣", category: "forage", resource: true,
+            searchGroupOnly: true
+        },
+        forage_mushroom: {
+            label: "Mushrooms", glyph: "♠", category: "forage", resource: true,
+            searchGroupOnly: true
+        },
+        forage_seeds: {
+            label: "Wild Seeds", glyph: "⁙", category: "forage", resource: true,
+            searchGroupOnly: true
+        },
+        forage_crops: {
+            label: "Barley & Flax", glyph: "≋", category: "forage", resource: true,
+            searchGroupOnly: true
+        },
+        forage_dragonegg: {
+            label: "Dragon Eggs", glyph: "◍", category: "forage", resource: true,
+            searchGroupOnly: true
+        },
+        forage_blackcore: {
+            label: "Black Cores", glyph: "◆", category: "forage", resource: true,
+            searchGroupOnly: true
+        },
+        structure_camp: { label: "Enemy Camps", glyph: "⚔", category: "structures" },
+        structure_tarpit: { label: "Tar Pits", glyph: "≋", category: "structures" },
+        structure_shipwreck: { label: "Shipwrecks", glyph: "⚓", category: "structures" },
+        structure_ruins: { label: "Ruins & Villages", glyph: "▥", category: "structures" },
+        structure_mistlands: { label: "Mistlands Remains", glyph: "†", category: "structures" },
+        structure_runestone: { label: "Runestones & Lore", glyph: "ᚱ", category: "structures" },
+        misc: { label: "Misc", glyph: "◇", category: "structures" }
     };
+
+    var POI_GROUP_ORDER = [];
+    POI_CATEGORIES.forEach(function (category) {
+        category.groups.forEach(function (group) {
+            POI_GROUP_ORDER.push(group);
+        });
+    });
 
     var ENTITY_GROUP_ORDER = ["ship", "cart", "portal", "tombstone"];
     var ENTITY_GROUPS = {
@@ -78,10 +196,38 @@
         spawn: true,
         trader: true,
         boss: true,
-        dungeon: false,
-        spawner: false,
+        dungeon_crypt: false,
+        dungeon_sunkencrypt: false,
+        dungeon_trollcave: false,
+        dungeon_frostcave: false,
+        dungeon_mine: false,
+        dungeon_ashlands: false,
+        spawner_greydwarf: false,
+        spawner_bonepile: false,
+        spawner_draugrpile: false,
+        spawner_firehole: false,
+        spawner_other: false,
+        ore_copper: false,
+        ore_tin: false,
+        ore_iron: false,
+        ore_silver: false,
+        ore_obsidian: false,
+        ore_meteorite: false,
+        ore_leviathan: false,
+        forage_berries: false,
+        forage_thistle: false,
+        forage_mushroom: false,
+        forage_seeds: false,
+        forage_crops: false,
+        forage_dragonegg: false,
+        forage_blackcore: false,
+        structure_camp: false,
+        structure_tarpit: false,
+        structure_shipwreck: false,
+        structure_ruins: false,
+        structure_mistlands: false,
+        structure_runestone: false,
         misc: false,
-        other: false,
         fog: true,
         tint: true,
         minimap: false,
@@ -157,6 +303,8 @@
     var nextShipTrackId = 1;
     var poiLayers = new Map();
     var poiRecords = new Map();
+    var poiGroupMeta = new Map();
+    var resourcePoiStates = new Map();
     var availablePoiGroups = new Set();
     var entityLayers = new Map();
     var entityAvailability = "unknown";
@@ -1637,6 +1785,7 @@
         try {
             var savedText = window.localStorage.getItem(LAYER_STORAGE_KEY);
             var isMigration = savedText === null;
+            var migratedPoiKeys = false;
             if (isMigration) {
                 savedText = window.localStorage.getItem(LEGACY_LAYER_STORAGE_KEY);
             }
@@ -1651,12 +1800,22 @@
                 if (["s", "m", "l"].indexOf(saved.iconSize) !== -1) {
                     settings.iconSize = saved.iconSize;
                 }
+                if (saved.dungeon === true) {
+                    POI_CATEGORIES.find(function (category) {
+                        return category.key === "dungeons";
+                    }).groups.forEach(function (key) {
+                        settings[key] = true;
+                    });
+                    migratedPoiKeys = true;
+                }
             }
             if (isMigration) {
                 var legacyMinimap = window.localStorage.getItem(LEGACY_MINIMAP_STORAGE_KEY);
                 if (legacyMinimap !== null) {
                     settings.minimap = legacyMinimap === "1" || legacyMinimap === "true";
                 }
+            }
+            if (isMigration || migratedPoiKeys) {
                 window.localStorage.setItem(LAYER_STORAGE_KEY, JSON.stringify(settings));
             }
         } catch (error) {
@@ -3414,14 +3573,28 @@
             });
         });
         POI_GROUP_ORDER.forEach(function (group) {
+            var definition = POI_GROUPS[group];
+            if (availablePoiGroups.has(group) && definition.resource) {
+                items.push({
+                    glyph: definition.glyph,
+                    groupOnly: true,
+                    kind: "POI layer",
+                    layerKey: group,
+                    name: definition.label,
+                    searchText: definition.label
+                });
+            }
+            if (definition.searchGroupOnly) {
+                return;
+            }
             (poiRecords.get(group) || []).forEach(function (record) {
                 items.push({
-                    glyph: POI_GROUPS[group].glyph,
-                    kind: POI_GROUPS[group].label,
+                    glyph: definition.glyph,
+                    kind: definition.label,
                     layerKey: group,
                     latLng: record.latLng,
                     name: record.title,
-                    searchText: record.title + " " + POI_GROUPS[group].label,
+                    searchText: record.title + " " + definition.label,
                     x: record.x,
                     z: record.z,
                     markerResolver: function () {
@@ -3523,7 +3696,9 @@
                 name.textContent = item.name;
                 kind.textContent = item.kind;
                 coordinates.className = "map-search-result-coordinates";
-                coordinates.textContent = "X " + Math.round(item.x) + " · Z " + Math.round(item.z);
+                coordinates.textContent = item.groupOnly
+                    ? "Layer"
+                    : "X " + Math.round(item.x) + " · Z " + Math.round(item.z);
                 copy.appendChild(name);
                 copy.appendChild(kind);
                 button.appendChild(glyph);
@@ -3586,6 +3761,10 @@
             }
         }
         setMapSearchOpen(false, false);
+        if (item.groupOnly) {
+            updateResourcePoiPolling();
+            return;
+        }
         focusMapLocation(item.latLng, item.markerResolver);
     }
 
@@ -4023,16 +4202,24 @@
 
         var placesBody = appendLayerSection("places", "Places", ["pins", "pois"]);
         appendLayerRow(placesBody, "pins", "Pins", "⌖", "pins");
-        POI_GROUP_ORDER.forEach(function (group) {
-            if (availablePoiGroups.has(group)) {
+        POI_CATEGORIES.forEach(function (category) {
+            var groups = category.groups.filter(function (group) {
+                return availablePoiGroups.has(group);
+            });
+            if (groups.length === 0) {
+                return;
+            }
+
+            var categoryBody = appendPoiCategory(placesBody, category);
+            groups.forEach(function (group) {
                 appendLayerRow(
-                    placesBody,
+                    categoryBody,
                     group,
                     POI_GROUPS[group].label,
                     POI_GROUPS[group].glyph,
                     group
                 );
-            }
+            });
         });
         if (feedLastUpdated.pins === 0) {
             appendLayerStatus(placesBody, "Pins: no save yet");
@@ -4150,6 +4337,51 @@
         updateLayerCounts();
     }
 
+    function appendPoiCategory(parent, category) {
+        var section = document.createElement("section");
+        var header = document.createElement("header");
+        var name = document.createElement("span");
+        var actions = document.createElement("span");
+        var count = document.createElement("span");
+        var allButton = document.createElement("button");
+        var noneButton = document.createElement("button");
+        var body = document.createElement("div");
+
+        section.className = "poi-category";
+        section.dataset.poiCategory = category.key;
+        header.className = "poi-category-header";
+        name.className = "poi-category-name";
+        name.textContent = category.label;
+        actions.className = "poi-category-actions";
+        count.className = "poi-category-count";
+        count.dataset.poiCategoryCount = category.key;
+        allButton.type = "button";
+        allButton.className = "poi-category-mini";
+        allButton.textContent = "all";
+        allButton.setAttribute("aria-label", "Show all " + category.label.toLowerCase());
+        allButton.addEventListener("click", function () {
+            setSectionLayers(section, true);
+        });
+        noneButton.type = "button";
+        noneButton.className = "poi-category-mini";
+        noneButton.textContent = "none";
+        noneButton.setAttribute("aria-label", "Hide all " + category.label.toLowerCase());
+        noneButton.addEventListener("click", function () {
+            setSectionLayers(section, false);
+        });
+        body.className = "poi-category-body";
+
+        actions.appendChild(count);
+        actions.appendChild(allButton);
+        actions.appendChild(noneButton);
+        header.appendChild(name);
+        header.appendChild(actions);
+        section.appendChild(header);
+        section.appendChild(body);
+        parent.appendChild(section);
+        return body;
+    }
+
     function appendLayerRow(parent, key, labelText, glyph, swatchClass, options) {
         options = options || {};
         var label = document.createElement("label");
@@ -4238,7 +4470,8 @@
             return portalPairs.length;
         }
         if (Object.prototype.hasOwnProperty.call(POI_GROUPS, key)) {
-            return (poiRecords.get(key) || []).length;
+            var metadata = poiGroupMeta.get(key);
+            return metadata ? metadata.count : (poiRecords.get(key) || []).length;
         }
         if (Object.prototype.hasOwnProperty.call(ENTITY_GROUPS, key)) {
             return latestEntities.filter(function (entity) {
@@ -4253,7 +4486,12 @@
             return;
         }
         layersRows.querySelectorAll("[data-layer-count]").forEach(function (badge) {
-            badge.textContent = String(layerCountValue(badge.dataset.layerCount));
+            var key = badge.dataset.layerCount;
+            var resourceState = resourcePoiStates.get(key);
+            var surveying = isResourcePoiGroup(key) && layerSettings[key] &&
+                resourceState && (resourceState.requestPending || resourceState.scanning);
+            badge.textContent = surveying ? "Surveying…" : String(layerCountValue(key));
+            badge.classList.toggle("is-surveying", Boolean(surveying));
         });
         layersRows.querySelectorAll(".layer-section").forEach(function (section) {
             var inputs = Array.prototype.slice.call(
@@ -4263,6 +4501,18 @@
                 return input.checked;
             }).length;
             var count = section.querySelector("[data-section-count]");
+            if (count) {
+                count.textContent = enabled + "/" + inputs.length;
+            }
+        });
+        layersRows.querySelectorAll(".poi-category").forEach(function (section) {
+            var inputs = Array.prototype.slice.call(
+                section.querySelectorAll("input[data-layer-key]")
+            );
+            var enabled = inputs.filter(function (input) {
+                return input.checked;
+            }).length;
+            var count = section.querySelector("[data-poi-category-count]");
             if (count) {
                 count.textContent = enabled + "/" + inputs.length;
             }
@@ -4708,6 +4958,7 @@
         renderTrails();
         renderLegend();
         updateFeedStalenessDots();
+        updateResourcePoiPolling();
     }
 
     function normalizePlayers(payload) {
@@ -5826,7 +6077,12 @@
 
     function normalizePoiGroup(group) {
         var normalized = typeof group === "string" ? group.trim().toLowerCase() : "";
-        return Object.prototype.hasOwnProperty.call(POI_GROUPS, normalized) ? normalized : "other";
+        return Object.prototype.hasOwnProperty.call(POI_GROUPS, normalized) ? normalized : "";
+    }
+
+    function isResourcePoiGroup(group) {
+        return Object.prototype.hasOwnProperty.call(POI_GROUPS, group) &&
+            POI_GROUPS[group].resource === true;
     }
 
     function prettifyPoiName(name) {
@@ -6181,24 +6437,44 @@
     }
 
     function poiPopupKicker(group) {
-        var labels = {
-            boss: "BOSS ALTAR",
-            dungeon: "DUNGEON",
-            misc: "POINT OF INTEREST",
-            other: "POINT OF INTEREST",
-            spawn: "SPAWN",
-            spawner: "SPAWNER",
-            trader: "TRADER"
-        };
-        return labels[group] || "POINT OF INTEREST";
+        if (group === "boss") {
+            return "BOSS ALTAR";
+        }
+        if (group === "spawn") {
+            return "SPAWN";
+        }
+        if (group === "trader") {
+            return "TRADER";
+        }
+        if (group.indexOf("dungeon_") === 0) {
+            return "DUNGEON";
+        }
+        if (group.indexOf("spawner_") === 0) {
+            return "SPAWNER";
+        }
+        if (group.indexOf("ore_") === 0) {
+            return "ORE & DEPOSIT";
+        }
+        if (group.indexOf("forage_") === 0) {
+            return "FORAGE";
+        }
+        if (group.indexOf("structure_") === 0) {
+            return "STRUCTURE";
+        }
+        return "POINT OF INTEREST";
     }
 
     function buildPoiPopup(record) {
+        var rows = [];
+        if (record.memberCount > 1) {
+            rows.push({ label: "Cluster", value: "×" + record.memberCount });
+        }
+        rows.push(positionPopupRow(record.x, record.z));
         return popupShell({
             feed: "pois",
             glyph: POI_GROUPS[record.group].glyph,
             kicker: poiPopupKicker(record.group),
-            rows: [positionPopupRow(record.x, record.z)],
+            rows: rows,
             title: record.title
         });
     }
@@ -6429,6 +6705,7 @@
     }
 
     function clearPoiLayers() {
+        stopAllResourcePoiPolling();
         poiLayers.forEach(function (layer) {
             layer.clearLayers();
         });
@@ -6436,8 +6713,47 @@
             records.length = 0;
         });
         availablePoiGroups.clear();
+        poiGroupMeta.clear();
+        resourcePoiStates.clear();
         renderLayerRows();
         syncLayerVisibility();
+    }
+
+    function normalizePoiRecord(poi, group) {
+        if (!poi || !group || !Number.isFinite(Number(poi.x)) ||
+            !Number.isFinite(Number(poi.z))) {
+            return null;
+        }
+
+        var memberCount = Math.floor(Number(poi.count));
+        if (!Number.isFinite(memberCount) || memberCount < 1) {
+            memberCount = 1;
+        }
+        return {
+            explored: poi.explored !== false,
+            group: group,
+            latLng: worldToLatLng(Number(poi.x), Number(poi.z)),
+            memberCount: memberCount,
+            placed: poi.placed !== false,
+            title: prettifyPoiName(poi.name),
+            x: Number(poi.x),
+            z: Number(poi.z)
+        };
+    }
+
+    function replacePoiGroupRecords(group, pois) {
+        var records = poiRecords.get(group);
+        if (!records) {
+            return;
+        }
+
+        records.length = 0;
+        pois.forEach(function (poi) {
+            var record = normalizePoiRecord(poi, group);
+            if (record) {
+                records.push(record);
+            }
+        });
     }
 
     function createPoiMarker(record) {
@@ -6450,11 +6766,12 @@
         });
         var marker = L.marker(record.latLng, {
             icon: icon,
-            opacity: record.placed ? 1 : 0.55,
-            title: record.title
+            opacity: (record.placed ? 1 : 0.55) * (record.explored ? 1 : 0.45),
+            title: record.title + (record.memberCount > 1 ? " ×" + record.memberCount : "")
         });
         var tooltipContent = document.createElement("span");
-        tooltipContent.textContent = record.title;
+        tooltipContent.textContent = record.title +
+            (record.memberCount > 1 ? " ×" + record.memberCount : "");
         marker.bindTooltip(tooltipContent, {
             className: "map-tooltip poi-tooltip",
             direction: "top",
@@ -6469,8 +6786,8 @@
     }
 
     function createPoiClusterMarker(group, bucket) {
-        var center = L.latLng(bucket.latitude / bucket.records.length, bucket.longitude / bucket.records.length);
-        var count = bucket.records.length;
+        var center = L.latLng(bucket.latitude / bucket.weight, bucket.longitude / bucket.weight);
+        var count = bucket.count;
         var icon = L.divIcon({
             className: "poi-div-icon poi-cluster-icon poi-" + group,
             html: '<span class="poi-cluster-shell" aria-hidden="true"><span>' +
@@ -6480,6 +6797,7 @@
         });
         var marker = L.marker(center, {
             icon: icon,
+            opacity: 0.45 + (0.55 * bucket.exploredWeight / bucket.weight),
             title: count + " " + POI_GROUPS[group].label
         });
         var tooltipContent = document.createElement("span");
@@ -6493,6 +6811,54 @@
         return marker;
     }
 
+    function renderPoiGroup(group, useClusters) {
+        var layer = poiLayers.get(group);
+        var records = poiRecords.get(group) || [];
+        if (!layer) {
+            return;
+        }
+
+        layer.clearLayers();
+        records.forEach(function (record) {
+            record.marker = null;
+        });
+        if (!useClusters) {
+            records.forEach(function (record) {
+                createPoiMarker(record).addTo(layer);
+            });
+            return;
+        }
+
+        var buckets = Object.create(null);
+        records.forEach(function (record) {
+            var point = map.latLngToContainerPoint(record.latLng);
+            var cell = Math.floor(point.x / POI_CLUSTER_GRID_PX) + ":" +
+                Math.floor(point.y / POI_CLUSTER_GRID_PX);
+            var weight = record.memberCount || 1;
+            if (!buckets[cell]) {
+                buckets[cell] = {
+                    count: 0,
+                    exploredWeight: 0,
+                    latitude: 0,
+                    longitude: 0,
+                    records: [],
+                    weight: 0
+                };
+            }
+            buckets[cell].count += weight;
+            if (record.explored) {
+                buckets[cell].exploredWeight += weight;
+            }
+            buckets[cell].latitude += record.latLng.lat * weight;
+            buckets[cell].longitude += record.latLng.lng * weight;
+            buckets[cell].records.push(record);
+            buckets[cell].weight += weight;
+        });
+        Object.keys(buckets).forEach(function (cell) {
+            createPoiClusterMarker(group, buckets[cell]).addTo(layer);
+        });
+    }
+
     function renderPoiLayers() {
         if (!map) {
             return;
@@ -6500,35 +6866,156 @@
 
         var useClusters = map.getZoom() < POI_CLUSTER_ZOOM;
         POI_GROUP_ORDER.forEach(function (group) {
-            var layer = poiLayers.get(group);
-            var records = poiRecords.get(group) || [];
-            layer.clearLayers();
-            records.forEach(function (record) {
-                record.marker = null;
-            });
-            if (!useClusters) {
-                records.forEach(function (record) {
-                    createPoiMarker(record).addTo(layer);
-                });
+            renderPoiGroup(group, useClusters);
+        });
+    }
+
+    function getResourcePoiState(group) {
+        var state = resourcePoiStates.get(group);
+        if (!state) {
+            state = {
+                lastFetchAt: 0,
+                loaded: false,
+                requestPending: false,
+                scanUnixMs: 0,
+                scanning: false,
+                timer: 0
+            };
+            resourcePoiStates.set(group, state);
+        }
+        return state;
+    }
+
+    function resourcePoiPollingAllowed(group) {
+        var metadata = poiGroupMeta.get(group);
+        return Boolean(map && hasLiveAccess() && layerSettings[group] &&
+            availablePoiGroups.has(group) && isResourcePoiGroup(group) &&
+            metadata && metadata.inline === false);
+    }
+
+    function stopResourcePoiPolling(group) {
+        var state = resourcePoiStates.get(group);
+        if (!state) {
+            return;
+        }
+        window.clearTimeout(state.timer);
+        state.timer = 0;
+    }
+
+    function stopAllResourcePoiPolling() {
+        resourcePoiStates.forEach(function (state) {
+            window.clearTimeout(state.timer);
+            state.timer = 0;
+        });
+    }
+
+    function scheduleResourcePoiPoll(group, delay) {
+        var state = getResourcePoiState(group);
+        window.clearTimeout(state.timer);
+        state.timer = 0;
+        if (!resourcePoiPollingAllowed(group)) {
+            return;
+        }
+        state.timer = window.setTimeout(function () {
+            state.timer = 0;
+            loadResourcePoiGroup(group);
+        }, Math.max(0, delay));
+    }
+
+    function updateResourcePoiPolling() {
+        POI_GROUP_ORDER.forEach(function (group) {
+            if (!isResourcePoiGroup(group)) {
+                return;
+            }
+            if (!resourcePoiPollingAllowed(group)) {
+                stopResourcePoiPolling(group);
                 return;
             }
 
-            var buckets = Object.create(null);
-            records.forEach(function (record) {
-                var point = map.latLngToContainerPoint(record.latLng);
-                var cell = Math.floor(point.x / POI_CLUSTER_GRID_PX) + ":" +
-                    Math.floor(point.y / POI_CLUSTER_GRID_PX);
-                if (!buckets[cell]) {
-                    buckets[cell] = { latitude: 0, longitude: 0, records: [] };
-                }
-                buckets[cell].latitude += record.latLng.lat;
-                buckets[cell].longitude += record.latLng.lng;
-                buckets[cell].records.push(record);
-            });
-            Object.keys(buckets).forEach(function (cell) {
-                createPoiClusterMarker(group, buckets[cell]).addTo(layer);
-            });
+            var state = getResourcePoiState(group);
+            if (state.requestPending || state.timer) {
+                return;
+            }
+            if (!state.loaded || state.scanning) {
+                state.scanning = true;
+                scheduleResourcePoiPoll(group, 0);
+                return;
+            }
+            scheduleResourcePoiPoll(
+                group,
+                Math.max(0, state.lastFetchAt + RESOURCE_POI_REFRESH_INTERVAL_MS - Date.now())
+            );
         });
+        updateLayerCounts();
+    }
+
+    async function loadResourcePoiGroup(group) {
+        if (!resourcePoiPollingAllowed(group)) {
+            stopResourcePoiPolling(group);
+            return;
+        }
+
+        var state = getResourcePoiState(group);
+        if (state.requestPending) {
+            return;
+        }
+        state.requestPending = true;
+        if (!state.loaded) {
+            state.scanning = true;
+        }
+        updateLayerCounts();
+        var nextDelay = RESOURCE_POI_POLL_INTERVAL_MS;
+        try {
+            var payload = await fetchJson("/api/pois?group=" + encodeURIComponent(group));
+            if (resourcePoiStates.get(group) !== state || !hasLiveAccess() ||
+                normalizePoiGroup(payload && payload.group) !== group) {
+                return;
+            }
+
+            var pois = payload && Array.isArray(payload.pois) ? payload.pois : [];
+            replacePoiGroupRecords(group, pois);
+            availablePoiGroups.add(group);
+            var metadata = poiGroupMeta.get(group);
+            var count = Math.floor(Number(payload.count));
+            var scanUnixMs = Math.floor(Number(payload.scanUnixMs));
+            if (!Number.isFinite(count) || count < 0) {
+                count = pois.reduce(function (total, poi) {
+                    var memberCount = Math.floor(Number(poi && poi.count));
+                    return total + (Number.isFinite(memberCount) && memberCount > 0
+                        ? memberCount
+                        : 1);
+                }, 0);
+            }
+            if (!Number.isFinite(scanUnixMs) || scanUnixMs < 0) {
+                scanUnixMs = 0;
+            }
+            if (metadata) {
+                metadata.count = count;
+                metadata.scanUnixMs = scanUnixMs;
+            }
+            state.lastFetchAt = Date.now();
+            state.loaded = scanUnixMs > 0;
+            state.scanUnixMs = scanUnixMs;
+            state.scanning = payload && payload.scanning === true;
+            nextDelay = state.scanning
+                ? RESOURCE_POI_POLL_INTERVAL_MS
+                : RESOURCE_POI_REFRESH_INTERVAL_MS;
+            feedLastUpdated.pois = Date.now();
+            setFeedState("pois", true);
+            renderPoiGroup(group, map.getZoom() < POI_CLUSTER_ZOOM);
+            syncLayerVisibility();
+            if (searchControlElement && searchControlElement.classList.contains("is-open")) {
+                renderMapSearchResults();
+            }
+        } catch (error) {
+            state.scanning = !state.loaded;
+        } finally {
+            state.requestPending = false;
+            if (resourcePoiStates.get(group) === state && resourcePoiPollingAllowed(group)) {
+                scheduleResourcePoiPoll(group, nextDelay);
+            }
+            updateLayerCounts();
+        }
     }
 
     async function loadPoisForCurrentView() {
@@ -6550,24 +7037,60 @@
                 return;
             }
 
-            var pois = payload && Array.isArray(payload.pois) ? payload.pois : [];
-            pois.forEach(function (poi) {
-                if (!poi || !Number.isFinite(Number(poi.x)) || !Number.isFinite(Number(poi.z))) {
+            var groups = payload && Array.isArray(payload.groups) ? payload.groups : [];
+            groups.forEach(function (entry) {
+                var group = normalizePoiGroup(entry && entry.key);
+                if (!group) {
                     return;
                 }
 
-                var group = normalizePoiGroup(poi.group);
-                var title = prettifyPoiName(poi.name);
-                poiRecords.get(group).push({
-                    group: group,
-                    latLng: worldToLatLng(Number(poi.x), Number(poi.z)),
-                    placed: poi.placed !== false,
-                    title: title,
-                    x: Number(poi.x),
-                    z: Number(poi.z)
-                });
+                var count = Math.floor(Number(entry.count));
+                var scanUnixMs = Math.floor(Number(entry.scanUnixMs));
+                var metadata = {
+                    category: typeof entry.category === "string" ? entry.category : "",
+                    count: Number.isFinite(count) && count >= 0 ? count : 0,
+                    inline: entry.inline !== false,
+                    key: group,
+                    label: typeof entry.label === "string" && entry.label.trim()
+                        ? entry.label.trim()
+                        : POI_GROUPS[group].label,
+                    scanUnixMs: Number.isFinite(scanUnixMs) && scanUnixMs >= 0
+                        ? scanUnixMs
+                        : 0
+                };
+                poiGroupMeta.set(group, metadata);
+                availablePoiGroups.add(group);
+                if (isResourcePoiGroup(group)) {
+                    getResourcePoiState(group).scanUnixMs = metadata.scanUnixMs;
+                }
+            });
+
+            var pois = payload && Array.isArray(payload.pois) ? payload.pois : [];
+            pois.forEach(function (poi) {
+                var group = normalizePoiGroup(poi && poi.group);
+                var record = normalizePoiRecord(poi, group);
+                if (!record) {
+                    return;
+                }
+
+                poiRecords.get(group).push(record);
                 availablePoiGroups.add(group);
             });
+            if (groups.length === 0) {
+                POI_GROUP_ORDER.forEach(function (group) {
+                    var count = (poiRecords.get(group) || []).length;
+                    if (count > 0) {
+                        poiGroupMeta.set(group, {
+                            category: POI_GROUPS[group].category,
+                            count: count,
+                            inline: true,
+                            key: group,
+                            label: POI_GROUPS[group].label,
+                            scanUnixMs: 0
+                        });
+                    }
+                });
+            }
 
             feedLastUpdated.pois = Date.now();
             poiLoadPending = false;
@@ -7563,6 +8086,7 @@
         window.clearTimeout(eventSourceRetryTimer);
         window.clearTimeout(hashUpdateTimer);
         window.clearTimeout(entityFocusPollTimer);
+        stopAllResourcePoiPolling();
         window.clearInterval(popupRefreshTimer);
         window.clearInterval(layersStalenessTimer);
         window.clearInterval(savedBadgeTimer);

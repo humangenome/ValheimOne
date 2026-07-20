@@ -66,6 +66,10 @@ public sealed class LiveMapModule : IFeatureModule
             "EntityLayer",
             false,
             "Serve ships, carts, and portals as a toggleable admin map layer.");
+        ConfigEntryBool resourceLayers = _feature.Bool(
+            "ResourceLayers",
+            true,
+            "Serve request-gated ore and forage layers on shared and admin maps.");
         ConfigEntryString fogMode = _feature.String(
             "FogMode",
             "off",
@@ -105,6 +109,7 @@ public sealed class LiveMapModule : IFeatureModule
             respectInGameVisibility,
             publicShowPlayerNames,
             entityLayer,
+            resourceLayers,
             fogMode,
             consoleEnabled,
             consoleWhitelist,

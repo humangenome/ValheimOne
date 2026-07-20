@@ -18,6 +18,7 @@ internal sealed class LiveMapHttpServer
     private const int EventStreamLogBatchSize = 100;
     private const float MaximumPingWorldRadius = 10500f;
     private const int MaximumPingLabelLength = 32;
+    private const long ResourceRefreshMilliseconds = 180L * 1000L;
 
     private enum ViewLevel
     {
@@ -36,6 +37,8 @@ internal sealed class LiveMapHttpServer
     private readonly bool _publicShowPlayerNames;
     private readonly Func<LiveMapSnapshot> _getSnapshot;
     private readonly Func<PoiCatalog> _getPoiCatalog;
+    private readonly Func<ResourcePoiMapSnapshot> _getResourcePoiSnapshot;
+    private readonly Action _noteResourcesRequested;
     private readonly Func<MapTableSnapshot> _getMapTableSnapshot;
     private readonly Func<EntityMapSnapshot> _getEntitySnapshot;
     private readonly Func<EntityFocusSnapshot> _getEntityFocusSnapshot;
@@ -74,6 +77,8 @@ internal sealed class LiveMapHttpServer
         bool publicShowPlayerNames,
         Func<LiveMapSnapshot> getSnapshot,
         Func<PoiCatalog> getPoiCatalog,
+        Func<ResourcePoiMapSnapshot> getResourcePoiSnapshot,
+        Action noteResourcesRequested,
         Func<MapTableSnapshot> getMapTableSnapshot,
         Func<EntityMapSnapshot> getEntitySnapshot,
         Func<EntityFocusSnapshot> getEntityFocusSnapshot,
@@ -100,6 +105,8 @@ internal sealed class LiveMapHttpServer
         _publicShowPlayerNames = publicShowPlayerNames;
         _getSnapshot = getSnapshot;
         _getPoiCatalog = getPoiCatalog;
+        _getResourcePoiSnapshot = getResourcePoiSnapshot;
+        _noteResourcesRequested = noteResourcesRequested;
         _getMapTableSnapshot = getMapTableSnapshot;
         _getEntitySnapshot = getEntitySnapshot;
         _getEntityFocusSnapshot = getEntityFocusSnapshot;
@@ -349,7 +356,7 @@ internal sealed class LiveMapHttpServer
             }
             else if (isGet && path == "/api/pois")
             {
-                ServePois(response, viewLevel);
+                ServePois(request, response, viewLevel);
             }
             else if (isGet && path == "/api/pins")
             {
@@ -1632,17 +1639,77 @@ internal sealed class LiveMapHttpServer
         json.Append('}');
     }
 
-    private void ServePois(HttpListenerResponse response, ViewLevel viewLevel)
+    private void ServePois(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        ViewLevel viewLevel)
     {
-        IReadOnlyList<PoiSnapshot> pois = _getPoiCatalog().ServedPois;
+        string requestedGroup = (request.QueryString["group"] ?? string.Empty)
+            .Trim()
+            .ToLowerInvariant();
+        if (!string.IsNullOrEmpty(requestedGroup))
+        {
+            ServeResourcePois(response, viewLevel, requestedGroup);
+            return;
+        }
+
+        PoiCatalog catalog = _getPoiCatalog();
+        ResourcePoiMapSnapshot resourceSnapshot = _getResourcePoiSnapshot();
+        IReadOnlyList<PoiSnapshot> pois = catalog.ServedPois;
+        IReadOnlyList<PoiGroupDefinition> definitions = PoiGroups.All;
         FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
-        var json = new StringBuilder(16 + (pois.Count * 96));
-        json.Append("{\"pois\":[");
+        long unixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var json = new StringBuilder(128 + (pois.Count * 96));
+        json.Append("{\"unixMs\":");
+        json.Append(unixMs.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"groups\":[");
         bool needsComma = false;
+        for (int index = 0; index < definitions.Count; index++)
+        {
+            PoiGroupDefinition definition = definitions[index];
+            if ((viewLevel == ViewLevel.Public && !PoiGroups.IsPublic(definition.Key)) ||
+                (definition.Resource && !_config.ResourceLayers))
+            {
+                continue;
+            }
+
+            if (needsComma)
+            {
+                json.Append(',');
+            }
+
+            int count = catalog.GetCount(definition.Key);
+            if (definition.Resource &&
+                resourceSnapshot.TryGetGroup(
+                    definition.Key,
+                    out ResourcePoiGroupSnapshot? resourceGroup) &&
+                resourceGroup != null)
+            {
+                count = resourceGroup.Count;
+            }
+
+            json.Append('{');
+            json.Append("\"key\":").Append(JsonWriter.Quote(definition.Key));
+            json.Append(",\"label\":").Append(JsonWriter.Quote(definition.Label));
+            json.Append(",\"category\":").Append(JsonWriter.Quote(definition.Category));
+            json.Append(",\"count\":").Append(count.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"inline\":").Append(definition.Inline ? "true" : "false");
+            if (definition.Resource)
+            {
+                json.Append(",\"scanUnixMs\":").Append(
+                    resourceSnapshot.LastScanUnixMs.ToString(CultureInfo.InvariantCulture));
+            }
+
+            json.Append('}');
+            needsComma = true;
+        }
+
+        json.Append("],\"pois\":[");
+        needsComma = false;
         for (int index = 0; index < pois.Count; index++)
         {
             PoiSnapshot poi = pois[index];
-            if (viewLevel == ViewLevel.Public && !IsPublicPoi(poi))
+            if (viewLevel == ViewLevel.Public && !PoiGroups.IsPublic(poi.Group))
             {
                 continue;
             }
@@ -1662,6 +1729,68 @@ internal sealed class LiveMapHttpServer
                 FogTracker.IsExplored(fogSnapshot, poi.X, poi.Z) ? "true" : "false");
             json.Append('}');
             needsComma = true;
+        }
+
+        json.Append("]}");
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private void ServeResourcePois(
+        HttpListenerResponse response,
+        ViewLevel viewLevel,
+        string requestedGroup)
+    {
+        if (viewLevel == ViewLevel.Public || !_config.ResourceLayers ||
+            !PoiGroups.TryGet(requestedGroup, out PoiGroupDefinition? definition) ||
+            definition == null || !definition.Resource)
+        {
+            WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
+        _noteResourcesRequested();
+        ResourcePoiMapSnapshot snapshot = _getResourcePoiSnapshot();
+        snapshot.TryGetGroup(requestedGroup, out ResourcePoiGroupSnapshot? group);
+        ResourcePoiEntry[] pois = group?.Entries ?? Array.Empty<ResourcePoiEntry>();
+        int count = group?.Count ?? 0;
+        long nowUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        long scanAgeMs = snapshot.LastScanUnixMs == 0L
+            ? long.MaxValue
+            : Math.Max(0L, nowUnixMs - snapshot.LastScanUnixMs);
+        bool scanning = snapshot.Scanning ||
+                        snapshot.LastScanUnixMs == 0L ||
+                        scanAgeMs >= ResourceRefreshMilliseconds;
+        FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
+        var json = new StringBuilder(128 + (pois.Length * 96));
+        json.Append("{\"group\":").Append(JsonWriter.Quote(definition.Key));
+        json.Append(",\"label\":").Append(JsonWriter.Quote(definition.Label));
+        json.Append(",\"count\":").Append(count.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"scanUnixMs\":").Append(
+            snapshot.LastScanUnixMs.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"scanning\":").Append(scanning ? "true" : "false");
+        json.Append(",\"pois\":[");
+        for (int index = 0; index < pois.Length; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            ResourcePoiEntry poi = pois[index];
+            json.Append('{');
+            json.Append("\"name\":").Append(JsonWriter.Quote(poi.Name));
+            json.Append(",\"group\":").Append(JsonWriter.Quote(poi.Group));
+            json.Append(",\"x\":").Append(JsonWriter.NumberOneDecimal(poi.X));
+            json.Append(",\"z\":").Append(JsonWriter.NumberOneDecimal(poi.Z));
+            json.Append(",\"explored\":").Append(
+                FogTracker.IsExplored(fogSnapshot, poi.X, poi.Z) ? "true" : "false");
+            if (poi.Count > 1)
+            {
+                json.Append(",\"count\":").Append(
+                    poi.Count.ToString(CultureInfo.InvariantCulture));
+            }
+
+            json.Append('}');
         }
 
         json.Append("]}");
@@ -1829,12 +1958,6 @@ internal sealed class LiveMapHttpServer
             _exploredPctRevision = snapshot.Revision;
             return _exploredPctValue;
         }
-    }
-
-    private static bool IsPublicPoi(PoiSnapshot poi)
-    {
-        return string.Equals(poi.Group, "spawn", StringComparison.Ordinal) ||
-               string.Equals(poi.Group, "trader", StringComparison.Ordinal);
     }
 
     private static byte[] BuildFogPng(byte[] mask)
