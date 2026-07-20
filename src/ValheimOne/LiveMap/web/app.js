@@ -80,6 +80,7 @@
         ship: true,
         cart: true,
         portal: true,
+        portalNetwork: false,
         tombstone: false,
         densityDots: false,
         iconSize: "m",
@@ -143,6 +144,11 @@
     var entityFocusRequestPending = false;
     var entityRevision = null;
     var entityMarkerRecords = new Map();
+    var portalMarkerRecords = new Map();
+    var portalPairs = [];
+    var portalNetworkLayer = null;
+    var portalPopupLinkLayer = null;
+    var openPopupPortalId = "";
     var raidCircle = null;
     var currentRaidEvent = null;
     var currentTimeOfDay = null;
@@ -1853,6 +1859,8 @@
                 toggleSelectedTrail(kind, key);
             } else if (action === "jump-tombstone") {
                 jumpToTombstone(key);
+            } else if (action === "jump-portal") {
+                jumpToPortal(key);
             }
         });
     }
@@ -2178,6 +2186,9 @@
     function bindMapPopupEvents() {
         map.on("popupopen", function (event) {
             var source = event.popup && event.popup._source;
+            openPopupPortalId = source && source._voPopupKind === "portal"
+                ? source._voEntityId
+                : "";
             openPopupTrailTarget = source && source._voTrailKind && source._voTrailKey
                 ? { kind: source._voTrailKind, key: source._voTrailKey }
                 : null;
@@ -2192,12 +2203,15 @@
             refreshOpenPopupFooter();
             popupRefreshTimer = window.setInterval(refreshOpenPopupContent, 5000);
             renderTrails();
+            renderPortalLinks();
         });
         map.on("popupclose", function () {
+            openPopupPortalId = "";
             openPopupTrailTarget = null;
             window.clearInterval(popupRefreshTimer);
             popupRefreshTimer = 0;
             renderTrails();
+            renderPortalLinks();
         });
     }
 
@@ -2524,6 +2538,8 @@
         playerLayer = L.layerGroup();
         pinLayer = L.layerGroup();
         trailLayer = L.layerGroup().addTo(map);
+        portalNetworkLayer = L.layerGroup();
+        portalPopupLinkLayer = L.layerGroup().addTo(map);
         POI_GROUP_ORDER.forEach(function (group) {
             poiLayers.set(group, L.layerGroup());
             poiRecords.set(group, []);
@@ -3653,10 +3669,18 @@
             appendLayerStatus(placesBody, "POIs: no data yet");
         }
 
-        var overlaysBody = appendLayerSection("overlays", "Overlays", ["fog"]);
+        var overlayFeeds = hasLiveAccess() ? ["fog", "entities"] : ["fog"];
+        var overlaysBody = appendLayerSection("overlays", "Overlays", overlayFeeds);
         if (fogAvailable) {
             appendLayerRow(overlaysBody, "fog", "Fog", "≈", "fog", { counted: false });
         }
+        appendLayerRow(
+            overlaysBody,
+            "portalNetwork",
+            "Portal network",
+            "╌",
+            "portal-network"
+        );
         appendLayerRow(
             overlaysBody,
             "tint",
@@ -3775,7 +3799,8 @@
             if (key === "trails" && checkbox.checked) {
                 backfillVisiblePlayerTrails();
             }
-            if (Object.prototype.hasOwnProperty.call(ENTITY_GROUPS, key)) {
+            if (Object.prototype.hasOwnProperty.call(ENTITY_GROUPS, key) ||
+                key === "portalNetwork") {
                 updateEntityPolling(true);
             }
             updateLayerCounts();
@@ -3836,6 +3861,9 @@
         }
         if (key === "trails") {
             return latestPlayers.length;
+        }
+        if (key === "portalNetwork") {
+            return portalPairs.length;
         }
         if (Object.prototype.hasOwnProperty.call(POI_GROUPS, key)) {
             return (poiRecords.get(key) || []).length;
@@ -4038,6 +4066,18 @@
         } : null);
     }
 
+    function jumpToPortal(id) {
+        var portal = portalEntityById(id);
+        if (!portal) {
+            return;
+        }
+
+        focusMapLocation(worldToLatLng(portal.x, portal.z), function () {
+            var record = portalMarkerRecords.get(id);
+            return record ? record.marker : null;
+        });
+    }
+
     function renderJumpChips() {
         var spawn = (poiRecords.get("spawn") || [])[0];
         var trader = (poiRecords.get("trader") || [])[0];
@@ -4210,6 +4250,9 @@
         if (layerSettings.trails) {
             appendLegendItem("〰", "Trails", "trails");
         }
+        if (layerSettings.portalNetwork && entityLayersAreAvailable()) {
+            appendLegendItem("╌", "Portal network", "portal-network");
+        }
         POI_GROUP_ORDER.forEach(function (group) {
             if (availablePoiGroups.has(group) && layerSettings[group]) {
                 appendLegendItem(POI_GROUPS[group].glyph, POI_GROUPS[group].label, group);
@@ -4264,6 +4307,10 @@
         });
         setLayerVisible(fogOverlay, fogAvailable && layerSettings.fog);
         setLayerVisible(tintOverlay, layerSettings.tint);
+        setLayerVisible(
+            portalNetworkLayer,
+            entityLayersAreAvailable() && layerSettings.portalNetwork
+        );
         ENTITY_GROUP_ORDER.forEach(function (group) {
             setLayerVisible(
                 entityLayers.get(group),
@@ -4273,6 +4320,7 @@
         if (minimapSetOpen) {
             minimapSetOpen(layerSettings.minimap, false);
         }
+        renderPortalLinks();
         renderTrails();
         renderLegend();
         updateFeedStalenessDots();
@@ -4694,6 +4742,102 @@
             : (distance / 1000).toFixed(1) + " km";
     }
 
+    function derivePortalPairs(entities) {
+        var portalsByTag = new Map();
+        portalPairs = [];
+
+        entities.forEach(function (entity) {
+            if (entity.group !== "portal") {
+                return;
+            }
+
+            entity.portalPair = { kind: "unpaired" };
+            if (!entity.tag) {
+                return;
+            }
+            if (!portalsByTag.has(entity.tag)) {
+                portalsByTag.set(entity.tag, []);
+            }
+            portalsByTag.get(entity.tag).push(entity);
+        });
+
+        portalsByTag.forEach(function (portals) {
+            if (portals.length === 2) {
+                portals[0].portalPair = { kind: "paired", partner: portals[1] };
+                portals[1].portalPair = { kind: "paired", partner: portals[0] };
+                portalPairs.push(portals);
+                return;
+            }
+            if (portals.length > 2) {
+                portals.forEach(function (portal) {
+                    portal.portalPair = { count: portals.length, kind: "conflict" };
+                });
+            }
+        });
+    }
+
+    function portalLinkColor() {
+        var color = window.getComputedStyle(document.documentElement)
+            .getPropertyValue("--accent").trim();
+        return color || "#d9b168";
+    }
+
+    function drawPortalLink(layer, left, right, options) {
+        if (!layer || !left || !right) {
+            return;
+        }
+
+        L.polyline([
+            worldToLatLng(left.x, left.z),
+            worldToLatLng(right.x, right.z)
+        ], {
+            color: portalLinkColor(),
+            dashArray: options.dashArray,
+            interactive: false,
+            opacity: options.opacity,
+            pane: "trailPane",
+            weight: options.weight
+        }).addTo(layer);
+    }
+
+    function portalEntityById(id) {
+        if (!id) {
+            return null;
+        }
+        return latestEntities.find(function (entity) {
+            return entity.group === "portal" && entity.id === id;
+        }) || null;
+    }
+
+    function renderPortalLinks() {
+        if (!map || !portalNetworkLayer || !portalPopupLinkLayer) {
+            return;
+        }
+
+        portalNetworkLayer.clearLayers();
+        portalPopupLinkLayer.clearLayers();
+        if (layerSettings.portalNetwork && entityLayersAreAvailable()) {
+            portalPairs.forEach(function (pair) {
+                drawPortalLink(portalNetworkLayer, pair[0], pair[1], {
+                    dashArray: "5 7",
+                    opacity: 0.38,
+                    weight: 1.35
+                });
+            });
+        }
+
+        var openPortal = portalEntityById(openPopupPortalId);
+        if (openPortal && openPortal.portalPair &&
+            openPortal.portalPair.kind === "paired") {
+            drawPortalLink(
+                portalPopupLinkLayer,
+                openPortal,
+                openPortal.portalPair.partner,
+                { dashArray: "7 7", opacity: 0.9, weight: 2.1 }
+            );
+        }
+    }
+
     function tombstoneAgeSec(entity) {
         if (!entity || !Number.isFinite(entity.deathAgeSec)) {
             return null;
@@ -5004,12 +5148,43 @@
     }
 
     function buildPortalPopup(entity) {
+        var pair = entity.portalPair || { kind: "unpaired" };
+        var rows = [{ label: "Tag", value: entity.tag || "—" }];
+        var actions = [];
+        if (pair.kind === "paired") {
+            var partner = pair.partner;
+            rows.push({
+                label: "Status",
+                value: "Paired → " + Math.round(partner.x) + ", " +
+                    Math.round(partner.z) + " (" +
+                    formatTraveledDistance(worldDistance(
+                        entity.x,
+                        entity.z,
+                        partner.x,
+                        partner.z
+                    )) + ")"
+            });
+            actions.push({
+                action: "jump-portal",
+                key: partner.id,
+                label: "Jump to pair"
+            });
+        } else if (pair.kind === "conflict") {
+            rows.push({
+                label: "Status",
+                value: "Tag conflict (" + pair.count + " portals)"
+            });
+        } else {
+            rows.push({ label: "Status", value: "Unpaired" });
+        }
+        rows.push(positionPopupRow(entity.x, entity.z));
         return popupShell({
+            actions: actions,
             feed: "entities",
             glyph: ENTITY_GROUPS.portal.glyph,
             kicker: "PORTAL",
-            rows: [positionPopupRow(entity.x, entity.z)],
-            title: "Portal"
+            rows: rows,
+            title: entity.tag || "Portal"
         });
     }
 
@@ -5224,7 +5399,8 @@
     }
 
     function entityDataIsNeeded() {
-        return latestPlayers.length > 0 || ENTITY_GROUP_ORDER.some(function (group) {
+        return latestPlayers.length > 0 || layerSettings.portalNetwork ||
+            ENTITY_GROUP_ORDER.some(function (group) {
             return layerSettings[group];
         });
     }
@@ -5234,10 +5410,14 @@
             layer.clearLayers();
         });
         entityMarkerRecords.clear();
+        portalMarkerRecords.clear();
         if (!preserveState) {
             entityRevision = null;
             latestEntities = [];
+            derivePortalPairs(latestEntities);
+            openPopupPortalId = "";
         }
+        renderPortalLinks();
     }
 
     function updateEntityAvailability(status) {
@@ -5425,6 +5605,9 @@
                     : ""
             });
             marker.addTo(entityLayers.get(entity.group));
+            if (entity.group === "portal" && entity.id) {
+                portalMarkerRecords.set(entity.id, record);
+            }
             if ((entity.group === "ship" || entity.group === "cart") && entity.trailKey) {
                 entityMarkerRecords.set(entity.trailKey, record);
                 if (entity.trailKey === reopenEntityKey) {
@@ -5457,6 +5640,12 @@
             if ((entity.group === "ship" || entity.group === "cart") &&
                 entityMarkerRecords.has(entity.trailKey)) {
                 entityMarkerRecords.get(entity.trailKey).entity = entity;
+            }
+            if (entity.group === "portal" && entity.id &&
+                portalMarkerRecords.has(entity.id)) {
+                var record = portalMarkerRecords.get(entity.id);
+                record.entity = entity;
+                record.marker.setLatLng(worldToLatLng(entity.x, entity.z));
             }
         });
     }
@@ -5510,6 +5699,7 @@
             var entities = normalizeEntityPayload(payload);
             recordEntityTrails(entities);
             latestEntities = entities;
+            derivePortalPairs(latestEntities);
             updateLayerCounts();
             var nextRevision = payload && payload.revision != null
                 ? String(payload.revision)

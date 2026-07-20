@@ -715,6 +715,11 @@ input {
     font-size: 15px;
 }
 
+.layer-swatch-portal-network {
+    color: var(--accent);
+    font-size: 16px;
+}
+
 .layer-swatch-spawn {
     color: var(--frost);
 }
