@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -17,16 +18,24 @@ internal sealed class FogTracker
 
     private const int Version = 1;
     private const int SaveIntervalSeconds = 30;
+    private const int PublicationIntervalSeconds = 10;
+    private const int ShutdownSaveWaitMilliseconds = 2000;
+    private const int ShutdownSavePollMilliseconds = 10;
     private const int CellCount = Size * Size;
 
     private readonly byte[] _mask = new byte[CellCount];
     private readonly string _bitsPath;
     private readonly string _metadataPath;
     private readonly ModLogger _log;
+    private readonly object _saveLock = new object();
     private FogMaskSnapshot _snapshot = FogMaskSnapshot.Empty;
     private DateTime _nextSaveUtc;
+    private long _lastPublicationTimestamp;
     private long _revision;
-    private bool _dirty;
+    private int _dirty;
+    private int _finalSaveStarted;
+    private int _saveInFlight;
+    private bool _publicationPending;
     private bool _stopped;
 
     public FogTracker(string cacheDirectory, ModLogger log)
@@ -57,19 +66,18 @@ internal sealed class FogTracker
             changed |= Stamp(player.X, player.Z);
         }
 
+        DateTime now = DateTime.UtcNow;
         if (changed)
         {
-            _revision++;
-            _dirty = true;
-            Volatile.Write(ref _snapshot, new FogMaskSnapshot((byte[])_mask.Clone(), _revision));
+            MarkChanged();
         }
 
-        DateTime now = DateTime.UtcNow;
+        PublishPending(false);
         if (now >= _nextSaveUtc)
         {
-            if (_dirty)
+            if (Volatile.Read(ref _dirty) != 0)
             {
-                Save();
+                QueueSave();
             }
 
             _nextSaveUtc = now.AddSeconds(SaveIntervalSeconds);
@@ -103,9 +111,8 @@ internal sealed class FogTracker
 
         if (changed)
         {
-            _revision++;
-            _dirty = true;
-            Volatile.Write(ref _snapshot, new FogMaskSnapshot((byte[])_mask.Clone(), _revision));
+            MarkChanged();
+            PublishPending(false);
         }
     }
 
@@ -117,10 +124,38 @@ internal sealed class FogTracker
         }
 
         _stopped = true;
-        if (_dirty)
+        PublishPending(true);
+        int remainingWaitMilliseconds = ShutdownSaveWaitMilliseconds;
+        while (Volatile.Read(ref _saveInFlight) != 0 && remainingWaitMilliseconds > 0)
         {
-            Save();
+            Thread.Sleep(ShutdownSavePollMilliseconds);
+            remainingWaitMilliseconds -= ShutdownSavePollMilliseconds;
         }
+
+        Interlocked.Exchange(ref _finalSaveStarted, 1);
+        Save();
+    }
+
+    private void MarkChanged()
+    {
+        Interlocked.Exchange(ref _dirty, 1);
+        _publicationPending = true;
+    }
+
+    private void PublishPending(bool force)
+    {
+        long now = Stopwatch.GetTimestamp();
+        if (!_publicationPending ||
+            (!force && _lastPublicationTimestamp != 0 &&
+             now - _lastPublicationTimestamp < Stopwatch.Frequency * PublicationIntervalSeconds))
+        {
+            return;
+        }
+
+        _revision++;
+        _publicationPending = false;
+        _lastPublicationTimestamp = now;
+        Volatile.Write(ref _snapshot, new FogMaskSnapshot((byte[])_mask.Clone(), _revision));
     }
 
     private bool Stamp(float worldX, float worldZ)
@@ -226,33 +261,116 @@ internal sealed class FogTracker
             : 0;
     }
 
-    private void Save()
+    private void QueueSave()
     {
-        string bitsTemporaryPath = _bitsPath + ".tmp";
-        string metadataTemporaryPath = _metadataPath + ".tmp";
+        if (Interlocked.CompareExchange(ref _saveInFlight, 1, 0) != 0)
+        {
+            return;
+        }
+
         try
         {
-            File.WriteAllBytes(bitsTemporaryPath, _mask);
-            ReplaceAtomically(bitsTemporaryPath, _bitsPath);
+            byte[] mask = (byte[])_mask.Clone();
+            long revision = CaptureSaveRevision();
+            Interlocked.Exchange(ref _dirty, 0);
+            var save = new PendingSave(mask, revision);
+            if (!ThreadPool.QueueUserWorkItem(SaveInBackground, save))
+            {
+                Interlocked.Exchange(ref _dirty, 1);
+                Interlocked.Exchange(ref _saveInFlight, 0);
+                _log.Warning("[LiveMap] could not queue trails fog cache save.");
+            }
+        }
+        catch (Exception exception)
+        {
+            Interlocked.Exchange(ref _dirty, 1);
+            Interlocked.Exchange(ref _saveInFlight, 0);
+            _log.Warning(
+                $"[LiveMap] could not queue trails fog cache save: " +
+                $"{exception.GetType().Name}: {exception.Message}");
+        }
+    }
+
+    private void SaveInBackground(object? state)
+    {
+        try
+        {
+            var save = state as PendingSave;
+            if ((save == null || !WriteSave(save.Mask, save.Revision, true)) &&
+                Volatile.Read(ref _finalSaveStarted) == 0)
+            {
+                Interlocked.Exchange(ref _dirty, 1);
+            }
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _saveInFlight, 0);
+        }
+    }
+
+    private void Save()
+    {
+        if (WriteSave(_mask, _revision, false))
+        {
+            Interlocked.Exchange(ref _dirty, 0);
+        }
+        else
+        {
+            Interlocked.Exchange(ref _dirty, 1);
+        }
+    }
+
+    private long CaptureSaveRevision()
+    {
+        // A live mask with unpublished changes must not reuse the revision of
+        // the older snapshot already visible to HTTP clients.
+        if (_publicationPending)
+        {
+            _revision++;
+        }
+
+        return _revision;
+    }
+
+    private bool WriteSave(byte[] mask, long revision, bool background)
+    {
+        string temporarySuffix = background ? ".background.tmp" : ".final.tmp";
+        string bitsTemporaryPath = _bitsPath + temporarySuffix;
+        string metadataTemporaryPath = _metadataPath + temporarySuffix;
+        try
+        {
+            File.WriteAllBytes(bitsTemporaryPath, mask);
 
             var metadata = new StringBuilder(64);
             metadata.Append('{');
             metadata.Append("\"version\":").Append(Version);
             metadata.Append(",\"size\":").Append(Size);
-            metadata.Append(",\"revision\":").Append(_revision.ToString(CultureInfo.InvariantCulture));
+            metadata.Append(",\"revision\":").Append(revision.ToString(CultureInfo.InvariantCulture));
             metadata.Append('}');
             File.WriteAllText(
                 metadataTemporaryPath,
                 metadata.ToString(),
                 new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-            ReplaceAtomically(metadataTemporaryPath, _metadataPath);
-            _dirty = false;
+
+            lock (_saveLock)
+            {
+                if (background && Volatile.Read(ref _finalSaveStarted) != 0)
+                {
+                    return true;
+                }
+
+                ReplaceAtomically(bitsTemporaryPath, _bitsPath);
+                ReplaceAtomically(metadataTemporaryPath, _metadataPath);
+            }
+
+            return true;
         }
         catch (Exception exception)
         {
             _log.Warning(
                 $"[LiveMap] could not save trails fog cache: " +
                 $"{exception.GetType().Name}: {exception.Message}");
+            return false;
         }
         finally
         {
@@ -327,6 +445,19 @@ internal sealed class FogTracker
         {
             // Cache cleanup is best effort.
         }
+    }
+
+    private sealed class PendingSave
+    {
+        public PendingSave(byte[] mask, long revision)
+        {
+            Mask = mask;
+            Revision = revision;
+        }
+
+        public byte[] Mask { get; }
+
+        public long Revision { get; }
     }
 }
 
