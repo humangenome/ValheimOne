@@ -313,6 +313,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         var presentIds = new HashSet<long>();
         List<ZNetPeer> peers = GameAccess.GetPeers(network);
         WorldGenerator? worldGenerator = WorldGenerator.instance;
+        ZDOMan? zdoManager = ZDOMan.instance;
         for (int index = 0; index < peers.Count; index++)
         {
             ZNetPeer peer = peers[index];
@@ -377,6 +378,22 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             string biome = worldGenerator == null
                 ? string.Empty
                 : worldGenerator.GetBiome(position.x, position.z).ToString();
+            ZDO? playerZdo = zdoManager?.GetZDO(peer.m_characterID);
+            float maxHealth = playerZdo?.GetFloat(ZDOVars.s_maxHealth, 25f) ?? 25f;
+            if (maxHealth <= 0f || float.IsNaN(maxHealth) || float.IsInfinity(maxHealth))
+            {
+                maxHealth = 25f;
+            }
+
+            float health = playerZdo?.GetFloat(ZDOVars.s_health, maxHealth) ?? maxHealth;
+            if (float.IsNaN(health) || float.IsInfinity(health))
+            {
+                health = maxHealth;
+            }
+
+            bool dead = playerZdo?.GetBool(ZDOVars.s_dead, false) ?? false;
+            bool pvp = playerZdo?.GetBool(ZDOVars.s_pvp, false) ?? false;
+            bool inBed = playerZdo?.GetBool(ZDOVars.s_inBed, false) ?? false;
             players.Add(new LiveMapPlayerSnapshot(
                 peer.m_playerName ?? string.Empty,
                 position.x,
@@ -388,7 +405,12 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
                 motion.SpeedMps,
                 motion.HeadingDeg,
                 motion.SessionStartUnixMs,
-                motion.DistanceTodayM));
+                motion.DistanceTodayM,
+                health,
+                maxHealth,
+                dead,
+                pvp,
+                inBed));
         }
 
         var departedIds = new List<long>();

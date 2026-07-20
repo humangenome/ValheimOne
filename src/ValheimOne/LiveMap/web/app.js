@@ -1651,8 +1651,12 @@
             label.className = "vo-popup-label";
             label.textContent = row.label;
             value.className = "vo-popup-value";
-            valueText.textContent = row.value;
-            value.appendChild(valueText);
+            if (row.valueNode) {
+                value.appendChild(row.valueNode);
+            } else {
+                valueText.textContent = row.value;
+                value.appendChild(valueText);
+            }
             if (typeof row.copy === "string") {
                 var copy = document.createElement("button");
                 copy.type = "button";
@@ -4353,12 +4357,17 @@
             return {
                 anonymous: !rawName,
                 biome: typeof player.biome === "string" ? player.biome.trim() : "",
+                dead: typeof player.dead === "boolean" ? player.dead : null,
                 displayName: rawName || "Explorer",
                 distanceTodayM: finiteNumberOrNull(player.distanceTodayM),
                 headingDeg: finiteNumberOrNull(player.headingDeg),
+                health: finiteNumberOrNull(player.health),
                 id: playerId,
+                inBed: typeof player.inBed === "boolean" ? player.inBed : null,
                 key: key,
+                maxHealth: finiteNumberOrNull(player.maxHealth),
                 name: rawName,
+                pvp: typeof player.pvp === "boolean" ? player.pvp : null,
                 sessionStartUnixMs: finiteNumberOrNull(player.sessionStartUnixMs),
                 speedMps: finiteNumberOrNull(player.speedMps),
                 trailKey: playerId ? "player:" + playerId : key,
@@ -4389,8 +4398,6 @@
     }
 
     function createPlayerMarker(player) {
-        var tooltipContent = document.createElement("span");
-        tooltipContent.textContent = player.displayName;
         var icon = L.divIcon({
             className: "player-div-icon",
             html: '<span class="player-marker-shell"><span class="player-marker-dot"></span>' +
@@ -4407,7 +4414,7 @@
             marker: marker,
             player: player
         };
-        marker.bindTooltip(tooltipContent, {
+        marker.bindTooltip(buildPlayerTooltip(player), {
             className: "player-tooltip",
             direction: "top",
             offset: [0, -7],
@@ -4443,6 +4450,7 @@
                 record.player = player;
                 animateMarker(record, target);
             }
+            record.marker.setTooltipContent(buildPlayerTooltip(player));
             updatePlayerMarkerMotion(record);
         });
 
@@ -4631,30 +4639,103 @@
             var button = document.createElement("button");
             var identity = document.createElement("span");
             var dot = document.createElement("span");
+            var summary = document.createElement("span");
+            var headline = document.createElement("span");
             var name = document.createElement("span");
             var coordinates = document.createElement("span");
 
             button.type = "button";
             button.className = "player-button";
             button.classList.toggle("is-followed", isFollowing("player", player.key));
+            button.classList.toggle("is-dead", player.dead === true);
             button.addEventListener("click", function () {
                 followPlayer(player.key);
             });
 
             identity.className = "player-identity";
             dot.className = "player-dot";
+            summary.className = "player-summary";
+            headline.className = "player-headline";
             name.className = "player-name";
             name.textContent = player.displayName;
             coordinates.className = "player-coordinates";
             coordinates.textContent = "X " + Math.round(player.x) + " · Z " + Math.round(player.z);
 
             identity.appendChild(dot);
-            identity.appendChild(name);
+            headline.appendChild(name);
+            if (player.pvp === true) {
+                headline.appendChild(playerStateGlyph("⚔", "PvP on", "is-pvp"));
+            }
+            if (player.inBed === true) {
+                headline.appendChild(playerStateGlyph("☾", "Sleeping", "is-sleeping"));
+            }
+            summary.appendChild(headline);
+            if (hasPlayerHealth(player)) {
+                summary.appendChild(buildPlayerHealth(player, false));
+            }
+            identity.appendChild(summary);
             button.appendChild(identity);
             button.appendChild(coordinates);
             item.appendChild(button);
             elements.playerList.appendChild(item);
         });
+    }
+
+    function playerStateGlyph(glyph, label, className) {
+        var state = document.createElement("span");
+        state.className = "player-state-glyph " + className;
+        state.textContent = glyph;
+        state.title = label;
+        state.setAttribute("aria-label", label);
+        state.setAttribute("role", "img");
+        return state;
+    }
+
+    function buildPlayerTooltip(player) {
+        var tooltip = document.createElement("span");
+        tooltip.textContent = player.displayName;
+        if (player.inBed === true) {
+            var sleeping = document.createElement("span");
+            sleeping.className = "player-tooltip-state";
+            sleeping.textContent = " · ☾ Sleeping";
+            tooltip.appendChild(sleeping);
+        }
+        return tooltip;
+    }
+
+    function hasPlayerHealth(player) {
+        return Number.isFinite(player.health) && Number.isFinite(player.maxHealth) &&
+            player.maxHealth > 0;
+    }
+
+    function formatVitalNumber(value) {
+        return Math.abs(value - Math.round(value)) < 0.05
+            ? String(Math.round(value))
+            : value.toFixed(1);
+    }
+
+    function buildPlayerHealth(player, popup) {
+        var health = Math.max(0, player.health);
+        var maxHealth = Math.max(0.1, player.maxHealth);
+        var ratio = player.dead === true ? 0 : Math.max(0, Math.min(1, health / maxHealth));
+        var healthRow = document.createElement("span");
+        var track = document.createElement("span");
+        var fill = document.createElement("span");
+        var value = document.createElement("span");
+
+        healthRow.className = "player-health" + (popup ? " is-popup" : "");
+        healthRow.classList.toggle("is-dead", player.dead === true);
+        track.className = "player-health-track";
+        fill.className = "player-health-fill";
+        fill.style.width = (ratio * 100).toFixed(1) + "%";
+        value.className = "player-health-value";
+        value.textContent = player.dead === true
+            ? "☠ Dead"
+            : formatVitalNumber(health) + " / " + formatVitalNumber(maxHealth);
+        track.appendChild(fill);
+        healthRow.appendChild(track);
+        healthRow.appendChild(value);
+        return healthRow;
     }
 
     function normalizePoiGroup(group) {
@@ -4921,6 +5002,20 @@
     function buildPlayerPopup(player) {
         var motion = playerMotion(player);
         var rows = [positionPopupRow(player.x, player.z)];
+        if (hasPlayerHealth(player)) {
+            rows.push({
+                label: "Health",
+                valueNode: buildPlayerHealth(player, true)
+            });
+        }
+        if (player.dead === true) {
+            rows.push({ label: "State", value: "Dead" });
+        } else if (player.inBed === true) {
+            rows.push({ label: "State", value: "☾ Sleeping" });
+        }
+        if (player.pvp === true) {
+            rows.push({ label: "PvP", value: "On" });
+        }
         if (motion && Number.isFinite(motion.speedMps)) {
             rows.push({
                 label: "Speed",

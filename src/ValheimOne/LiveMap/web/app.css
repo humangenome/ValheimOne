@@ -425,6 +425,7 @@ input {
 
 .player-identity {
     display: flex;
+    flex: 1 1 auto;
     min-width: 0;
     align-items: center;
     gap: 8px;
@@ -443,12 +444,99 @@ input {
     animation: list-pulse 1.8s ease-in-out infinite;
 }
 
+.player-button.is-dead .player-dot {
+    background: var(--marker-muted);
+    box-shadow: 0 0 0 2px rgba(180, 166, 143, 0.14);
+}
+
+.player-summary {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.player-headline {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 5px;
+}
+
 .player-name {
+    min-width: 0;
     overflow: hidden;
     font-size: 12px;
     font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.player-state-glyph {
+    flex: 0 0 auto;
+    color: var(--secondary);
+    font-size: 11px;
+    line-height: 1;
+}
+
+.player-state-glyph.is-pvp {
+    color: var(--raid);
+}
+
+.player-state-glyph.is-sleeping,
+.player-tooltip-state {
+    color: var(--frost);
+}
+
+.player-health {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    align-items: center;
+    gap: 5px;
+}
+
+.player-health-track {
+    position: relative;
+    height: 4px;
+    min-width: 30px;
+    flex: 1 1 auto;
+    overflow: hidden;
+    border: 1px solid rgba(217, 177, 104, 0.24);
+    border-radius: 999px;
+    background: rgba(232, 220, 196, 0.13);
+    box-shadow: inset 0 1px 2px rgb(0 0 0 / 35%);
+}
+
+.player-health-fill {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--raid), var(--accent));
+    transition: width 180ms ease;
+}
+
+.player-health-value {
+    flex: 0 0 auto;
+    color: var(--secondary);
+    font-size: 8px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.player-health.is-dead .player-health-track {
+    border-color: rgba(180, 166, 143, 0.2);
+    background: rgba(180, 166, 143, 0.1);
+}
+
+.player-health.is-dead .player-health-fill {
+    background: var(--marker-muted);
+}
+
+.player-health.is-dead .player-health-value {
+    color: var(--marker-muted);
 }
 
 .player-coordinates {
@@ -2029,6 +2117,20 @@ body.is-measuring .compass-control {
     line-height: 1.3;
     text-align: right;
     overflow-wrap: anywhere;
+}
+
+.player-health.is-popup {
+    width: 100%;
+    max-width: 140px;
+}
+
+.player-health.is-popup .player-health-track {
+    height: 6px;
+}
+
+.player-health.is-popup .player-health-value {
+    color: var(--text);
+    font-size: 10px;
 }
 
 .vo-copy,

@@ -1180,6 +1180,13 @@ internal sealed class LiveMapHttpServer
                     player.SessionStartUnixMs.ToString(CultureInfo.InvariantCulture));
                 json.Append(",\"distanceTodayM\":").Append(JsonWriter.Number(
                     Math.Round(player.DistanceTodayM, 1)));
+                json.Append(",\"health\":").Append(JsonWriter.Number(
+                    Math.Round(player.Health, 1)));
+                json.Append(",\"maxHealth\":").Append(JsonWriter.Number(
+                    Math.Round(player.MaxHealth, 1)));
+                json.Append(",\"dead\":").Append(player.Dead ? "true" : "false");
+                json.Append(",\"pvp\":").Append(player.Pvp ? "true" : "false");
+                json.Append(",\"inBed\":").Append(player.InBed ? "true" : "false");
             }
 
             json.Append('}');

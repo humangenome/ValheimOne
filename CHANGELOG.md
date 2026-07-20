@@ -6,6 +6,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Added
 
+- LiveMap players now report health, max health, dead, PvP, and in-bed state to admin and shared views, shown as HP bars in the sidebar roster, health/PvP/sleeping rows in the player popup, and a moon glyph for sleeping vikings.
 - LiveMap portals now form a network graph on the web map: popups show pair status with distance and a jump-to-pair action, a dashed gold link is drawn while a paired portal's popup is open, and an optional default-off "Portal network" overlay draws every same-tag link at once, with unpaired and tag-conflict states called out.
 - LiveMap now tracks player tombstones as a default-off skull layer for admin and shared views, with owner and time-of-death read from the tombstone itself, the newest tombstone per player emphasized, and a "Last death" row with relative time, distance, and jump in the player popup.
 - LiveMap now keeps a rolling 30-minute server-side position history for players, ships, and carts, serving it through `GET /api/trail` with per-view authorization; `GET /api/entities?focus=<id>` adds a 2-second single-entity fast path for followed ships and carts, and the web client back-fills trails from history on click, follow, and the all-players mini-trails toggle.

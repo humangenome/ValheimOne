@@ -64,7 +64,12 @@ internal sealed class LiveMapPlayerSnapshot
         float speedMps,
         float headingDeg,
         long sessionStartUnixMs,
-        float distanceTodayM)
+        float distanceTodayM,
+        float health,
+        float maxHealth,
+        bool dead,
+        bool pvp,
+        bool inBed)
     {
         Name = name;
         X = x;
@@ -77,6 +82,11 @@ internal sealed class LiveMapPlayerSnapshot
         HeadingDeg = headingDeg;
         SessionStartUnixMs = sessionStartUnixMs;
         DistanceTodayM = distanceTodayM;
+        Health = health;
+        MaxHealth = maxHealth;
+        Dead = dead;
+        Pvp = pvp;
+        InBed = inBed;
     }
 
     public string Name { get; }
@@ -100,4 +110,14 @@ internal sealed class LiveMapPlayerSnapshot
     public long SessionStartUnixMs { get; }
 
     public float DistanceTodayM { get; }
+
+    public float Health { get; }
+
+    public float MaxHealth { get; }
+
+    public bool Dead { get; }
+
+    public bool Pvp { get; }
+
+    public bool InBed { get; }
 }
