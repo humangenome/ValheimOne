@@ -232,6 +232,7 @@
     var eventSourceLogFlowing = false;
     var eventSourceRetryTimer = 0;
     var eventSourceRetryDelay = SSE_RETRY_INITIAL_MS;
+    var latestStatusSnapshotStale = null;
     var feedLastUpdated = {
         entities: 0,
         pins: 0,
@@ -4294,11 +4295,21 @@
         if (feed === "pois") {
             return { state: "green", title: feedAgeText(updatedAt) };
         }
+        if (feed === "players" || feed === "status") {
+            if (failedFeeds.has(feed)) {
+                return { state: "red", title: feedAgeText(updatedAt) };
+            }
+            if (latestStatusSnapshotStale === null) {
+                return { state: "grey", title: "not loaded" };
+            }
+            return {
+                state: latestStatusSnapshotStale ? "red" : "green",
+                title: feedAgeText(updatedAt)
+            };
+        }
         var expected = {
             entities: ENTITIES_POLL_INTERVAL_MS,
-            pins: PINS_POLL_INTERVAL_MS,
-            players: POLL_INTERVAL_MS,
-            status: POLL_INTERVAL_MS
+            pins: PINS_POLL_INTERVAL_MS
         }[feed];
         var age = Date.now() - updatedAt;
         return {
@@ -7344,6 +7355,7 @@
         }
 
         feedLastUpdated.status = Date.now();
+        latestStatusSnapshotStale = status.stale === true;
         setFeedState("status", true);
         elements.serverName.textContent = textOrDash(status.serverName);
         elements.worldName.textContent = textOrDash(status.worldName);
