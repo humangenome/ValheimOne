@@ -619,6 +619,7 @@ internal sealed class LiveMapHttpServer
         bool entitiesAvailable = hasSharedMapAccess && _config.EntityLayer;
         string mapState = _renderer.StateName;
         string mapProgress = JsonWriter.Number(_renderer.Progress);
+        string renderRevision = _renderer.RenderRevision;
         string fogMode = GetEffectiveFogMode(viewLevel);
         FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
         long fogRevision = fogMode == "off" ? 0 : fogSnapshot.Revision;
@@ -660,6 +661,7 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"map\":{");
         json.Append("\"state\":").Append(JsonWriter.Quote(mapState));
         json.Append(",\"progress\":").Append(mapProgress);
+        json.Append(",\"renderRevision\":").Append(JsonWriter.Quote(renderRevision));
         json.Append(",\"textureSize\":").Append(_renderer.TextureSize.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"pixelSize\":").Append(JsonWriter.Number(WorldMapRenderer.PixelSize));
         json.Append(",\"worldRadius\":").Append(WorldMapRenderer.WorldRadius.ToString(CultureInfo.InvariantCulture));
@@ -693,6 +695,7 @@ internal sealed class LiveMapHttpServer
         key.Append(maxPlayers.ToString(CultureInfo.InvariantCulture)).Append('|');
         key.Append(mapState).Append('|');
         key.Append(mapProgress).Append('|');
+        key.Append(renderRevision).Append('|');
         key.Append(fogRevision.ToString(CultureInfo.InvariantCulture)).Append('|');
         long lastSavedMinute = lastSavedUnixMs > 0L ? lastSavedUnixMs / 60000L : 0L;
         key.Append(lastSavedMinute.ToString(CultureInfo.InvariantCulture)).Append('|');
@@ -1769,7 +1772,7 @@ internal sealed class LiveMapHttpServer
             HttpStatusCode.OK,
             "image/png",
             png,
-            "no-store");
+            "public, max-age=86400");
     }
 
     private bool SeesAllPlayers(ViewLevel viewLevel)

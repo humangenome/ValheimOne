@@ -125,6 +125,7 @@
     var coordinateChip = null;
     var coordinateUsesMapCenter = window.matchMedia("(hover: none), (pointer: coarse)").matches;
     var minimapElement = null;
+    var minimapImage = null;
     var minimapViewRect = null;
     var minimapFrame = 0;
     var minimapSetOpen = null;
@@ -174,6 +175,7 @@
     var currentRaidEvent = null;
     var currentTimeOfDay = null;
     var currentStatusDay = null;
+    var renderRevision = "0";
     var lastSavedUnixMs = 0;
     var savedBadgeTimer = 0;
     var dayToastTimer = 0;
@@ -319,6 +321,27 @@
 
         return path + (path.indexOf("?") === -1 ? "?" : "&") +
             "token=" + encodeURIComponent(token);
+    }
+
+    function versionedMapUrl(path) {
+        return authorizedUrl(path + (path.indexOf("?") === -1 ? "?" : "&") +
+            "v=" + encodeURIComponent(renderRevision));
+    }
+
+    function updateRenderRevision(statusMap) {
+        var nextRevision = statusMap && typeof statusMap.renderRevision === "string" &&
+            statusMap.renderRevision ? statusMap.renderRevision : "0";
+        if (nextRevision === renderRevision) {
+            return;
+        }
+
+        renderRevision = nextRevision;
+        if (tileLayer) {
+            tileLayer.setUrl(versionedMapUrl("/tiles/{z}/{x}-{y}.png"));
+        }
+        if (minimapImage) {
+            minimapImage.src = versionedMapUrl("/base.png");
+        }
     }
 
     async function fetchJson(path) {
@@ -2613,7 +2636,7 @@
             showFogCover();
         }
 
-        var tileTemplate = authorizedUrl("/tiles/{z}/{x}-{y}.png");
+        var tileTemplate = versionedMapUrl("/tiles/{z}/{x}-{y}.png");
         tileLayer = L.tileLayer(tileTemplate, {
             bounds: worldBounds,
             className: "world-map-layer",
@@ -3712,7 +3735,7 @@
             onAdd: function () {
                 var container = L.DomUtil.create("section", "leaflet-control minimap-control");
                 var frame = L.DomUtil.create("div", "minimap-frame", container);
-                var image = L.DomUtil.create("img", "minimap-image", frame);
+                minimapImage = L.DomUtil.create("img", "minimap-image", frame);
                 minimapViewRect = L.DomUtil.create("div", "minimap-view-rect", frame);
                 var toggle = L.DomUtil.create("button", "minimap-toggle", container);
                 var isOpen = loadMinimapPreference();
@@ -3736,9 +3759,9 @@
                     }
                 };
 
-                image.src = authorizedUrl("/base.png");
-                image.alt = "World overview";
-                image.draggable = false;
+                minimapImage.src = versionedMapUrl("/base.png");
+                minimapImage.alt = "World overview";
+                minimapImage.draggable = false;
                 toggle.type = "button";
                 toggle.textContent = "◱";
                 toggle.addEventListener("click", function () {
@@ -7329,6 +7352,7 @@
         updateLastSaved(status.lastSavedUnixMs);
         renderPlayerCount(status.players);
         updateRenderStatus(status.map);
+        updateRenderRevision(status.map);
         updateView(status.view);
         updateEntityAvailability(status);
         updateConsoleAvailability(status);

@@ -31,6 +31,7 @@ internal sealed class WorldMapRenderer
     private volatile bool _stopRequested;
     private int _state;
     private int _completedRows;
+    private string? _renderRevision;
 
     public WorldMapRenderer(
         WorldGenerator generator,
@@ -90,6 +91,30 @@ internal sealed class WorldMapRenderer
     }
 
     public bool IsReady => Volatile.Read(ref _state) == 1;
+
+    public string RenderRevision
+    {
+        get
+        {
+            if (!IsReady)
+            {
+                return "0";
+            }
+
+            string? revision = Volatile.Read(ref _renderRevision);
+            if (revision != null)
+            {
+                return revision;
+            }
+
+            string basePath = Path.Combine(CacheDirectory, "base.png");
+            long lastWriteTicks = File.GetLastWriteTimeUtc(basePath).Ticks;
+            string calculated = RendererVersion.ToString(CultureInfo.InvariantCulture) + "-" +
+                                lastWriteTicks.ToString(CultureInfo.InvariantCulture);
+            Interlocked.CompareExchange(ref _renderRevision, calculated, null);
+            return Volatile.Read(ref _renderRevision) ?? "0";
+        }
+    }
 
     public float Progress
     {
