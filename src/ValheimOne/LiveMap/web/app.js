@@ -22,8 +22,9 @@
     var TRAIL_MAX_POINTS = 900;
     var TRAIL_BUCKET_COUNT = 10;
     var SHIP_MATCH_DISTANCE = 40;
-    var LAYER_STORAGE_KEY = "vo-livemap-layers";
-    var MINIMAP_STORAGE_KEY = "vo-livemap-minimap";
+    var LAYER_STORAGE_KEY = "vo-livemap-layers-v2";
+    var LEGACY_LAYER_STORAGE_KEY = "vo-livemap-layers";
+    var LEGACY_MINIMAP_STORAGE_KEY = "vo-livemap-minimap";
     var TAB_SESSION_KEY = "vo-livemap-active-tab";
     var CONSOLE_CATEGORY_ORDER = ["server", "players", "moderation", "world", "diagnostics"];
     var CONSOLE_CATEGORY_LABELS = {
@@ -73,9 +74,13 @@
         misc: false,
         other: false,
         fog: true,
+        tint: true,
+        minimap: false,
         ship: true,
         cart: true,
         portal: true,
+        densityDots: false,
+        iconSize: "m",
         legendCollapsed: false
     };
 
@@ -92,6 +97,7 @@
     var mapMetrics = null;
     var worldBounds = null;
     var hashViewApplied = false;
+    var firstPlayersViewApplied = false;
     var hashUpdateTimer = 0;
     var pendingHashFollowName = "";
     var followedPlayer = null;
@@ -102,6 +108,7 @@
     var minimapElement = null;
     var minimapViewRect = null;
     var minimapFrame = 0;
+    var minimapSetOpen = null;
     var measureButton = null;
     var measureHud = null;
     var measureLine = null;
@@ -113,6 +120,7 @@
     var measureDoubleClickZoomWasEnabled = false;
     var playerLayer = null;
     var pinLayer = null;
+    var latestPins = [];
     var trailLayer = null;
     var trailBuffers = new Map();
     var selectedTrailTargets = new Map();
@@ -130,12 +138,22 @@
     var entityMarkerRecords = new Map();
     var raidCircle = null;
     var currentRaidEvent = null;
+    var currentTimeOfDay = null;
+    var tintOverlay = null;
     var layerSettings = loadLayerSettings();
     var layersRows = null;
+    var layersSetCollapsed = null;
+    var layersStalenessTimer = 0;
     var legendContent = null;
+    var searchControlElement = null;
+    var searchInput = null;
+    var searchResultsElement = null;
+    var searchResultItems = [];
+    var searchResultIndex = -1;
     var currentView = null;
     var lastPoiRequestedView = null;
     var poiRequestSequence = 0;
+    var poiLoadPending = false;
     var pinsPollingStarted = false;
     var fogStatus = { mode: "off", revision: "0", size: 0 };
     var fogAvailable = false;
@@ -178,6 +196,7 @@
         pins: 0,
         players: 0,
         pois: 0,
+        fog: 0,
         status: 0
     };
 
@@ -1507,6 +1526,7 @@
         }
 
         elements.offlineBadge.hidden = failedFeeds.size === 0;
+        updateFeedStalenessDots();
     }
 
     function textOrDash(value) {
@@ -1520,13 +1540,29 @@
         });
 
         try {
-            var saved = JSON.parse(window.localStorage.getItem(LAYER_STORAGE_KEY));
+            var savedText = window.localStorage.getItem(LAYER_STORAGE_KEY);
+            var isMigration = savedText === null;
+            if (isMigration) {
+                savedText = window.localStorage.getItem(LEGACY_LAYER_STORAGE_KEY);
+            }
+            var saved = savedText ? JSON.parse(savedText) : null;
             if (saved && typeof saved === "object") {
                 Object.keys(LAYER_DEFAULTS).forEach(function (key) {
-                    if (typeof saved[key] === "boolean") {
+                    if (typeof LAYER_DEFAULTS[key] === "boolean" &&
+                        typeof saved[key] === "boolean") {
                         settings[key] = saved[key];
                     }
                 });
+                if (["s", "m", "l"].indexOf(saved.iconSize) !== -1) {
+                    settings.iconSize = saved.iconSize;
+                }
+            }
+            if (isMigration) {
+                var legacyMinimap = window.localStorage.getItem(LEGACY_MINIMAP_STORAGE_KEY);
+                if (legacyMinimap !== null) {
+                    settings.minimap = legacyMinimap === "1" || legacyMinimap === "true";
+                }
+                window.localStorage.setItem(LAYER_STORAGE_KEY, JSON.stringify(settings));
             }
         } catch (error) {
             return settings;
@@ -2061,11 +2097,14 @@
 
         var fraction = Number(timeOfDay);
         if (!Number.isFinite(fraction)) {
+            currentTimeOfDay = null;
             elements.worldClock.textContent = "--:--";
+            updateDayNightTint();
             return;
         }
 
         fraction = ((fraction % 1) + 1) % 1;
+        currentTimeOfDay = fraction;
         var totalMinutes = Math.floor(fraction * 24 * 60);
         var hours = Math.floor(totalMinutes / 60);
         var minutes = totalMinutes % 60;
@@ -2076,6 +2115,27 @@
         elements.skyIndicator.classList.toggle("is-sun", isDaytime);
         elements.skyIndicator.classList.toggle("is-moon", !isDaytime);
         elements.skyIndicator.setAttribute("aria-label", isDaytime ? "Daytime" : "Nighttime");
+        updateDayNightTint();
+    }
+
+    function tintOpacityForTime(fraction) {
+        if (!Number.isFinite(fraction)) {
+            return 0;
+        }
+        if (Math.abs(fraction - 0.15) <= 0.04 || Math.abs(fraction - 0.85) <= 0.04) {
+            return 0.06;
+        }
+        return fraction < 0.15 || fraction >= 0.85 ? 0.12 : 0;
+    }
+
+    function updateDayNightTint() {
+        if (!tintOverlay) {
+            return;
+        }
+        tintOverlay.setStyle({
+            fillColor: "#0d1626",
+            fillOpacity: tintOpacityForTime(currentTimeOfDay)
+        });
     }
 
     function padTwo(value) {
@@ -2141,6 +2201,7 @@
 
     function reconcileMapMetrics(nextMetrics) {
         if (nextMetrics.maximumZoom === mapMetrics.maximumZoom &&
+            nextMetrics.overviewZoom === mapMetrics.baseZoom &&
             nextMetrics.textureSize === mapMetrics.textureSize &&
             nextMetrics.pixelSize === mapMetrics.pixelSize) {
             return;
@@ -2150,6 +2211,7 @@
         var zoom = Math.max(map.getMinZoom(), Math.min(nextMetrics.maximumZoom, map.getZoom()));
         mapMetrics.textureSize = nextMetrics.textureSize;
         mapMetrics.pixelSize = nextMetrics.pixelSize;
+        mapMetrics.baseZoom = nextMetrics.overviewZoom;
         mapMetrics.maximumZoom = nextMetrics.maximumZoom;
         mapMetrics.unitsPerPixel = nextMetrics.unitsPerPixel;
         map.setMaxZoom(nextMetrics.maximumZoom);
@@ -2179,6 +2241,7 @@
         var overviewZoom = nextMetrics.overviewZoom;
         var maximumZoom = nextMetrics.maximumZoom;
         mapMetrics = {
+            baseZoom: overviewZoom,
             textureSize: nextMetrics.textureSize,
             pixelSize: nextMetrics.pixelSize,
             maximumZoom: maximumZoom,
@@ -2193,12 +2256,17 @@
             maxBoundsViscosity: 0.72,
             maxZoom: maximumZoom,
             minZoom: 0,
-            zoomControl: true
+            zoomControl: true,
+            zoomDelta: 0.5,
+            zoomSnap: 0.25
         });
 
         map.createPane("fogPane");
         map.getPane("fogPane").style.zIndex = "350";
         map.getPane("fogPane").style.pointerEvents = "none";
+        map.createPane("tintPane");
+        map.getPane("tintPane").style.zIndex = "360";
+        map.getPane("tintPane").style.pointerEvents = "none";
         map.createPane("trailPane");
         map.getPane("trailPane").style.zIndex = "380";
         map.getPane("trailPane").style.pointerEvents = "none";
@@ -2221,6 +2289,15 @@
         });
 
         tileLayer.addTo(map);
+        tintOverlay = L.rectangle(worldBounds, {
+            className: "tint-overlay",
+            fill: true,
+            fillColor: "#0d1626",
+            fillOpacity: tintOpacityForTime(currentTimeOfDay),
+            interactive: false,
+            pane: "tintPane",
+            stroke: false
+        });
         initialiseDataLayers();
         bindMapPopupEvents();
         ensureFollowPill();
@@ -2229,14 +2306,17 @@
         createScaleBarControl();
         createMeasureControl();
         createFullscreenControl();
+        createSearchControl();
         createCoordinateControl();
         createMinimapControl();
+        applyDensityPreferences();
         applyInitialHashState(Math.max(0, overviewZoom - 1));
         map.on("dragstart", clearFollow);
         map.on("zoomend", renderPoiLayers);
         map.on("moveend zoomend", scheduleHashUpdate);
         syncLayerVisibility();
         updatePlayerMarkers(latestPlayers);
+        applyInitialPlayersView();
         applyPendingHashFollow();
         loadPoisForCurrentView();
         applyFogStatus();
@@ -2730,21 +2810,319 @@
         new FullscreenControl().addTo(map);
     }
 
-    function loadMinimapPreference() {
-        try {
-            var value = window.localStorage.getItem(MINIMAP_STORAGE_KEY);
-            return value === "1" || value === "true";
-        } catch (error) {
+    function mapSearchRegistry() {
+        var items = [];
+        latestPlayers.forEach(function (player) {
+            items.push({
+                glyph: "●",
+                kind: "Player",
+                layerKey: "players",
+                latLng: worldToLatLng(player.x, player.z),
+                name: player.displayName,
+                searchText: player.displayName,
+                x: player.x,
+                z: player.z,
+                markerResolver: function () {
+                    var record = markerRecords.get(player.key);
+                    return record ? record.marker : null;
+                }
+            });
+        });
+        latestPins.forEach(function (pin) {
+            items.push({
+                glyph: "⌖",
+                kind: "Pin",
+                layerKey: "pins",
+                latLng: pin.latLng || worldToLatLng(pin.x, pin.z),
+                name: pin.name,
+                searchText: pin.name + " " + pin.author,
+                x: pin.x,
+                z: pin.z,
+                markerResolver: function () {
+                    return findMarkerNearLayer(pinLayer, pin.latLng);
+                }
+            });
+        });
+        POI_GROUP_ORDER.forEach(function (group) {
+            (poiRecords.get(group) || []).forEach(function (record) {
+                items.push({
+                    glyph: POI_GROUPS[group].glyph,
+                    kind: POI_GROUPS[group].label,
+                    layerKey: group,
+                    latLng: record.latLng,
+                    name: record.title,
+                    searchText: record.title + " " + POI_GROUPS[group].label,
+                    x: record.x,
+                    z: record.z,
+                    markerResolver: function () {
+                        return findMarkerNearLayer(poiLayers.get(group), record.latLng);
+                    }
+                });
+            });
+        });
+        return items;
+    }
+
+    function rankMapSearchItem(item, queryText) {
+        var haystack = item.searchText.toLocaleLowerCase();
+        if (haystack.indexOf(queryText) === 0) {
+            return 0;
+        }
+        var words = haystack.split(/\s+/);
+        if (words.some(function (word) { return word.indexOf(queryText) === 0; })) {
+            return 1;
+        }
+        return haystack.indexOf(queryText) !== -1 ? 2 : -1;
+    }
+
+    function setMapSearchSelection(nextIndex) {
+        var buttons = searchResultsElement
+            ? Array.prototype.slice.call(searchResultsElement.querySelectorAll(".map-search-result"))
+            : [];
+        if (buttons.length === 0) {
+            searchResultIndex = -1;
+            return;
+        }
+        searchResultIndex = (nextIndex + buttons.length) % buttons.length;
+        buttons.forEach(function (button, index) {
+            var selected = index === searchResultIndex;
+            button.classList.toggle("is-selected", selected);
+            button.setAttribute("aria-selected", String(selected));
+        });
+        searchInput.setAttribute("aria-activedescendant", buttons[searchResultIndex].id);
+        buttons[searchResultIndex].scrollIntoView({ block: "nearest" });
+    }
+
+    function moveMapSearchSelection(direction) {
+        if (searchResultItems.length === 0) {
+            return;
+        }
+        var nextIndex = searchResultIndex < 0
+            ? (direction > 0 ? 0 : searchResultItems.length - 1)
+            : searchResultIndex + direction;
+        setMapSearchSelection(nextIndex);
+    }
+
+    function renderMapSearchResults() {
+        if (!searchInput || !searchResultsElement) {
+            return;
+        }
+        var queryText = searchInput.value.trim().toLocaleLowerCase();
+        searchResultsElement.textContent = "";
+        searchResultItems = [];
+        searchResultIndex = -1;
+        searchInput.removeAttribute("aria-activedescendant");
+        if (!queryText) {
+            searchResultsElement.hidden = true;
+            searchInput.setAttribute("aria-expanded", "false");
+            return;
+        }
+
+        searchResultItems = mapSearchRegistry().map(function (item) {
+            return { item: item, rank: rankMapSearchItem(item, queryText) };
+        }).filter(function (entry) {
+            return entry.rank >= 0;
+        }).sort(function (left, right) {
+            return left.rank - right.rank || left.item.name.localeCompare(right.item.name);
+        }).slice(0, 12).map(function (entry) {
+            return entry.item;
+        });
+
+        if (searchResultItems.length === 0) {
+            var empty = document.createElement("div");
+            empty.className = "map-search-empty";
+            empty.textContent = "No matching players, pins, or places";
+            searchResultsElement.appendChild(empty);
+        } else {
+            searchResultItems.forEach(function (item, index) {
+                var button = document.createElement("button");
+                var glyph = document.createElement("span");
+                var copy = document.createElement("span");
+                var name = document.createElement("strong");
+                var kind = document.createElement("small");
+                var coordinates = document.createElement("span");
+                button.type = "button";
+                button.className = "map-search-result";
+                button.id = "map-search-option-" + index;
+                button.setAttribute("role", "option");
+                button.setAttribute("aria-selected", "false");
+                glyph.className = "map-search-result-glyph";
+                glyph.textContent = item.glyph;
+                glyph.setAttribute("aria-hidden", "true");
+                copy.className = "map-search-result-copy";
+                name.textContent = item.name;
+                kind.textContent = item.kind;
+                coordinates.className = "map-search-result-coordinates";
+                coordinates.textContent = "X " + Math.round(item.x) + " · Z " + Math.round(item.z);
+                copy.appendChild(name);
+                copy.appendChild(kind);
+                button.appendChild(glyph);
+                button.appendChild(copy);
+                button.appendChild(coordinates);
+                button.addEventListener("click", function () {
+                    selectMapSearchResult(index);
+                });
+                searchResultsElement.appendChild(button);
+            });
+        }
+        searchResultsElement.hidden = false;
+        searchInput.setAttribute("aria-expanded", "true");
+    }
+
+    function setMapSearchOpen(isOpen, focusInput) {
+        if (!searchControlElement) {
+            return;
+        }
+        if (isOpen && measureModeEnabled &&
+            window.matchMedia("(max-width: 899px)").matches) {
+            clearMeasurement();
+        }
+        if (isOpen && layersSetCollapsed &&
+            window.matchMedia("(max-width: 899px)").matches) {
+            layersSetCollapsed(true);
+        }
+        if (isOpen && window.matchMedia("(max-width: 759px)").matches) {
+            elements.sidebarState.checked = false;
+        }
+        searchControlElement.classList.toggle("is-open", isOpen);
+        var toggle = searchControlElement.querySelector(".map-search-toggle");
+        toggle.setAttribute("aria-expanded", String(isOpen));
+        if (!isOpen) {
+            searchResultsElement.hidden = true;
+            searchInput.setAttribute("aria-expanded", "false");
+            searchInput.removeAttribute("aria-activedescendant");
+            searchResultIndex = -1;
+            return;
+        }
+        if (focusInput) {
+            searchInput.focus();
+            searchInput.select();
+        }
+        renderMapSearchResults();
+    }
+
+    function selectMapSearchResult(index) {
+        var item = searchResultItems[index];
+        if (!item) {
+            return;
+        }
+        if (!layerSettings[item.layerKey]) {
+            layerSettings[item.layerKey] = true;
+            saveLayerSettings();
+            renderLayerRows();
+            syncLayerVisibility();
+            if (Object.prototype.hasOwnProperty.call(ENTITY_GROUPS, item.layerKey)) {
+                updateEntityPolling(true);
+            }
+        }
+        setMapSearchOpen(false, false);
+        focusMapLocation(item.latLng, item.markerResolver);
+    }
+
+    function activeElementAcceptsTyping() {
+        var active = document.activeElement;
+        if (!active) {
             return false;
         }
+        return /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName) || active.isContentEditable;
+    }
+
+    function createSearchControl() {
+        var SearchControl = L.Control.extend({
+            options: { position: "topleft" },
+            onAdd: function () {
+                var container = L.DomUtil.create("section", "leaflet-control map-search-control");
+                var shell = L.DomUtil.create("div", "map-search-shell", container);
+                var toggle = L.DomUtil.create("button", "map-search-toggle", shell);
+                searchInput = L.DomUtil.create("input", "map-search-input", shell);
+                searchResultsElement = L.DomUtil.create("div", "map-search-results", container);
+                searchControlElement = container;
+
+                toggle.type = "button";
+                toggle.title = "Search map (/ or Ctrl+K)";
+                toggle.setAttribute("aria-label", toggle.title);
+                toggle.setAttribute("aria-expanded", "false");
+                toggle.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="M16 16l4 4"></path></svg>';
+                searchInput.type = "search";
+                searchInput.placeholder = "Search the world";
+                searchInput.autocomplete = "off";
+                searchInput.spellcheck = false;
+                searchInput.setAttribute("aria-label", "Search players, pins, and places");
+                searchInput.setAttribute("role", "combobox");
+                searchInput.setAttribute("aria-autocomplete", "list");
+                searchInput.setAttribute("aria-controls", "map-search-results");
+                searchInput.setAttribute("aria-expanded", "false");
+                searchResultsElement.id = "map-search-results";
+                searchResultsElement.className = "map-search-results";
+                searchResultsElement.setAttribute("role", "listbox");
+                searchResultsElement.hidden = true;
+
+                toggle.addEventListener("click", function () {
+                    setMapSearchOpen(!container.classList.contains("is-open"), true);
+                });
+                searchInput.addEventListener("input", renderMapSearchResults);
+                searchInput.addEventListener("keydown", function (event) {
+                    if (event.key === "ArrowDown" && searchResultItems.length > 0) {
+                        event.preventDefault();
+                        moveMapSearchSelection(1);
+                    } else if (event.key === "ArrowUp" && searchResultItems.length > 0) {
+                        event.preventDefault();
+                        moveMapSearchSelection(-1);
+                    } else if (event.key === "Enter" && searchResultIndex >= 0) {
+                        event.preventDefault();
+                        selectMapSearchResult(searchResultIndex);
+                    } else if (event.key === "Escape") {
+                        event.preventDefault();
+                        setMapSearchOpen(false, false);
+                        toggle.focus();
+                    }
+                });
+                container.addEventListener("focusout", function () {
+                    window.setTimeout(function () {
+                        if (!container.contains(document.activeElement)) {
+                            setMapSearchOpen(false, false);
+                        }
+                    }, 0);
+                });
+                L.DomEvent.disableClickPropagation(container);
+                L.DomEvent.disableScrollPropagation(container);
+                return container;
+            }
+        });
+
+        new SearchControl().addTo(map);
+        map.on("click", function () {
+            setMapSearchOpen(false, false);
+        });
+        document.addEventListener("keydown", function (event) {
+            if (activeTab !== "map" || event.altKey || event.metaKey) {
+                return;
+            }
+            var slashShortcut = event.key === "/" && !event.ctrlKey &&
+                !event.shiftKey && !activeElementAcceptsTyping();
+            var controlKShortcut = event.key.toLocaleLowerCase() === "k" && event.ctrlKey;
+            if (!slashShortcut && !controlKShortcut) {
+                return;
+            }
+            event.preventDefault();
+            setMapSearchOpen(true, true);
+        });
+    }
+
+    function loadMinimapPreference() {
+        return layerSettings.minimap === true;
     }
 
     function saveMinimapPreference(isOpen) {
-        try {
-            window.localStorage.setItem(MINIMAP_STORAGE_KEY, isOpen ? "1" : "0");
-        } catch (error) {
-            return;
+        layerSettings.minimap = isOpen;
+        saveLayerSettings();
+        if (layersRows) {
+            var checkbox = layersRows.querySelector('input[data-layer-key="minimap"]');
+            if (checkbox) {
+                checkbox.checked = isOpen;
+            }
         }
+        updateLayerCounts();
     }
 
     function clampUnit(value) {
@@ -2796,14 +3174,21 @@
                 function setOpen(nextOpen) {
                     isOpen = nextOpen;
                     container.classList.toggle("is-collapsed", !isOpen);
+                    elements.mapPane.classList.toggle("has-open-minimap", isOpen);
                     toggle.setAttribute("aria-expanded", String(isOpen));
                     toggle.title = isOpen ? "Hide minimap" : "Show minimap";
                     toggle.setAttribute("aria-label", toggle.title);
-                    saveMinimapPreference(isOpen);
                     if (isOpen) {
                         scheduleMinimapUpdate();
                     }
                 }
+
+                minimapSetOpen = function (nextOpen, persist) {
+                    setOpen(Boolean(nextOpen));
+                    if (persist !== false) {
+                        saveMinimapPreference(isOpen);
+                    }
+                };
 
                 image.src = authorizedUrl("/base.png");
                 image.alt = "World overview";
@@ -2811,7 +3196,7 @@
                 toggle.type = "button";
                 toggle.textContent = "◱";
                 toggle.addEventListener("click", function () {
-                    setOpen(!isOpen);
+                    minimapSetOpen(!isOpen, true);
                 });
                 frame.addEventListener("click", function (event) {
                     var rectangle = frame.getBoundingClientRect();
@@ -2829,7 +3214,7 @@
                     ), map.getZoom());
                 });
                 minimapElement = container;
-                setOpen(isOpen);
+                minimapSetOpen(isOpen, false);
                 L.DomEvent.disableClickPropagation(container);
                 L.DomEvent.disableScrollPropagation(container);
                 return container;
@@ -2845,7 +3230,8 @@
         var layerKeys = parameters.get("ly");
         if (layerKeys) {
             layerKeys.split(",").forEach(function (key) {
-                if (key !== "legendCollapsed" &&
+                if (key !== "legendCollapsed" && key !== "densityDots" &&
+                    typeof LAYER_DEFAULTS[key] === "boolean" &&
                     Object.prototype.hasOwnProperty.call(layerSettings, key)) {
                     layerSettings[key] = true;
                 }
@@ -2896,7 +3282,8 @@
         parameters.set("z", String(Math.round(center.z)));
         parameters.set("zm", String(Number(map.getZoom().toFixed(2))));
         var enabledNonDefaultLayers = Object.keys(layerSettings).filter(function (key) {
-            return key !== "legendCollapsed" && layerSettings[key] === true &&
+            return key !== "legendCollapsed" && key !== "densityDots" &&
+                layerSettings[key] === true &&
                 LAYER_DEFAULTS[key] === false;
         });
         if (enabledNonDefaultLayers.length > 0) {
@@ -2954,12 +3341,33 @@
                 layersRows = L.DomUtil.create("div", "layers-rows", container);
 
                 function setCollapsed(isCollapsed) {
+                    if (!isCollapsed && window.matchMedia("(max-width: 759px)").matches) {
+                        elements.sidebarState.checked = false;
+                    }
+                    if (!isCollapsed && searchControlElement &&
+                        window.matchMedia("(max-width: 899px)").matches) {
+                        setMapSearchOpen(false, false);
+                    }
+                    if (!isCollapsed && measureModeEnabled &&
+                        window.matchMedia("(max-width: 899px)").matches) {
+                        clearMeasurement();
+                    }
                     container.classList.toggle("is-collapsed", isCollapsed);
                     layersRows.hidden = isCollapsed;
                     toggle.setAttribute("aria-expanded", String(!isCollapsed));
                     chevron.textContent = isCollapsed ? "⌄" : "⌃";
+                    window.clearInterval(layersStalenessTimer);
+                    layersStalenessTimer = 0;
+                    if (!isCollapsed) {
+                        updateFeedStalenessDots();
+                        layersStalenessTimer = window.setInterval(
+                            updateFeedStalenessDots,
+                            5000
+                        );
+                    }
                 }
 
+                layersSetCollapsed = setCollapsed;
                 setCollapsed(initiallyCollapsed);
                 L.DomEvent.on(toggle, "click", function () {
                     setCollapsed(!container.classList.contains("is-collapsed"));
@@ -2981,43 +3389,161 @@
 
         layersRows.textContent = "";
         legendContent = null;
-        appendLayerRow("players", "Players", "●", "players");
-        appendLayerRow("pins", "Pins", "⌖", "pins");
-        appendLayerRow("trails", "Trails", "〰", "trails");
+        renderJumpChips();
 
-        POI_GROUP_ORDER.forEach(function (group) {
-            if (availablePoiGroups.has(group)) {
-                appendLayerRow(group, POI_GROUPS[group].label, POI_GROUPS[group].glyph, group);
-            }
-        });
-
-        if (fogAvailable) {
-            appendLayerRow("fog", "Fog", "≈", "fog");
-        }
-
-        if (entityLayersAreAvailable()) {
+        var liveFeeds = currentView === "admin" ? ["players", "entities"] : ["players"];
+        var liveBody = appendLayerSection("live", "Live", liveFeeds);
+        appendLayerRow(liveBody, "players", "Players", "●", "players");
+        appendLayerRow(liveBody, "trails", "Trails", "〰", "trails");
+        if (currentView === "admin" && entityAvailability !== "unavailable") {
             ENTITY_GROUP_ORDER.forEach(function (group) {
                 appendLayerRow(
+                    liveBody,
                     group,
                     ENTITY_GROUPS[group].label,
                     ENTITY_GROUPS[group].glyph,
                     group
                 );
             });
+            if (entityAvailability === "unknown") {
+                appendLayerStatus(liveBody, "Entity data: no data yet");
+            }
+        } else if (currentView === "admin") {
+            appendLayerStatus(liveBody, "Entity data unavailable");
+        }
+        if (currentRaidEvent) {
+            appendDisplayLayerRow(liveBody, "Raid area", "◯", "raid", "1");
         }
 
+        var placesBody = appendLayerSection("places", "Places", ["pins", "pois"]);
+        appendLayerRow(placesBody, "pins", "Pins", "⌖", "pins");
+        POI_GROUP_ORDER.forEach(function (group) {
+            if (availablePoiGroups.has(group)) {
+                appendLayerRow(
+                    placesBody,
+                    group,
+                    POI_GROUPS[group].label,
+                    POI_GROUPS[group].glyph,
+                    group
+                );
+            }
+        });
+        if (feedLastUpdated.pins === 0) {
+            appendLayerStatus(placesBody, "Pins: no save yet");
+        }
+        if (feedLastUpdated.pois === 0 || poiLoadPending) {
+            appendLayerStatus(placesBody, "POIs: no data yet");
+        }
+
+        var overlaysBody = appendLayerSection("overlays", "Overlays", ["fog"]);
+        if (fogAvailable) {
+            appendLayerRow(overlaysBody, "fog", "Fog", "≈", "fog", { counted: false });
+        }
+        appendLayerRow(
+            overlaysBody,
+            "tint",
+            "Day/night tint",
+            "◐",
+            "tint",
+            { counted: false }
+        );
+        appendLayerRow(
+            overlaysBody,
+            "minimap",
+            "Minimap",
+            "◱",
+            "minimap",
+            { counted: false }
+        );
+
+        appendLayerPreferences();
         appendLegendBlock();
+        updateLayerCounts();
+        updateFeedStalenessDots();
     }
 
-    function appendLayerRow(key, labelText, glyph, swatchClass) {
+    function appendLayerSection(key, labelText, feeds) {
+        var section = document.createElement("section");
+        var header = document.createElement("header");
+        var identity = document.createElement("div");
+        var name = document.createElement("span");
+        var dots = document.createElement("span");
+        var actions = document.createElement("div");
+        var count = document.createElement("span");
+        var allButton = document.createElement("button");
+        var noneButton = document.createElement("button");
+        var body = document.createElement("div");
+
+        section.className = "layer-section";
+        section.dataset.layerSection = key;
+        header.className = "layer-section-header";
+        identity.className = "layer-section-identity";
+        name.className = "layer-section-name";
+        name.textContent = labelText;
+        dots.className = "layer-feed-dots";
+        feeds.forEach(function (feed) {
+            var dot = document.createElement("span");
+            dot.className = "feed-staleness-dot is-grey";
+            dot.dataset.feed = feed;
+            dot.setAttribute("aria-label", feed + " not loaded");
+            dots.appendChild(dot);
+        });
+        actions.className = "layer-section-actions";
+        count.className = "layer-section-count";
+        count.dataset.sectionCount = key;
+        allButton.type = "button";
+        allButton.className = "layer-section-mini";
+        allButton.textContent = "all";
+        allButton.setAttribute("aria-label", "Show all " + labelText.toLowerCase() + " layers");
+        allButton.addEventListener("click", function () {
+            setSectionLayers(section, true);
+        });
+        noneButton.type = "button";
+        noneButton.className = "layer-section-mini";
+        noneButton.textContent = "none";
+        noneButton.setAttribute("aria-label", "Hide all " + labelText.toLowerCase() + " layers");
+        noneButton.addEventListener("click", function () {
+            setSectionLayers(section, false);
+        });
+        body.className = "layer-section-body";
+
+        identity.appendChild(name);
+        identity.appendChild(dots);
+        actions.appendChild(count);
+        actions.appendChild(allButton);
+        actions.appendChild(noneButton);
+        header.appendChild(identity);
+        header.appendChild(actions);
+        section.appendChild(header);
+        section.appendChild(body);
+        layersRows.appendChild(section);
+        return body;
+    }
+
+    function setSectionLayers(section, isEnabled) {
+        section.querySelectorAll("input[data-layer-key]").forEach(function (checkbox) {
+            checkbox.checked = isEnabled;
+            layerSettings[checkbox.dataset.layerKey] = isEnabled;
+        });
+        saveLayerSettings();
+        syncLayerVisibility();
+        scheduleHashUpdate();
+        updateEntityPolling(true);
+        updateLayerCounts();
+    }
+
+    function appendLayerRow(parent, key, labelText, glyph, swatchClass, options) {
+        options = options || {};
         var label = document.createElement("label");
         var checkbox = document.createElement("input");
         var swatch = document.createElement("span");
         var text = document.createElement("span");
+        var count = document.createElement("span");
 
         label.className = "layer-row";
         checkbox.type = "checkbox";
         checkbox.checked = layerSettings[key];
+        checkbox.dataset.layerKey = key;
         checkbox.setAttribute("aria-label", "Show " + labelText);
         checkbox.addEventListener("change", function () {
             layerSettings[key] = checkbox.checked;
@@ -3027,6 +3553,7 @@
             if (Object.prototype.hasOwnProperty.call(ENTITY_GROUPS, key)) {
                 updateEntityPolling(true);
             }
+            updateLayerCounts();
         });
 
         swatch.className = "layer-swatch layer-swatch-" + swatchClass;
@@ -3034,11 +3561,348 @@
         swatch.setAttribute("aria-hidden", "true");
         text.className = "layer-label";
         text.textContent = labelText;
+        count.className = "layer-count";
+        if (options.counted !== false) {
+            count.dataset.layerCount = key;
+        }
 
         label.appendChild(checkbox);
         label.appendChild(swatch);
         label.appendChild(text);
-        layersRows.appendChild(label);
+        label.appendChild(count);
+        parent.appendChild(label);
+    }
+
+    function appendDisplayLayerRow(parent, labelText, glyph, swatchClass, countText) {
+        var row = document.createElement("div");
+        var spacer = document.createElement("span");
+        var swatch = document.createElement("span");
+        var text = document.createElement("span");
+        var count = document.createElement("span");
+        row.className = "layer-row is-display-only";
+        spacer.setAttribute("aria-hidden", "true");
+        swatch.className = "layer-swatch layer-swatch-" + swatchClass;
+        swatch.textContent = glyph;
+        swatch.setAttribute("aria-hidden", "true");
+        text.className = "layer-label";
+        text.textContent = labelText;
+        count.className = "layer-count";
+        count.textContent = countText;
+        row.appendChild(spacer);
+        row.appendChild(swatch);
+        row.appendChild(text);
+        row.appendChild(count);
+        parent.appendChild(row);
+    }
+
+    function appendLayerStatus(parent, message) {
+        var status = document.createElement("div");
+        status.className = "layer-section-status";
+        status.textContent = message;
+        parent.appendChild(status);
+    }
+
+    function layerCountValue(key) {
+        if (key === "players") {
+            return latestPlayers.length;
+        }
+        if (key === "pins") {
+            return latestPins.length;
+        }
+        if (key === "trails") {
+            return latestPlayers.length;
+        }
+        if (Object.prototype.hasOwnProperty.call(POI_GROUPS, key)) {
+            return (poiRecords.get(key) || []).length;
+        }
+        if (Object.prototype.hasOwnProperty.call(ENTITY_GROUPS, key)) {
+            return latestEntities.filter(function (entity) {
+                return entity.group === key;
+            }).length;
+        }
+        return "";
+    }
+
+    function updateLayerCounts() {
+        if (!layersRows) {
+            return;
+        }
+        layersRows.querySelectorAll("[data-layer-count]").forEach(function (badge) {
+            badge.textContent = String(layerCountValue(badge.dataset.layerCount));
+        });
+        layersRows.querySelectorAll(".layer-section").forEach(function (section) {
+            var inputs = Array.prototype.slice.call(
+                section.querySelectorAll("input[data-layer-key]")
+            );
+            var enabled = inputs.filter(function (input) {
+                return input.checked;
+            }).length;
+            var count = section.querySelector("[data-section-count]");
+            if (count) {
+                count.textContent = enabled + "/" + inputs.length;
+            }
+        });
+    }
+
+    function feedAgeText(updatedAt) {
+        if (!updatedAt) {
+            return "not loaded";
+        }
+        var seconds = Math.max(0, Math.floor((Date.now() - updatedAt) / 1000));
+        return "updated " + seconds + "s ago";
+    }
+
+    function feedStaleness(feed) {
+        if (feed === "fog") {
+            if (!fogAvailable || !layerSettings.fog) {
+                return { state: "grey", title: "fog off" };
+            }
+            if (fogOverlay && fogDisplayedRevision !== null && map && map.hasLayer(fogOverlay)) {
+                return { state: "green", title: feedAgeText(feedLastUpdated.fog) };
+            }
+            return { state: "amber", title: "fog loading" };
+        }
+
+        var updatedAt = feedLastUpdated[feed] || 0;
+        if (!updatedAt) {
+            return { state: "grey", title: "not loaded" };
+        }
+        if (feed === "pois") {
+            return { state: "green", title: feedAgeText(updatedAt) };
+        }
+        var expected = {
+            entities: ENTITIES_POLL_INTERVAL_MS,
+            pins: PINS_POLL_INTERVAL_MS,
+            players: POLL_INTERVAL_MS
+        }[feed];
+        var age = Date.now() - updatedAt;
+        return {
+            state: age < expected * 2 ? "green" : age < expected * 5 ? "amber" : "red",
+            title: feedAgeText(updatedAt)
+        };
+    }
+
+    function updateFeedStalenessDots() {
+        if (!layersRows) {
+            return;
+        }
+        layersRows.querySelectorAll(".feed-staleness-dot").forEach(function (dot) {
+            var result = feedStaleness(dot.dataset.feed);
+            dot.className = "feed-staleness-dot is-" + result.state;
+            dot.title = result.title;
+            dot.setAttribute("aria-label", dot.dataset.feed + " " + result.title);
+        });
+    }
+
+    function appendLayerPreferences() {
+        var container = document.createElement("section");
+        var dotsLabel = document.createElement("label");
+        var dotsText = document.createElement("span");
+        var dotsToggle = document.createElement("input");
+        var sizeLabel = document.createElement("label");
+        var sizeText = document.createElement("span");
+        var sizeSelect = document.createElement("select");
+
+        container.className = "layer-preferences";
+        dotsLabel.className = "layer-preference-row";
+        dotsText.textContent = "Dots mode";
+        dotsToggle.type = "checkbox";
+        dotsToggle.checked = layerSettings.densityDots;
+        dotsToggle.addEventListener("change", function () {
+            layerSettings.densityDots = dotsToggle.checked;
+            saveLayerSettings();
+            applyDensityPreferences();
+        });
+        dotsLabel.appendChild(dotsText);
+        dotsLabel.appendChild(dotsToggle);
+
+        sizeLabel.className = "layer-preference-row";
+        sizeText.textContent = "Icon size";
+        sizeSelect.setAttribute("aria-label", "Map icon size");
+        [["s", "S"], ["m", "M"], ["l", "L"]].forEach(function (choice) {
+            var option = document.createElement("option");
+            option.value = choice[0];
+            option.textContent = choice[1];
+            sizeSelect.appendChild(option);
+        });
+        sizeSelect.value = layerSettings.iconSize;
+        sizeSelect.addEventListener("change", function () {
+            layerSettings.iconSize = sizeSelect.value;
+            saveLayerSettings();
+            applyDensityPreferences();
+        });
+        sizeLabel.appendChild(sizeText);
+        sizeLabel.appendChild(sizeSelect);
+        container.appendChild(dotsLabel);
+        container.appendChild(sizeLabel);
+        layersRows.appendChild(container);
+    }
+
+    function applyDensityPreferences() {
+        if (!elements.mapPane) {
+            return;
+        }
+        var scales = { s: "0.85", m: "1", l: "1.2" };
+        elements.mapPane.classList.toggle("is-density-dots", layerSettings.densityDots);
+        elements.mapPane.style.setProperty(
+            "--marker-scale",
+            scales[layerSettings.iconSize] || scales.m
+        );
+    }
+
+    function findMarkerNearLayer(layer, latLng) {
+        var match = null;
+        if (!layer || !latLng) {
+            return null;
+        }
+        layer.eachLayer(function (candidate) {
+            if (match || typeof candidate.getLatLng !== "function") {
+                return;
+            }
+            var candidateLatLng = candidate.getLatLng();
+            if (Math.abs(candidateLatLng.lat - latLng.lat) < 0.000001 &&
+                Math.abs(candidateLatLng.lng - latLng.lng) < 0.000001) {
+                match = candidate;
+            }
+        });
+        return match;
+    }
+
+    function focusMapLocation(latLng, markerResolver) {
+        if (!map || !latLng) {
+            return;
+        }
+        clearFollow();
+        var targetZoom = Math.min(map.getMaxZoom(), Math.max(map.getZoom(), 4));
+        var popupOpened = false;
+        function openPopup() {
+            if (popupOpened || typeof markerResolver !== "function") {
+                return;
+            }
+            var marker = markerResolver();
+            if (marker && marker._map && typeof marker.openPopup === "function") {
+                popupOpened = true;
+                marker.openPopup();
+            }
+        }
+        map.once("moveend", function () {
+            window.setTimeout(openPopup, 0);
+        });
+        map.flyTo(latLng, targetZoom, { duration: 0.45 });
+        window.setTimeout(openPopup, 700);
+    }
+
+    function jumpToPoiRecord(record) {
+        var shouldOpen = layerSettings[record.group] === true;
+        focusMapLocation(record.latLng, shouldOpen ? function () {
+            return findMarkerNearLayer(poiLayers.get(record.group), record.latLng);
+        } : null);
+    }
+
+    function renderJumpChips() {
+        var spawn = (poiRecords.get("spawn") || [])[0];
+        var trader = (poiRecords.get("trader") || [])[0];
+        var bosses = poiRecords.get("boss") || [];
+        if (!spawn && !trader && bosses.length === 0) {
+            return;
+        }
+
+        var strip = document.createElement("nav");
+        strip.className = "layer-jump-chips";
+        strip.setAttribute("aria-label", "Jump to map location");
+
+        function appendDirectChip(labelText, record) {
+            if (!record) {
+                return;
+            }
+            var button = document.createElement("button");
+            button.type = "button";
+            button.className = "layer-jump-chip";
+            button.textContent = labelText;
+            button.addEventListener("click", function () {
+                jumpToPoiRecord(record);
+            });
+            strip.appendChild(button);
+        }
+
+        appendDirectChip("Spawn", spawn);
+        appendDirectChip("Trader", trader);
+        if (bosses.length > 0) {
+            var dropdown = document.createElement("div");
+            var toggle = document.createElement("button");
+            var menu = document.createElement("ul");
+            var menuButtons = [];
+            dropdown.className = "layer-jump-dropdown";
+            toggle.type = "button";
+            toggle.className = "layer-jump-chip";
+            toggle.textContent = "Bosses ▾";
+            toggle.setAttribute("aria-haspopup", "menu");
+            toggle.setAttribute("aria-expanded", "false");
+            menu.className = "layer-jump-menu";
+            menu.setAttribute("role", "menu");
+            menu.hidden = true;
+
+            function setOpen(isOpen, focusFirst) {
+                menu.hidden = !isOpen;
+                toggle.setAttribute("aria-expanded", String(isOpen));
+                dropdown.classList.toggle("is-open", isOpen);
+                if (isOpen && focusFirst && menuButtons.length > 0) {
+                    menuButtons[0].focus();
+                }
+            }
+
+            bosses.forEach(function (record) {
+                var item = document.createElement("li");
+                var button = document.createElement("button");
+                item.setAttribute("role", "none");
+                button.type = "button";
+                button.setAttribute("role", "menuitem");
+                button.textContent = record.title;
+                button.addEventListener("click", function () {
+                    setOpen(false, false);
+                    jumpToPoiRecord(record);
+                });
+                item.appendChild(button);
+                menu.appendChild(item);
+                menuButtons.push(button);
+            });
+            toggle.addEventListener("click", function () {
+                setOpen(menu.hidden, false);
+            });
+            toggle.addEventListener("keydown", function (event) {
+                if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    setOpen(true, true);
+                } else if (event.key === "Escape") {
+                    setOpen(false, false);
+                }
+            });
+            menu.addEventListener("keydown", function (event) {
+                var index = menuButtons.indexOf(document.activeElement);
+                if (event.key === "Escape") {
+                    event.preventDefault();
+                    setOpen(false, false);
+                    toggle.focus();
+                } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                    event.preventDefault();
+                    var direction = event.key === "ArrowDown" ? 1 : -1;
+                    var next = (index + direction + menuButtons.length) % menuButtons.length;
+                    menuButtons[next].focus();
+                }
+            });
+            dropdown.addEventListener("focusout", function () {
+                window.setTimeout(function () {
+                    if (!dropdown.contains(document.activeElement)) {
+                        setOpen(false, false);
+                    }
+                }, 0);
+            });
+            dropdown.appendChild(toggle);
+            dropdown.appendChild(menu);
+            strip.appendChild(dropdown);
+        }
+
+        layersRows.appendChild(strip);
     }
 
     function appendLegendBlock() {
@@ -3160,14 +4024,19 @@
             );
         });
         setLayerVisible(fogOverlay, fogAvailable && layerSettings.fog);
+        setLayerVisible(tintOverlay, layerSettings.tint);
         ENTITY_GROUP_ORDER.forEach(function (group) {
             setLayerVisible(
                 entityLayers.get(group),
                 entityLayersAreAvailable() && layerSettings[group]
             );
         });
+        if (minimapSetOpen) {
+            minimapSetOpen(layerSettings.minimap, false);
+        }
         renderTrails();
         renderLegend();
+        updateFeedStalenessDots();
     }
 
     function normalizePlayers(payload) {
@@ -3300,6 +4169,34 @@
             renderPlayerList(latestPlayers);
             scheduleHashUpdate();
         }
+    }
+
+    function applyInitialPlayersView() {
+        if (firstPlayersViewApplied || !map || !mapMetrics || latestPlayers.length === 0) {
+            return;
+        }
+
+        firstPlayersViewApplied = true;
+        if (hashViewApplied) {
+            return;
+        }
+
+        var positions = latestPlayers.map(function (player) {
+            return worldToLatLng(player.x, player.z);
+        });
+        if (positions.length === 1) {
+            map.setView(
+                positions[0],
+                Math.min(map.getMaxZoom(), mapMetrics.baseZoom + 1),
+                { animate: false }
+            );
+            return;
+        }
+
+        map.fitBounds(L.latLngBounds(positions).pad(0.3), {
+            animate: false,
+            maxZoom: map.getMaxZoom()
+        });
     }
 
     function animateMarker(record, target) {
@@ -3729,6 +4626,7 @@
         bindMapPopup(marker, function () {
             return buildPoiPopup(record);
         }, { kind: "poi" });
+        record.marker = marker;
         return marker;
     }
 
@@ -3767,6 +4665,9 @@
             var layer = poiLayers.get(group);
             var records = poiRecords.get(group) || [];
             layer.clearLayers();
+            records.forEach(function (record) {
+                record.marker = null;
+            });
             if (!useClusters) {
                 records.forEach(function (record) {
                     createPoiMarker(record).addTo(layer);
@@ -3800,6 +4701,7 @@
         lastPoiRequestedView = currentView;
         var requestView = currentView;
         var requestSequence = ++poiRequestSequence;
+        poiLoadPending = true;
         clearPoiLayers();
 
         try {
@@ -3828,13 +4730,16 @@
             });
 
             feedLastUpdated.pois = Date.now();
+            poiLoadPending = false;
             setFeedState("pois", true);
             renderPoiLayers();
             renderLayerRows();
             syncLayerVisibility();
         } catch (error) {
             if (requestSequence === poiRequestSequence && requestView === currentView) {
+                poiLoadPending = false;
                 setFeedState("pois", false);
+                renderLayerRows();
             }
         }
     }
@@ -4060,6 +4965,7 @@
             var entities = normalizeEntityPayload(payload);
             recordEntityTrails(entities);
             latestEntities = entities;
+            updateLayerCounts();
             var nextRevision = payload && payload.revision != null
                 ? String(payload.revision)
                 : "";
@@ -4110,6 +5016,7 @@
     }
 
     function applyRaidEvent(value) {
+        var hadRaid = Boolean(currentRaidEvent);
         currentRaidEvent = normalizeRaidEvent(value);
         elements.raidBadge.hidden = !currentRaidEvent;
         elements.raidBadge.textContent = currentRaidEvent ? "Raid: " + currentRaidEvent.name : "";
@@ -4119,7 +5026,11 @@
                 map.removeLayer(raidCircle);
             }
             raidCircle = null;
+            if (hadRaid) {
+                renderLayerRows();
+            }
             renderLegend();
+            updateLayerCounts();
             return;
         }
 
@@ -4143,7 +5054,11 @@
             raidCircle.setLatLng(center);
             raidCircle.setRadius(radius);
         }
+        if (!hadRaid) {
+            renderLayerRows();
+        }
         renderLegend();
+        updateLayerCounts();
     }
 
     function createPinTooltip(pin) {
@@ -4178,6 +5093,8 @@
         try {
             var payload = await fetchJson("/api/pins");
             var pins = payload && Array.isArray(payload.pins) ? payload.pins : [];
+            var nextPins = [];
+            var pinsWereLoaded = feedLastUpdated.pins > 0;
             pinLayer.clearLayers();
             pins.forEach(function (pin) {
                 if (!pin || !Number.isFinite(Number(pin.x)) || !Number.isFinite(Number(pin.z))) {
@@ -4213,9 +5130,18 @@
                     return buildPinPopup(pinRecord);
                 }, { kind: "pin" });
                 marker.addTo(pinLayer);
+                pinRecord.latLng = marker.getLatLng();
+                pinRecord.marker = marker;
+                nextPins.push(pinRecord);
             });
+            latestPins = nextPins;
             feedLastUpdated.pins = Date.now();
             setFeedState("pins", true);
+            if (pinsWereLoaded) {
+                updateLayerCounts();
+            } else {
+                renderLayerRows();
+            }
         } catch (error) {
             setFeedState("pins", false);
         }
@@ -4349,6 +5275,7 @@
                 });
                 fogDisplayedRevision = revision;
                 fogRequestedRevision = revision;
+                feedLastUpdated.fog = Date.now();
                 syncLayerVisibility();
                 hideFogCover();
             };
@@ -4378,6 +5305,7 @@
             fogOverlay.setUrl(url);
             fogDisplayedRevision = revision;
             fogRequestedRevision = revision;
+            feedLastUpdated.fog = Date.now();
             syncLayerVisibility();
         };
         image.onerror = function () {
@@ -4426,6 +5354,8 @@
         renderPlayerList(latestPlayers);
         renderConsolePlayers();
         updatePlayerMarkers(latestPlayers);
+        applyInitialPlayersView();
+        updateLayerCounts();
         applyPendingHashFollow();
         if (previousPlayerNames !== currentPlayerNames &&
             document.activeElement === elements.commandInput &&
@@ -4558,6 +5488,16 @@
 
     bindConsoleEvents();
     bindPopupDocumentEvents();
+    elements.sidebarState.addEventListener("change", function () {
+        if (!elements.sidebarState.checked ||
+            !window.matchMedia("(max-width: 759px)").matches) {
+            return;
+        }
+        if (layersSetCollapsed) {
+            layersSetCollapsed(true);
+        }
+        setMapSearchOpen(false, false);
+    });
     renderPlayerCount(latestPlayerCount);
     renderConsolePlayers();
     startPolling(pollStatus, POLL_INTERVAL_MS);
@@ -4567,6 +5507,7 @@
         window.clearTimeout(eventSourceRetryTimer);
         window.clearTimeout(hashUpdateTimer);
         window.clearInterval(popupRefreshTimer);
+        window.clearInterval(layersStalenessTimer);
         window.cancelAnimationFrame(minimapFrame);
         if (eventSource) {
             eventSource.close();
