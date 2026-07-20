@@ -35,6 +35,7 @@ internal sealed class LiveMapHttpServer
     private readonly Func<EntityMapSnapshot> _getEntitySnapshot;
     private readonly Action _noteEntitiesRequested;
     private readonly Func<string> _getFogMode;
+    private readonly Func<float> _getEffectiveUpdateSeconds;
     private readonly FogTracker _fogTracker;
     private readonly WorldMapRenderer _renderer;
     private readonly LiveMapConfig _config;
@@ -63,6 +64,7 @@ internal sealed class LiveMapHttpServer
         Func<EntityMapSnapshot> getEntitySnapshot,
         Action noteEntitiesRequested,
         Func<string> getFogMode,
+        Func<float> getEffectiveUpdateSeconds,
         FogTracker fogTracker,
         WorldMapRenderer renderer,
         LiveMapConfig config,
@@ -82,6 +84,7 @@ internal sealed class LiveMapHttpServer
         _getEntitySnapshot = getEntitySnapshot;
         _noteEntitiesRequested = noteEntitiesRequested;
         _getFogMode = getFogMode;
+        _getEffectiveUpdateSeconds = getEffectiveUpdateSeconds;
         _fogTracker = fogTracker;
         _renderer = renderer;
         _config = config;
@@ -569,7 +572,7 @@ internal sealed class LiveMapHttpServer
             ? 0
             : Math.Max(0L, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - snapshot.UnixMs);
         bool snapshotStale = snapshot.UnixMs != 0 &&
-                             snapshotAgeMs > Math.Max(0.25f, _config.PlayerUpdateSeconds) * 3000.0;
+                             snapshotAgeMs > Math.Max(0.25f, _getEffectiveUpdateSeconds()) * 3000.0;
         var json = new StringBuilder(416);
         json.Append('{');
         json.Append("\"serverName\":").Append(JsonWriter.Quote(snapshot.ServerName));
@@ -995,7 +998,7 @@ internal sealed class LiveMapHttpServer
             ? 0
             : Math.Max(0L, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - snapshot.UnixMs);
         bool snapshotStale = snapshot.UnixMs != 0 &&
-                             snapshotAgeMs > Math.Max(0.25f, _config.PlayerUpdateSeconds) * 3000.0;
+                             snapshotAgeMs > Math.Max(0.25f, _getEffectiveUpdateSeconds()) * 3000.0;
         var json = new StringBuilder(128 + (snapshot.Players.Length * 96));
         json.Append("{\"players\":[");
         bool needsComma = false;

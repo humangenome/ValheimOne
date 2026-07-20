@@ -14,6 +14,7 @@ internal sealed class ConsoleBridge
 {
     private const int JobTimeoutMilliseconds = 10000;
     private const float StatsRefreshSeconds = 2f;
+    private const float IdleStatsRefreshSeconds = 30f;
     private const float CommandsRefreshSeconds = 60f;
     private const int MaximumCommandOutputLines = 50;
     private const string TimeoutError = "timed out waiting for main thread";
@@ -33,6 +34,7 @@ internal sealed class ConsoleBridge
     private double _frameTotalSeconds;
     private float _frameMaxSeconds;
     private int _frameSamples;
+    private bool _idle;
     private int _stopped;
 
     public ConsoleBridge(LogRingBuffer ringBuffer, ModLogger log)
@@ -105,10 +107,23 @@ internal sealed class ConsoleBridge
             DrainJobs();
 
             float now = Time.realtimeSinceStartup;
-            if (now >= _nextStatsRefresh)
+            ZNet? network = ZNet.instance;
+            bool idle = (network?.GetPeers()?.Count ?? 0) == 0;
+            bool idleChanged = idle != _idle;
+            if (idleChanged)
             {
-                _nextStatsRefresh = now + StatsRefreshSeconds;
                 RefreshStats(now);
+                _idle = idle;
+                _nextStatsRefresh = now + (idle
+                    ? IdleStatsRefreshSeconds
+                    : StatsRefreshSeconds);
+            }
+            else if (now >= _nextStatsRefresh)
+            {
+                RefreshStats(now);
+                _nextStatsRefresh = now + (_idle
+                    ? IdleStatsRefreshSeconds
+                    : StatsRefreshSeconds);
             }
 
             if (now >= _nextCommandsRefresh)

@@ -10,6 +10,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Changed
 
+- With no players online, the server now idles its periodic work: player/status snapshots, A2S query info, and stats refresh every ~30 seconds instead of every couple of seconds, and fog processing goes dormant; full cadence returns the moment someone joins, while API staleness reporting accounts for the slower idle cadence.
 - LiveMap entity-layer ZDO scanning is now spread across frames with one incremental query per frame, refreshes at most every ~30 seconds, and only runs while the entity layer is being viewed (an entities request in the last 2 minutes); the active raid event still updates every few seconds.
 - Periodic fog-of-war cache writes now run off the main thread to avoid simulation hitches from disk I/O, and fog snapshot revisions are batched to no more than one update every ~10 seconds during normal operation, reducing viewer refresh work on busy servers.
 - LiveMap's web dashboard now wears a Valheim-lore visual reskin: a warm dark-oak, parchment, and gold palette replaces the old grey theme, with candlelit texture and vignette, a Vegvisir rune-compass brand mark beside the VALHEIMONE wordmark, lore-minded labels such as World Chart, Longhouse Console, and “No vikings ashore,” an ember-toned raid banner, and gold-glow map markers.

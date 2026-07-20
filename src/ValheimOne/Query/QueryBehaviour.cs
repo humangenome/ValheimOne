@@ -11,6 +11,7 @@ internal sealed class QueryBehaviour : MonoBehaviour
 {
     private const int DefaultGamePort = 2456;
     private const float SnapshotIntervalSeconds = 2f;
+    private const float IdleSnapshotIntervalSeconds = 30f;
     private const float BindRetrySeconds = 30f;
 
     private QueryConfig? _config;
@@ -31,6 +32,7 @@ internal sealed class QueryBehaviour : MonoBehaviour
     private bool _passworded;
     private bool _versionDetected;
     private bool _sessionActive;
+    private bool _idle;
     private bool _stopped;
 
     public static QueryBehaviour? Instance { get; private set; }
@@ -85,10 +87,22 @@ internal sealed class QueryBehaviour : MonoBehaviour
         }
 
         float now = Time.realtimeSinceStartup;
-        if (now >= _nextSnapshotRefresh)
+        bool idle = QueryGameAccess.GetPeers(network).Count == 0;
+        bool idleChanged = idle != _idle;
+        if (idleChanged)
         {
             RefreshSnapshot(network, world, config);
-            _nextSnapshotRefresh = now + SnapshotIntervalSeconds;
+            _idle = idle;
+            _nextSnapshotRefresh = now + (idle
+                ? IdleSnapshotIntervalSeconds
+                : SnapshotIntervalSeconds);
+        }
+        else if (now >= _nextSnapshotRefresh)
+        {
+            RefreshSnapshot(network, world, config);
+            _nextSnapshotRefresh = now + (_idle
+                ? IdleSnapshotIntervalSeconds
+                : SnapshotIntervalSeconds);
         }
 
         int queryPort = GetEffectiveQueryPort(config, log);
@@ -115,6 +129,7 @@ internal sealed class QueryBehaviour : MonoBehaviour
         _startTimeUtc = DateTime.UtcNow;
         _nextSnapshotRefresh = 0f;
         _nextStartAttempt = 0f;
+        _idle = QueryGameAccess.GetPeers(network).Count == 0;
         _sessionActive = true;
 
         if (!_versionDetected)
@@ -325,6 +340,7 @@ internal sealed class QueryBehaviour : MonoBehaviour
         StopResponder();
         _snapshot = QuerySnapshot.Empty;
         _sessionNetwork = null;
+        _idle = false;
         _sessionActive = false;
     }
 

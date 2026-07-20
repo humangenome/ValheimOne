@@ -7,6 +7,9 @@ namespace ValheimOne.LiveMap;
 
 internal sealed class LiveMapBehaviour : MonoBehaviour
 {
+    private const float IdleUpdateSeconds = 30f;
+    private const float FogUpdateSeconds = 2f;
+
     private LiveMapConfig? _config;
     private ModLogger? _log;
     private Func<bool>? _enabledCheck;
@@ -26,6 +29,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private bool _poiCatalogBuilt;
     private bool _started;
     private bool _stopped;
+    private volatile bool _idle;
 
     public static LiveMapBehaviour? Instance { get; private set; }
 
@@ -74,18 +78,34 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _consoleBridge?.Pump();
 
         float now = Time.realtimeSinceStartup;
-        _mapTableReader?.Tick(now, _fogMode == "explored");
-        _entityTracker?.Tick(now);
-        if (now >= _nextPlayerUpdate)
+        ZNet? network = ZNet.instance;
+        bool idle = network == null || GameAccess.GetPeers(network).Count == 0;
+        bool idleChanged = idle != _idle;
+        if (idleChanged)
         {
             RefreshSnapshot();
-            _nextPlayerUpdate = now + Math.Max(0.25f, _config.PlayerUpdateSeconds);
+            _idle = idle;
+            _nextPlayerUpdate = now + GetEffectivePlayerUpdateSeconds();
+            if (!idle)
+            {
+                _fogTracker?.Tick(_snapshot.Players);
+            }
+
+            _nextFogUpdate = now + (idle ? IdleUpdateSeconds : FogUpdateSeconds);
         }
 
-        if (now >= _nextFogUpdate)
+        _mapTableReader?.Tick(now, _fogMode == "explored");
+        _entityTracker?.Tick(now);
+        if (!idleChanged && now >= _nextPlayerUpdate)
+        {
+            RefreshSnapshot();
+            _nextPlayerUpdate = now + GetEffectivePlayerUpdateSeconds();
+        }
+
+        if (!idleChanged && now >= _nextFogUpdate)
         {
             _fogTracker?.Tick(_snapshot.Players);
-            _nextFogUpdate = now + 2f;
+            _nextFogUpdate = now + (_idle ? IdleUpdateSeconds : FogUpdateSeconds);
         }
     }
 
@@ -176,6 +196,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         EntityTracker entityTracker = new EntityTracker(config, log);
         _entityTracker = entityTracker;
 
+        _idle = GameAccess.GetPeers(network).Count == 0;
         RefreshSnapshot();
         _fogTracker.Tick(_snapshot.Players);
         entityTracker.Tick(Time.realtimeSinceStartup);
@@ -192,6 +213,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             () => entityTracker.Snapshot,
             entityTracker.NoteEntitiesRequested,
             () => _fogMode,
+            GetEffectivePlayerUpdateSeconds,
             _fogTracker,
             _renderer,
             config,
@@ -201,8 +223,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _httpServer.Start();
 
         float now = Time.realtimeSinceStartup;
-        _nextPlayerUpdate = now + Math.Max(0.25f, config.PlayerUpdateSeconds);
-        _nextFogUpdate = now + 2f;
+        _nextPlayerUpdate = now + GetEffectivePlayerUpdateSeconds();
+        _nextFogUpdate = now + (_idle ? IdleUpdateSeconds : FogUpdateSeconds);
         _started = true;
     }
 
@@ -262,6 +284,13 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             timeOfDay,
             DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             players.ToArray());
+    }
+
+    private float GetEffectivePlayerUpdateSeconds()
+    {
+        return _idle
+            ? IdleUpdateSeconds
+            : Math.Max(0.25f, _config?.PlayerUpdateSeconds ?? 0.25f);
     }
 
     private void OnApplicationQuit()
