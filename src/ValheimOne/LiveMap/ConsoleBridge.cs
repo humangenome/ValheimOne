@@ -23,7 +23,10 @@ internal sealed class ConsoleBridge
         () => AccessTools.Field(typeof(Terminal), "commands") ??
               throw new MissingFieldException(typeof(Terminal).FullName, "commands"));
 
-    private readonly LogRingBuffer _ringBuffer;
+    [ThreadStatic]
+    private static List<string>? _terminalOutputCapture;
+
+    private LogRingBuffer? _ringBuffer;
     private readonly ModLogger _log;
     private readonly ConcurrentQueue<IBridgeJob> _jobs = new ConcurrentQueue<IBridgeJob>();
     private readonly int _mainThreadId;
@@ -37,7 +40,7 @@ internal sealed class ConsoleBridge
     private bool _idle;
     private int _stopped;
 
-    public ConsoleBridge(LogRingBuffer ringBuffer, ModLogger log)
+    public ConsoleBridge(LogRingBuffer? ringBuffer, ModLogger log)
     {
         _ringBuffer = ringBuffer;
         _log = log;
@@ -45,6 +48,16 @@ internal sealed class ConsoleBridge
     }
 
     public StatsSnapshot Stats => _stats;
+
+    public void SetRingBuffer(LogRingBuffer? ringBuffer)
+    {
+        _ringBuffer = ringBuffer;
+    }
+
+    internal static void CaptureTerminalOutput(string line)
+    {
+        _terminalOutputCapture?.Add(line);
+    }
 
     public ConsoleExecResult ExecuteCommand(string line)
     {
@@ -56,35 +69,35 @@ internal sealed class ConsoleBridge
     public ConsoleActionResult Kick(string target)
     {
         return Submit(
-            () => RunTargetAction(target, "kick", (network, value) => network.Kick(value)),
+            () => KickOnMainThread(target, _log),
             error => ConsoleActionResult.Failure(error));
     }
 
     public ConsoleActionResult Ban(string target)
     {
         return Submit(
-            () => RunTargetAction(target, "ban", (network, value) => network.Ban(value)),
+            () => BanOnMainThread(target, _log),
             error => ConsoleActionResult.Failure(error));
     }
 
     public ConsoleActionResult Unban(string target)
     {
         return Submit(
-            () => RunTargetAction(target, "unban", (network, value) => network.Unban(value)),
+            () => UnbanOnMainThread(target, _log),
             error => ConsoleActionResult.Failure(error));
     }
 
     public ConsoleBanListResult BanList()
     {
         return Submit(
-            GetBanListOnMainThread,
+            () => GetBanListOnMainThread(_log),
             error => ConsoleBanListResult.Failure(error));
     }
 
     public ConsoleSaveResult Save()
     {
         return Submit(
-            SaveOnMainThread,
+            () => SaveOnMainThread(_log),
             error => ConsoleSaveResult.Failure(error));
     }
 
@@ -242,23 +255,44 @@ internal sealed class ConsoleBridge
         }
 
         bool warnCheat = command.IsCheat && !console.IsCheatsEnabled();
-        long cursor = _ringBuffer.LatestSeq;
-        console.TryRunCommand(commandLine, silentFail: false, skipAllowedCheck: true);
+        LogRingBuffer? ringBuffer = _ringBuffer;
+        long cursor = ringBuffer?.LatestSeq ?? 0L;
+        var directOutput = new List<string>();
+        List<string>? previousCapture = _terminalOutputCapture;
+        _terminalOutputCapture = directOutput;
+        try
+        {
+            console.TryRunCommand(commandLine, silentFail: false, skipAllowedCheck: true);
+        }
+        finally
+        {
+            _terminalOutputCapture = previousCapture;
+        }
 
         int logLimit = warnCheat ? MaximumCommandOutputLines - 1 : MaximumCommandOutputLines;
-        var entries = new List<LogEntry>();
-        _ringBuffer.CopyAfter(cursor, int.MaxValue, entries);
         var output = new List<string>(MaximumCommandOutputLines);
-        for (int index = 0; index < entries.Count; index++)
+        if (directOutput.Count > 0)
         {
-            LogEntry entry = entries[index];
-            if (string.Equals(entry.Source, "Unity", StringComparison.Ordinal) ||
-                string.Equals(entry.Source, "Unity Log", StringComparison.Ordinal))
+            for (int index = 0; index < directOutput.Count && output.Count < logLimit; index++)
             {
-                output.Add(StripConsolePrefixes(entry.Message));
-                if (output.Count >= logLimit)
+                output.Add(directOutput[index]);
+            }
+        }
+        else if (ringBuffer != null)
+        {
+            var entries = new List<LogEntry>();
+            ringBuffer.CopyAfter(cursor, int.MaxValue, entries);
+            for (int index = 0; index < entries.Count; index++)
+            {
+                LogEntry entry = entries[index];
+                if (string.Equals(entry.Source, "Unity", StringComparison.Ordinal) ||
+                    string.Equals(entry.Source, "Unity Log", StringComparison.Ordinal))
                 {
-                    break;
+                    output.Add(StripConsolePrefixes(entry.Message));
+                    if (output.Count >= logLimit)
+                    {
+                        break;
+                    }
                 }
             }
         }
@@ -272,10 +306,38 @@ internal sealed class ConsoleBridge
         return ConsoleExecResult.Success(output);
     }
 
-    private ConsoleActionResult RunTargetAction(
+    internal static ConsoleActionResult KickOnMainThread(string target, ModLogger? log)
+    {
+        return RunTargetAction(
+            target,
+            "kick",
+            (network, value) => network.Kick(value),
+            log);
+    }
+
+    internal static ConsoleActionResult BanOnMainThread(string target, ModLogger? log)
+    {
+        return RunTargetAction(
+            target,
+            "ban",
+            (network, value) => network.Ban(value),
+            log);
+    }
+
+    internal static ConsoleActionResult UnbanOnMainThread(string target, ModLogger? log)
+    {
+        return RunTargetAction(
+            target,
+            "unban",
+            (network, value) => network.Unban(value),
+            log);
+    }
+
+    private static ConsoleActionResult RunTargetAction(
         string target,
         string actionName,
-        Action<ZNet, string> action)
+        Action<ZNet, string> action,
+        ModLogger? log)
     {
         string value = (target ?? string.Empty).Trim();
         if (value.Length == 0)
@@ -296,12 +358,12 @@ internal sealed class ConsoleBridge
         }
         catch (Exception exception)
         {
-            LogException($"{actionName} failed", exception);
+            LogException(log, $"{actionName} failed", exception);
             return ConsoleActionResult.Failure(GetExceptionMessage(exception));
         }
     }
 
-    private ConsoleBanListResult GetBanListOnMainThread()
+    internal static ConsoleBanListResult GetBanListOnMainThread(ModLogger? log)
     {
         ZNet? network = ZNet.instance;
         if (network == null)
@@ -315,12 +377,12 @@ internal sealed class ConsoleBridge
         }
         catch (Exception exception)
         {
-            LogException("could not read the ban list", exception);
+            LogException(log, "could not read the ban list", exception);
             return ConsoleBanListResult.Failure(GetExceptionMessage(exception));
         }
     }
 
-    private ConsoleSaveResult SaveOnMainThread()
+    internal static ConsoleSaveResult SaveOnMainThread(ModLogger? log)
     {
         ZNet? network = ZNet.instance;
         if (network == null || !network.IsServer())
@@ -336,7 +398,7 @@ internal sealed class ConsoleBridge
         }
         catch (Exception exception)
         {
-            LogException("save failed", exception);
+            LogException(log, "save failed", exception);
             return ConsoleSaveResult.Failure(GetExceptionMessage(exception));
         }
     }
@@ -465,9 +527,14 @@ internal sealed class ConsoleBridge
 
     private void LogException(string context, Exception exception)
     {
+        LogException(_log, context, exception);
+    }
+
+    private static void LogException(ModLogger? log, string context, Exception exception)
+    {
         try
         {
-            _log.Warning(
+            log?.Warning(
                 $"[LiveMap] {context}: {exception.GetType().Name}: {exception.Message}");
         }
         catch

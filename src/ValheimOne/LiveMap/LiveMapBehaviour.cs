@@ -37,6 +37,32 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
 
     internal ConsoleBridge? ConsoleBridge => _consoleBridge;
 
+    internal EntityMapSnapshot EntitySnapshot => _entityTracker?.Snapshot ?? EntityMapSnapshot.Empty;
+
+    internal bool EntityTrackerReady => _entityTracker != null;
+
+    internal string ServiceState
+    {
+        get
+        {
+            if (_stopped)
+            {
+                return "stopped";
+            }
+
+            if (_started)
+            {
+                return _httpServer?.IsRunning == true
+                    ? "running (HTTP listener active)"
+                    : "started (HTTP listener not active)";
+            }
+
+            return _enabledCheck?.Invoke() == true
+                ? "waiting for server world initialization"
+                : "disabled by [LiveMap] Enabled";
+        }
+    }
+
     public static void Initialize(
         GameObject host,
         LiveMapConfig config,
@@ -47,7 +73,13 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         behaviour._config = config;
         behaviour._log = log;
         behaviour._enabledCheck = enabledCheck;
+        behaviour._consoleBridge = new ConsoleBridge(null, log);
         Instance = behaviour;
+    }
+
+    internal void NoteEntitiesRequested()
+    {
+        _entityTracker?.NoteEntitiesRequested();
     }
 
     private void Update()
@@ -56,6 +88,9 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         {
             return;
         }
+
+        VoCommands.PumpSessionTimes();
+        _consoleBridge?.Pump();
 
         if (!_enabledCheck())
         {
@@ -74,8 +109,6 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             TryStart();
             return;
         }
-
-        _consoleBridge?.Pump();
 
         float now = Time.realtimeSinceStartup;
         ZNet? network = ZNet.instance;
@@ -139,12 +172,11 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             {
                 _logRingBuffer = new LogRingBuffer(config.ConsoleLogLines);
                 _logRingBuffer.Start();
-                _consoleBridge = new ConsoleBridge(_logRingBuffer, log);
+                _consoleBridge?.SetRingBuffer(_logRingBuffer);
             }
             catch (Exception exception)
             {
-                _consoleBridge?.Stop();
-                _consoleBridge = null;
+                _consoleBridge?.SetRingBuffer(null);
                 _logRingBuffer?.Stop();
                 _logRingBuffer = null;
                 log.Warning(
@@ -317,8 +349,12 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _stopped = permanently;
         _httpServer?.Stop();
         _httpServer = null;
-        _consoleBridge?.Stop();
-        _consoleBridge = null;
+        _consoleBridge?.SetRingBuffer(null);
+        if (permanently)
+        {
+            _consoleBridge?.Stop();
+            _consoleBridge = null;
+        }
         _logRingBuffer?.Stop();
         _logRingBuffer = null;
         _mapTableReader?.Stop();

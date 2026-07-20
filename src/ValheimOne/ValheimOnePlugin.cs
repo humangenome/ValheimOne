@@ -80,6 +80,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
             try
             {
                 module.ApplyPatches(_harmony);
+                settings.Features.RecordPatchSuccess(module.Section);
                 successfulModules++;
                 string state = module.IsEnabled ? "enabled" : "disabled";
                 _log.Info(
@@ -88,6 +89,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
             catch (Exception exception)
             {
                 string failure = ContractDiagnostics.DescribePatchFailure(module, exception);
+                settings.Features.RecordPatchFailure(module.Section, failure);
                 contractFailures?.Add(failure);
                 _log.Error(
                     $"Feature patch application failed: {failure} " +

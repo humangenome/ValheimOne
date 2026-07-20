@@ -66,8 +66,9 @@ public sealed class LiveMapModule : IFeatureModule
             "Enable the web admin console API and dashboard console tab.");
         ConfigEntryString consoleWhitelist = _feature.String(
             "ConsoleWhitelist",
-            "save kick ban unban banned lodbias sleep",
-            "Space-separated list of console commands the web console may execute.");
+            "vo save kick ban unban banned lodbias sleep",
+            "Space-separated list of console commands the web console may execute. " +
+            "The ValheimOne vo command family is always allowed even when omitted.");
         ConfigEntryBool allowAllCommands = _feature.Bool(
             "AllowAllCommands",
             false,
@@ -97,6 +98,7 @@ public sealed class LiveMapModule : IFeatureModule
             allowAllCommands,
             consoleLogLines,
             statusPublic);
+        VoCommands.Initialize(registry, _config, _log);
     }
 
     public string Name => "Live map";
@@ -109,6 +111,7 @@ public sealed class LiveMapModule : IFeatureModule
 
     public void ApplyPatches(Harmony harmony)
     {
+        VoCommands.ApplyPatches(harmony);
         if (LiveMapBehaviour.Instance != null)
         {
             _log.Warning("[LiveMap] behaviour already exists; skipping duplicate initialization.");

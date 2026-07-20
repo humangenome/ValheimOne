@@ -42,6 +42,7 @@ internal sealed class EntityTracker
     private float _nextEntityRefresh;
     private float _nextEventRefresh;
     private long _lastEntitiesRequestUnixMs;
+    private long _lastEntityScanUnixMs;
     private int _prefabIndex;
     private int _scanIndex;
     private int _revision;
@@ -201,6 +202,7 @@ internal sealed class EntityTracker
         }
 
         _entities = _pendingEntities.ToArray();
+        _lastEntityScanUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         ResetScan();
         return true;
     }
@@ -220,6 +222,7 @@ internal sealed class EntityTracker
         _snapshot = new EntityMapSnapshot(
             _revision,
             DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            _lastEntityScanUnixMs,
             _entities,
             _activeEvent);
     }
@@ -304,17 +307,20 @@ internal sealed class EntityMapSnapshot
     public static readonly EntityMapSnapshot Empty = new EntityMapSnapshot(
         0,
         0L,
+        0L,
         Array.Empty<TrackedEntitySnapshot>(),
         null);
 
     public EntityMapSnapshot(
         int revision,
         long unixMs,
+        long entitiesUnixMs,
         TrackedEntitySnapshot[] entities,
         RaidEventSnapshot? activeEvent)
     {
         Revision = revision;
         UnixMs = unixMs;
+        EntitiesUnixMs = entitiesUnixMs;
         Entities = entities;
         Event = activeEvent;
     }
@@ -322,6 +328,8 @@ internal sealed class EntityMapSnapshot
     public int Revision { get; }
 
     public long UnixMs { get; }
+
+    public long EntitiesUnixMs { get; }
 
     public TrackedEntitySnapshot[] Entities { get; }
 

@@ -7,6 +7,10 @@ public sealed class FeatureRegistry
 {
     private readonly ValheimOneConfig _settings;
     private readonly List<FeatureDefinition> _features = new List<FeatureDefinition>();
+    private readonly HashSet<string> _appliedPatches =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _patchFailures =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
     internal FeatureRegistry(ValheimOneConfig settings)
     {
@@ -88,5 +92,27 @@ public sealed class FeatureRegistry
     internal void NotifyEffectiveValuesChanged()
     {
         EffectiveValuesChanged?.Invoke();
+    }
+
+    internal void RecordPatchSuccess(string section)
+    {
+        _patchFailures.Remove(section);
+        _appliedPatches.Add(section);
+    }
+
+    internal void RecordPatchFailure(string section, string failure)
+    {
+        _appliedPatches.Remove(section);
+        _patchFailures[section] = failure;
+    }
+
+    internal bool IsPatchApplied(string section)
+    {
+        return _appliedPatches.Contains(section);
+    }
+
+    internal bool TryGetPatchFailure(string section, out string? failure)
+    {
+        return _patchFailures.TryGetValue(section, out failure);
     }
 }

@@ -142,6 +142,8 @@ internal sealed class LiveMapHttpServer
         _log.Info($"[LiveMap] listening on {preferredPrefix}");
     }
 
+    public bool IsRunning => _listener?.IsListening == true;
+
     public void Stop()
     {
         _stopping = true;
@@ -778,7 +780,9 @@ internal sealed class LiveMapHttpServer
         string commandName = separator < 0
             ? line.ToLowerInvariant()
             : line.Substring(0, separator).ToLowerInvariant();
-        if (!_config.AllowAllCommands && !_config.ConsoleWhitelist.Contains(commandName))
+        if (!_config.AllowAllCommands &&
+            !string.Equals(commandName, "vo", StringComparison.Ordinal) &&
+            !_config.ConsoleWhitelist.Contains(commandName))
         {
             WriteJson(
                 response,
@@ -868,7 +872,7 @@ internal sealed class LiveMapHttpServer
         var whitelist = new List<string>(_config.ConsoleWhitelist);
         whitelist.Sort(StringComparer.Ordinal);
         List<ConsoleCommandInfo> commands = _consoleBridge!.GetKnownCommands();
-        var json = new StringBuilder(64 + (whitelist.Count * 16) + (commands.Count * 96));
+        var json = new StringBuilder(256 + (whitelist.Count * 16) + (commands.Count * 160));
         json.Append("{\"allowAll\":").Append(allowAll ? "true" : "false");
         json.Append(",\"whitelist\":[");
         for (int index = 0; index < whitelist.Count; index++)
@@ -883,29 +887,113 @@ internal sealed class LiveMapHttpServer
 
         json.Append("],\"commands\":[");
         bool needsComma = false;
+        var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        IReadOnlyList<VoCommandDefinition> voCommands = VoCommandRegistry.All;
+        for (int index = 0; index < voCommands.Count; index++)
+        {
+            VoCommandDefinition definition = voCommands[index];
+            string name = "vo " + definition.Name;
+            AppendConsoleCommandMetadata(
+                json,
+                ref needsComma,
+                name,
+                definition.Description,
+                isCheat: false,
+                definition);
+            emitted.Add(name);
+        }
+
         for (int index = 0; index < commands.Count; index++)
         {
             ConsoleCommandInfo command = commands[index];
-            if (!allowAll && !whitelist.Contains(command.Name.ToLowerInvariant()))
+            string lowerName = command.Name.ToLowerInvariant();
+            bool implicitlyAllowed = string.Equals(lowerName, "vo", StringComparison.Ordinal);
+            if (!allowAll && !implicitlyAllowed && !whitelist.Contains(lowerName))
             {
                 continue;
             }
 
-            if (needsComma)
+            if (emitted.Contains(command.Name))
             {
-                json.Append(',');
+                continue;
             }
 
-            json.Append('{');
-            json.Append("\"name\":").Append(JsonWriter.Quote(command.Name));
-            json.Append(",\"description\":").Append(JsonWriter.Quote(command.Description));
-            json.Append(",\"cheat\":").Append(command.IsCheat ? "true" : "false");
-            json.Append('}');
-            needsComma = true;
+            VoCommandDefinition? definition = null;
+            if (VoCommandRegistry.TryGetVanilla(lowerName, out VoCommandDefinition? curated))
+            {
+                definition = curated;
+            }
+
+            string description = definition?.Description ?? command.Description;
+            AppendConsoleCommandMetadata(
+                json,
+                ref needsComma,
+                command.Name,
+                description,
+                command.IsCheat,
+                definition);
+            emitted.Add(command.Name);
+        }
+
+        IReadOnlyList<VoCommandDefinition> vanillaCommands = VoCommandRegistry.Vanilla;
+        for (int index = 0; index < vanillaCommands.Count; index++)
+        {
+            VoCommandDefinition definition = vanillaCommands[index];
+            if (emitted.Contains(definition.Name) ||
+                (!allowAll && !whitelist.Contains(definition.Name)))
+            {
+                continue;
+            }
+
+            AppendConsoleCommandMetadata(
+                json,
+                ref needsComma,
+                definition.Name,
+                definition.Description,
+                string.Equals(definition.Name, "sleep", StringComparison.Ordinal),
+                definition);
+            emitted.Add(definition.Name);
         }
 
         json.Append("]}");
         WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private static void AppendConsoleCommandMetadata(
+        StringBuilder json,
+        ref bool needsComma,
+        string name,
+        string description,
+        bool isCheat,
+        VoCommandDefinition? definition)
+    {
+        if (needsComma)
+        {
+            json.Append(',');
+        }
+
+        json.Append('{');
+        json.Append("\"name\":").Append(JsonWriter.Quote(name));
+        json.Append(",\"description\":").Append(JsonWriter.Quote(description));
+        json.Append(",\"cheat\":").Append(isCheat ? "true" : "false");
+        json.Append(",\"usage\":").Append(JsonWriter.Quote(definition?.Usage ?? name));
+        json.Append(",\"category\":").Append(JsonWriter.Quote(definition?.Category ?? "server"));
+        json.Append(",\"examples\":[");
+        string[] examples = definition?.Examples ?? Array.Empty<string>();
+        for (int index = 0; index < examples.Length; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            json.Append(JsonWriter.Quote(examples[index]));
+        }
+
+        json.Append(']');
+        json.Append(",\"playerArg\":").Append(definition?.PlayerArg == true ? "true" : "false");
+        json.Append('}');
+        needsComma = true;
     }
 
     private static void ServeAdminAction(
