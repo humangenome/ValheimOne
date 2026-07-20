@@ -23,6 +23,9 @@
     var TRAIL_BUCKET_COUNT = 10;
     var SHIP_MATCH_DISTANCE = 40;
     var MAP_PING_LIFETIME_MS = 30000;
+    var SAVED_BADGE_REFRESH_MS = 30000;
+    var SAVED_STALE_MS = 30 * 60 * 1000;
+    var DAY_TOAST_DURATION_MS = 4000;
     var CINEMA_AUTO_CYCLE_MS = 20000;
     var CINEMA_REFOLLOW_MS = 10 * 60 * 1000;
     var CINEMA_AMBIENT_STEP_MS = 18000;
@@ -170,6 +173,10 @@
     var raidCircle = null;
     var currentRaidEvent = null;
     var currentTimeOfDay = null;
+    var currentStatusDay = null;
+    var lastSavedUnixMs = 0;
+    var savedBadgeTimer = 0;
+    var dayToastTimer = 0;
     var latestWind = null;
     var tintOverlay = null;
     var layerSettings = loadLayerSettings();
@@ -266,6 +273,7 @@
         consolePane: document.getElementById("console-pane"),
         consoleResume: document.getElementById("console-resume"),
         consoleTab: document.getElementById("console-tab"),
+        dayToast: document.getElementById("day-toast"),
         dayNumber: document.getElementById("day-number"),
         exploredChip: document.getElementById("explored-chip"),
         mapPane: document.getElementById("map"),
@@ -278,6 +286,7 @@
         publicViewBadge: document.getElementById("public-view-badge"),
         raidBadge: document.getElementById("raid-badge"),
         saveButton: document.getElementById("console-save"),
+        savedChip: document.getElementById("saved-chip"),
         saveStatus: document.getElementById("console-save-status"),
         serverName: document.getElementById("server-name"),
         sidebarState: document.getElementById("sidebar-state"),
@@ -2305,8 +2314,17 @@
 
     function renderWorldTime(day, timeOfDay) {
         var dayNumber = Number(day);
+        var normalizedDay = Number.isFinite(dayNumber)
+            ? Math.max(0, Math.floor(dayNumber))
+            : null;
+        if (normalizedDay !== null) {
+            if (currentStatusDay !== null && normalizedDay > currentStatusDay) {
+                showDayToast(normalizedDay);
+            }
+            currentStatusDay = normalizedDay;
+        }
         elements.dayNumber.textContent = "Day " +
-            (Number.isFinite(dayNumber) ? Math.max(0, Math.floor(dayNumber)) : "—");
+            (normalizedDay === null ? "—" : normalizedDay);
 
         var fraction = Number(timeOfDay);
         if (!Number.isFinite(fraction)) {
@@ -2329,6 +2347,56 @@
         elements.skyIndicator.classList.toggle("is-moon", !isDaytime);
         elements.skyIndicator.setAttribute("aria-label", isDaytime ? "Daytime" : "Nighttime");
         updateDayNightTint();
+    }
+
+    function showDayToast(day) {
+        window.clearTimeout(dayToastTimer);
+        elements.dayToast.textContent = "Day " + day + " dawns";
+        elements.dayToast.hidden = false;
+        elements.dayToast.classList.remove("is-visible");
+        void elements.dayToast.offsetWidth;
+        elements.dayToast.classList.add("is-visible");
+        dayToastTimer = window.setTimeout(function () {
+            elements.dayToast.classList.remove("is-visible");
+            elements.dayToast.hidden = true;
+            dayToastTimer = 0;
+        }, DAY_TOAST_DURATION_MS);
+    }
+
+    function formatSavedAge(ageMs) {
+        var minutes = Math.floor(Math.max(0, ageMs) / 60000);
+        if (minutes < 1) {
+            return "just now";
+        }
+        if (minutes < 60) {
+            return minutes + "m ago";
+        }
+
+        var hours = Math.floor(minutes / 60);
+        if (hours < 24) {
+            return hours + "h ago";
+        }
+
+        return Math.floor(hours / 24) + "d ago";
+    }
+
+    function renderSavedBadge() {
+        if (!(lastSavedUnixMs > 0)) {
+            elements.savedChip.hidden = true;
+            return;
+        }
+
+        var ageMs = Math.max(0, Date.now() - lastSavedUnixMs);
+        elements.savedChip.textContent = "Saved " + formatSavedAge(ageMs);
+        elements.savedChip.classList.toggle("is-stale", ageMs > SAVED_STALE_MS);
+        elements.savedChip.hidden = false;
+        elements.statusChips.hidden = false;
+    }
+
+    function updateLastSaved(value) {
+        var timestamp = finiteNumberOrNull(value);
+        lastSavedUnixMs = timestamp !== null && timestamp > 0 ? timestamp : 0;
+        renderSavedBadge();
     }
 
     function renderWindStatus() {
@@ -7258,6 +7326,7 @@
         elements.worldName.textContent = textOrDash(status.worldName);
         renderWorldTime(status.day, status.timeOfDay);
         updateWorldMetrics(status);
+        updateLastSaved(status.lastSavedUnixMs);
         renderPlayerCount(status.players);
         updateRenderStatus(status.map);
         updateView(status.view);
@@ -7447,6 +7516,7 @@
     });
     renderPlayerCount(latestPlayerCount);
     renderConsolePlayers();
+    savedBadgeTimer = window.setInterval(renderSavedBadge, SAVED_BADGE_REFRESH_MS);
     startPolling(pollStatus, POLL_INTERVAL_MS);
     startPolling(pollPlayers, POLL_INTERVAL_MS);
     connectEventStream();
@@ -7459,6 +7529,8 @@
         window.clearTimeout(entityFocusPollTimer);
         window.clearInterval(popupRefreshTimer);
         window.clearInterval(layersStalenessTimer);
+        window.clearInterval(savedBadgeTimer);
+        window.clearTimeout(dayToastTimer);
         window.cancelAnimationFrame(minimapFrame);
         activePingMarkers.forEach(function (record) {
             window.clearTimeout(record.timer);

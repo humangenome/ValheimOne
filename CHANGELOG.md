@@ -6,6 +6,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Added
 
+- LiveMap now shows a "Saved Xm ago" badge fed by the world-save hook (amber when a save is overdue) and a subtle dawn toast when a new in-game day begins.
 - LiveMap gains a full-screen Cinema/Watch mode for a second monitor: a Watch button and popup action hide all chrome and show a parchment HUD with server, day, in-game clock, mini wind rose, and a live followed-viking card; the camera follows with an always-on 30-minute trail, auto-cycles players every 20 seconds when nothing is locked, drifts slowly over the world when nobody is ashore, jumps to raids with a pulsing alert (with a stay-on-target opt-out), survives reconnects and respawns, and is bookmarkable via #cinema URLs.
 - LiveMap admins can now send a map ping into the game: arm Ping, click the map, and every connected player sees a vanilla ping in-game with the web label, with no client mod required; in-game map pings are mirrored back to the web map for all view tiers as transient animated markers that fade after about 30 seconds.
 - LiveMap players now report health, max health, dead, PvP, and in-bed state to admin and shared views, shown as HP bars in the sidebar roster, health/PvP/sleeping rows in the player popup, and a moon glyph for sleeping vikings.

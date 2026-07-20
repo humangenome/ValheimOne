@@ -632,6 +632,7 @@ internal sealed class LiveMapHttpServer
             : Math.Max(0L, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - snapshot.UnixMs);
         bool snapshotStale = snapshot.UnixMs != 0 &&
                              snapshotAgeMs > Math.Max(0.25f, _getEffectiveUpdateSeconds()) * 3000.0;
+        long lastSavedUnixMs = WorldSavePatch.LastSavedUnixMs;
         var json = new StringBuilder(416);
         json.Append('{');
         json.Append("\"serverName\":").Append(JsonWriter.Quote(snapshot.ServerName));
@@ -671,6 +672,8 @@ internal sealed class LiveMapHttpServer
         json.Append("}}");
         json.Append(",\"unixMs\":").Append(snapshot.UnixMs.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"snapshotAgeMs\":").Append(snapshotAgeMs.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"lastSavedUnixMs\":").Append(
+            lastSavedUnixMs.ToString(CultureInfo.InvariantCulture));
         if (snapshotStale)
         {
             json.Append(",\"stale\":true");
@@ -691,6 +694,8 @@ internal sealed class LiveMapHttpServer
         key.Append(mapState).Append('|');
         key.Append(mapProgress).Append('|');
         key.Append(fogRevision.ToString(CultureInfo.InvariantCulture)).Append('|');
+        long lastSavedMinute = lastSavedUnixMs > 0L ? lastSavedUnixMs / 60000L : 0L;
+        key.Append(lastSavedMinute.ToString(CultureInfo.InvariantCulture)).Append('|');
         key.Append(snapshotStale ? "stale" : "fresh");
         if (hasSharedMapAccess)
         {
