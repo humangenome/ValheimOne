@@ -98,6 +98,8 @@
     var fogDisplayedRevision = null;
     var fogRequestedRevision = null;
     var fogLoadSequence = 0;
+    var fogCoverElement = null;
+    var fogCoverTimer = 0;
     var requestedTab = loadRequestedTab();
     var activeTab = "map";
     var consoleAvailable = false;
@@ -1160,6 +1162,12 @@
         map.getPane("fogPane").style.zIndex = "350";
         map.getPane("fogPane").style.pointerEvents = "none";
 
+        // With fog active, keep an ocean-colored cover over the pane until the
+        // fog image has loaded so the unfogged world never flashes on first paint.
+        if (fogAvailable) {
+            showFogCover();
+        }
+
         var tileTemplate = authorizedUrl("/tiles/{z}/{x}-{y}.png");
         tileLayer = L.tileLayer(tileTemplate, {
             bounds: worldBounds,
@@ -2135,6 +2143,36 @@
         return authorizedUrl("/fog.png?rev=" + encodeURIComponent(revision));
     }
 
+    function showFogCover() {
+        if (fogCoverElement || !elements.mapPane) {
+            return;
+        }
+
+        var cover = document.createElement("div");
+        cover.className = "map-cover";
+        elements.mapPane.appendChild(cover);
+        fogCoverElement = cover;
+        // Never brick the map if fog.png cannot load: reveal after a grace period.
+        fogCoverTimer = window.setTimeout(hideFogCover, 8000);
+    }
+
+    function hideFogCover() {
+        window.clearTimeout(fogCoverTimer);
+        fogCoverTimer = 0;
+        var cover = fogCoverElement;
+        if (!cover) {
+            return;
+        }
+
+        fogCoverElement = null;
+        cover.classList.add("is-hidden");
+        window.setTimeout(function () {
+            if (cover.parentNode) {
+                cover.parentNode.removeChild(cover);
+            }
+        }, 320);
+    }
+
     function applyFogStatus() {
         if (!map || !worldBounds) {
             return;
@@ -2148,6 +2186,7 @@
                 setLayerVisible(fogOverlay, false);
                 fogOverlay = null;
             }
+            hideFogCover();
             syncLayerVisibility();
             return;
         }
@@ -2155,15 +2194,38 @@
         var revision = fogStatus.revision;
         var url = fogUrl(revision);
         if (!fogOverlay) {
-            fogOverlay = L.imageOverlay(url, worldBounds, {
-                className: "fog-overlay",
-                interactive: false,
-                opacity: 1,
-                pane: "fogPane"
-            });
-            fogDisplayedRevision = revision;
+            if (revision === fogRequestedRevision) {
+                syncLayerVisibility();
+                return;
+            }
+
+            // Preload the first fog image before creating the overlay so the
+            // cover only lifts once the fogged view is actually renderable.
             fogRequestedRevision = revision;
-            syncLayerVisibility();
+            var initialSequence = ++fogLoadSequence;
+            var initialImage = new window.Image();
+            initialImage.onload = function () {
+                if (initialSequence !== fogLoadSequence || !fogAvailable || fogOverlay) {
+                    return;
+                }
+
+                fogOverlay = L.imageOverlay(url, worldBounds, {
+                    className: "fog-overlay",
+                    interactive: false,
+                    opacity: 1,
+                    pane: "fogPane"
+                });
+                fogDisplayedRevision = revision;
+                fogRequestedRevision = revision;
+                syncLayerVisibility();
+                hideFogCover();
+            };
+            initialImage.onerror = function () {
+                if (initialSequence === fogLoadSequence && fogRequestedRevision === revision) {
+                    fogRequestedRevision = null;
+                }
+            };
+            initialImage.src = url;
             return;
         }
 

@@ -1195,19 +1195,23 @@ internal sealed class LiveMapHttpServer
             throw new InvalidOperationException("Fog mask dimensions do not match its length.");
         }
 
-        const byte darkRed = 0x0d;
-        const byte darkGreen = 0x11;
-        const byte darkBlue = 0x17;
-        const int unrevealedAlpha = 235;
+        // Ghosted-fog treatment: unexplored terrain is dimmed and cooled toward a
+        // neutral slate (~57% cover) instead of blacked out, so the world's shape,
+        // biomes, and coastlines stay readable at every zoom while clearly fogged.
+        const byte fogRed = 0x26;
+        const byte fogGreen = 0x2e;
+        const byte fogBlue = 0x3a;
+        const int unrevealedAlpha = 145;
+        const int featherRadius = 2;
         var rgba = new byte[expectedLength * 4];
         for (int y = 0; y < FogTracker.Size; y++)
         {
-            int minimumY = Math.Max(0, y - 1);
-            int maximumY = Math.Min(FogTracker.Size - 1, y + 1);
+            int minimumY = Math.Max(0, y - featherRadius);
+            int maximumY = Math.Min(FogTracker.Size - 1, y + featherRadius);
             for (int x = 0; x < FogTracker.Size; x++)
             {
-                int minimumX = Math.Max(0, x - 1);
-                int maximumX = Math.Min(FogTracker.Size - 1, x + 1);
+                int minimumX = Math.Max(0, x - featherRadius);
+                int maximumX = Math.Min(FogTracker.Size - 1, x + featherRadius);
                 int alphaTotal = 0;
                 int samples = 0;
                 for (int sampleY = minimumY; sampleY <= maximumY; sampleY++)
@@ -1225,9 +1229,9 @@ internal sealed class LiveMapHttpServer
                 }
 
                 int offset = ((y * FogTracker.Size) + x) * 4;
-                rgba[offset] = darkRed;
-                rgba[offset + 1] = darkGreen;
-                rgba[offset + 2] = darkBlue;
+                rgba[offset] = fogRed;
+                rgba[offset + 1] = fogGreen;
+                rgba[offset + 2] = fogBlue;
                 rgba[offset + 3] = (byte)((alphaTotal + (samples / 2)) / samples);
             }
         }

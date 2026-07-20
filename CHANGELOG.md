@@ -2,6 +2,12 @@
 
 All notable changes to ValheimOne will be documented in this file. This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and intends to use [Semantic Versioning](https://semver.org/spec/v2.0.0.html) after its first release.
 
+## [Unreleased]
+
+### Fixed
+
+- Public-view fog no longer blacks out unexplored worlds: the fog overlay is now a ghosted treatment (~57% cover toward a cool slate instead of 92% near-black), so the world's shape, biomes, coastlines, and POI markers stay readable at every zoom while clearly fogged. Reveal edges got a wider feather, and on fogged public views the map holds an ocean-colored cover until the fog image has loaded so unfogged terrain never flashes on first paint.
+
 ## [0.7.0] - 2026-07-19
 
 ### Added

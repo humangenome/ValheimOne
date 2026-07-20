@@ -698,6 +698,22 @@ input {
     pointer-events: none;
 }
 
+/* Opaque ocean-colored cover shown while the first fog image loads so the
+   unfogged world never flashes on a fogged public view. */
+.map-cover {
+    position: absolute;
+    z-index: 900;
+    inset: 0;
+    background: #16243d;
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity 260ms ease;
+}
+
+.map-cover.is-hidden {
+    opacity: 0;
+}
+
 .poi-div-icon,
 .pin-div-icon,
 .entity-div-icon {
