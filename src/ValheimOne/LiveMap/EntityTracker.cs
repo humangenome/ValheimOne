@@ -13,7 +13,9 @@ internal sealed class EntityTracker
 {
     private const float EventRefreshIntervalSeconds = 5f;
     private const float EntityRefreshIntervalSeconds = 30f;
+    private const float FocusRefreshIntervalSeconds = 2f;
     private const long RequestActiveMilliseconds = 2L * 60L * 1000L;
+    private const long FocusRequestActiveMilliseconds = 30L * 1000L;
     private const int MaximumEntities = 500;
 
     private static readonly Lazy<FieldInfo> RandomEventField = new(
@@ -33,31 +35,43 @@ internal sealed class EntityTracker
     };
 
     private readonly LiveMapConfig _config;
+    private readonly PositionHistory _positionHistory;
     private readonly ModLogger _log;
     private readonly List<ZDO> _scanResults = new List<ZDO>();
     private readonly List<TrackedEntitySnapshot> _pendingEntities =
         new List<TrackedEntitySnapshot>(MaximumEntities);
     private volatile EntityMapSnapshot _snapshot = EntityMapSnapshot.Empty;
+    private EntityFocusRequest _focusRequest = EntityFocusRequest.Empty;
+    private volatile EntityFocusSnapshot _focusSnapshot = EntityFocusSnapshot.Empty;
     private TrackedEntitySnapshot[] _entities = Array.Empty<TrackedEntitySnapshot>();
     private RaidEventSnapshot? _activeEvent;
     private float _nextEntityRefresh;
     private float _nextEventRefresh;
+    private float _nextFocusRefresh;
     private long _lastEntitiesRequestUnixMs;
     private long _lastEntityScanUnixMs;
     private int _prefabIndex;
     private int _scanIndex;
     private int _revision;
+    private string _focusedId = string.Empty;
     private bool _scanning;
     private bool _scanWarningLogged;
     private bool _eventWarningLogged;
+    private bool _focusWarningLogged;
 
-    public EntityTracker(LiveMapConfig config, ModLogger log)
+    public EntityTracker(
+        LiveMapConfig config,
+        PositionHistory positionHistory,
+        ModLogger log)
     {
         _config = config;
+        _positionHistory = positionHistory;
         _log = log;
     }
 
     public EntityMapSnapshot Snapshot => _snapshot;
+
+    public EntityFocusSnapshot FocusSnapshot => _focusSnapshot;
 
     public void NoteEntitiesRequested()
     {
@@ -66,8 +80,18 @@ internal sealed class EntityTracker
             DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
     }
 
+    public void NoteFocusRequested(string id)
+    {
+        Volatile.Write(
+            ref _focusRequest,
+            new EntityFocusRequest(
+                id,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+    }
+
     public void Tick(float now)
     {
+        ServiceFocus(now);
         bool publish = false;
         if (now >= _nextEventRefresh)
         {
@@ -214,8 +238,161 @@ internal sealed class EntityTracker
 
         _entities = _pendingEntities.ToArray();
         _lastEntityScanUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        for (int index = 0; index < _entities.Length; index++)
+        {
+            TrackedEntitySnapshot entity = _entities[index];
+            if (IsTrailEntity(entity))
+            {
+                _positionHistory.Record(
+                    PositionHistory.EntityKey(entity.Id),
+                    entity.X,
+                    entity.Z,
+                    _lastEntityScanUnixMs);
+            }
+        }
+
         ResetScan();
         return true;
+    }
+
+    private void ServiceFocus(float now)
+    {
+        if (!_config.EntityLayer || !FocusWasRecentlyRequested(out string requestedId))
+        {
+            _focusedId = string.Empty;
+            _focusSnapshot = EntityFocusSnapshot.Empty;
+            return;
+        }
+
+        bool focusChanged = !string.Equals(_focusedId, requestedId, StringComparison.Ordinal);
+        if (!focusChanged &&
+            now < _nextFocusRefresh)
+        {
+            return;
+        }
+
+        _focusedId = requestedId;
+        _nextFocusRefresh = now + FocusRefreshIntervalSeconds;
+        if (focusChanged)
+        {
+            _focusWarningLogged = false;
+        }
+        long unixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        TrackedEntitySnapshot? tracked = FindEntity(requestedId);
+        ZDOMan? manager = ZDOMan.instance;
+        if (tracked == null || manager == null ||
+            !TryParseEntityId(requestedId, out long userId, out uint objectId))
+        {
+            _focusSnapshot = EntityFocusSnapshot.Missing(requestedId, unixMs);
+            return;
+        }
+
+        try
+        {
+            ZDO? zdo = manager.GetZDO(new ZDOID(userId, objectId));
+            if (zdo == null)
+            {
+                _focusSnapshot = EntityFocusSnapshot.Missing(requestedId, unixMs);
+                return;
+            }
+
+            Vector3 position = zdo.GetPosition();
+            var focus = new EntityFocusSnapshot(
+                true,
+                tracked.Group,
+                tracked.Prefab,
+                position.x,
+                position.y,
+                position.z,
+                tracked.Id,
+                zdo.GetRotation().eulerAngles.y,
+                tracked.Tag,
+                unixMs);
+            _focusSnapshot = focus;
+            if (IsTrailEntity(tracked))
+            {
+                _positionHistory.Record(
+                    PositionHistory.EntityKey(tracked.Id),
+                    position.x,
+                    position.z,
+                    unixMs);
+            }
+        }
+        catch (Exception exception)
+        {
+            _focusSnapshot = EntityFocusSnapshot.Missing(requestedId, unixMs);
+            if (!_focusWarningLogged)
+            {
+                _focusWarningLogged = true;
+                _log.Warning(
+                    $"[LiveMap] focused entity read failed: " +
+                    $"{exception.GetType().Name}: {exception.Message}");
+            }
+        }
+    }
+
+    private bool FocusWasRecentlyRequested(out string requestedId)
+    {
+        EntityFocusRequest request = Volatile.Read(ref _focusRequest);
+        requestedId = request.Id;
+        if (request.UnixMs == 0L || string.IsNullOrEmpty(requestedId))
+        {
+            return false;
+        }
+
+        long elapsedMilliseconds =
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - request.UnixMs;
+        if (elapsedMilliseconds >= 0L &&
+            elapsedMilliseconds <= FocusRequestActiveMilliseconds)
+        {
+            return true;
+        }
+
+        Interlocked.CompareExchange(
+            ref _focusRequest,
+            EntityFocusRequest.Empty,
+            request);
+        return false;
+    }
+
+    private TrackedEntitySnapshot? FindEntity(string id)
+    {
+        for (int index = 0; index < _entities.Length; index++)
+        {
+            if (string.Equals(_entities[index].Id, id, StringComparison.Ordinal))
+            {
+                return _entities[index];
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsTrailEntity(TrackedEntitySnapshot entity)
+    {
+        return string.Equals(entity.Group, "ship", StringComparison.Ordinal) ||
+               string.Equals(entity.Group, "cart", StringComparison.Ordinal);
+    }
+
+    internal static bool TryParseEntityId(
+        string value,
+        out long userId,
+        out uint objectId)
+    {
+        userId = 0L;
+        objectId = 0U;
+        int separator = value.IndexOf(':');
+        return separator > 0 && separator == value.LastIndexOf(':') &&
+               long.TryParse(
+                   value.Substring(0, separator),
+                   NumberStyles.Integer,
+                   CultureInfo.InvariantCulture,
+                   out userId) &&
+               uint.TryParse(
+                   value.Substring(separator + 1),
+                   NumberStyles.None,
+                   CultureInfo.InvariantCulture,
+                   out objectId);
     }
 
     private void ResetScan()
@@ -311,6 +488,22 @@ internal sealed class EntityTracker
 
         public string Name { get; }
     }
+
+    private sealed class EntityFocusRequest
+    {
+        public static readonly EntityFocusRequest Empty =
+            new EntityFocusRequest(string.Empty, 0L);
+
+        public EntityFocusRequest(string id, long unixMs)
+        {
+            Id = id;
+            UnixMs = unixMs;
+        }
+
+        public string Id { get; }
+
+        public long UnixMs { get; }
+    }
 }
 
 internal sealed class EntityMapSnapshot
@@ -384,6 +577,70 @@ internal sealed class TrackedEntitySnapshot
     public float RotYDeg { get; }
 
     public string Tag { get; }
+}
+
+internal sealed class EntityFocusSnapshot
+{
+    public static readonly EntityFocusSnapshot Empty = Missing(string.Empty, 0L);
+
+    public EntityFocusSnapshot(
+        bool found,
+        string group,
+        string prefab,
+        float x,
+        float y,
+        float z,
+        string id,
+        float rotYDeg,
+        string tag,
+        long unixMs)
+    {
+        Found = found;
+        Group = group;
+        Prefab = prefab;
+        X = x;
+        Y = y;
+        Z = z;
+        Id = id;
+        RotYDeg = rotYDeg;
+        Tag = tag;
+        UnixMs = unixMs;
+    }
+
+    public bool Found { get; }
+
+    public string Group { get; }
+
+    public string Prefab { get; }
+
+    public float X { get; }
+
+    public float Y { get; }
+
+    public float Z { get; }
+
+    public string Id { get; }
+
+    public float RotYDeg { get; }
+
+    public string Tag { get; }
+
+    public long UnixMs { get; }
+
+    public static EntityFocusSnapshot Missing(string id, long unixMs)
+    {
+        return new EntityFocusSnapshot(
+            false,
+            string.Empty,
+            string.Empty,
+            0f,
+            0f,
+            0f,
+            id,
+            0f,
+            string.Empty,
+            unixMs);
+    }
 }
 
 internal sealed class RaidEventSnapshot

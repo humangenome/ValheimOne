@@ -100,7 +100,7 @@
     var firstPlayersViewApplied = false;
     var hashUpdateTimer = 0;
     var pendingHashFollowName = "";
-    var followedPlayer = null;
+    var followTarget = null;
     var followPill = null;
     var compassButton = null;
     var compassWindNeedle = null;
@@ -125,6 +125,7 @@
     var latestPins = [];
     var trailLayer = null;
     var trailBuffers = new Map();
+    var trailBackfillWindows = new Map();
     var selectedTrailTargets = new Map();
     var openPopupTrailTarget = null;
     var popupRefreshTimer = 0;
@@ -136,6 +137,8 @@
     var entityAvailability = "unknown";
     var entityRequestPending = false;
     var entityPollTimer = 0;
+    var entityFocusPollTimer = 0;
+    var entityFocusRequestPending = false;
     var entityRevision = null;
     var entityMarkerRecords = new Map();
     var raidCircle = null;
@@ -1780,12 +1783,17 @@
         return kind + ":" + key;
     }
 
+    function isFollowing(kind, key) {
+        return Boolean(followTarget && followTarget.kind === kind && followTarget.id === key);
+    }
+
     function toggleSelectedTrail(kind, key) {
         var id = trailTargetId(kind, key);
         if (selectedTrailTargets.has(id)) {
             selectedTrailTargets.delete(id);
         } else {
             selectedTrailTargets.set(id, { kind: kind, key: key });
+            requestTrailBackfill(kind, key, 1800);
         }
         renderTrails();
         refreshOpenPopupContent();
@@ -1813,17 +1821,17 @@
             event.preventDefault();
             var action = actionButton.getAttribute("data-popup-action");
             var key = actionButton.getAttribute("data-target-key") || "";
+            var kind = actionButton.getAttribute("data-trail-kind") || "player";
             if (action === "follow") {
-                if (followedPlayer === key) {
+                if (isFollowing(kind, key)) {
                     clearFollow();
-                } else {
+                } else if (kind === "player") {
                     followPlayer(key);
+                } else {
+                    followEntity(kind, key);
                 }
             } else if (action === "trail") {
-                toggleSelectedTrail(
-                    actionButton.getAttribute("data-trail-kind") || "player",
-                    key
-                );
+                toggleSelectedTrail(kind, key);
             }
         });
     }
@@ -1868,7 +1876,7 @@
         };
     }
 
-    function appendTrailSample(key, kind, x, z, timestamp) {
+    function ensureTrailBuffer(key, kind, timestamp) {
         var buffer = trailBuffers.get(key);
         if (!buffer) {
             buffer = {
@@ -1883,6 +1891,11 @@
 
         buffer.kind = kind;
         buffer.lastSeen = timestamp;
+        return buffer;
+    }
+
+    function appendTrailSample(key, kind, x, z, timestamp) {
+        var buffer = ensureTrailBuffer(key, kind, timestamp);
         var last = buffer.samples.length > 0 ? buffer.samples[buffer.samples.length - 1] : null;
         var distance = last ? worldDistance(last.x, last.z, x, z) : 0;
         if (!last || distance > 0.5 || timestamp - last.t > 5000) {
@@ -1903,6 +1916,78 @@
         return buffer;
     }
 
+    async function requestTrailBackfill(kind, key, windowSeconds) {
+        if ((!key.startsWith("player:") && !key.startsWith("entity:")) ||
+            trailBackfillWindows.get(key) >= windowSeconds) {
+            return;
+        }
+
+        trailBackfillWindows.set(key, windowSeconds);
+        try {
+            var payload = await fetchJson(
+                "/api/trail?id=" + encodeURIComponent(key) +
+                "&window=" + encodeURIComponent(String(windowSeconds))
+            );
+            var points = payload && Array.isArray(payload.points) ? payload.points : [];
+            var timestamp = Date.now();
+            var buffer = ensureTrailBuffer(key, kind, timestamp);
+            var oldestBufferedTimestamp = buffer.samples.length > 0
+                ? buffer.samples[0].t
+                : Number.POSITIVE_INFINITY;
+            var seenTimestamps = new Set();
+            var prepend = points.filter(function (point) {
+                var pointTimestamp = Number(point && point.t);
+                if (!Number.isFinite(pointTimestamp) ||
+                    !Number.isFinite(Number(point.x)) ||
+                    !Number.isFinite(Number(point.z)) ||
+                    pointTimestamp >= oldestBufferedTimestamp ||
+                    timestamp - pointTimestamp > TRAIL_MAX_AGE_MS ||
+                    seenTimestamps.has(pointTimestamp)) {
+                    return false;
+                }
+                seenTimestamps.add(pointTimestamp);
+                return true;
+            }).map(function (point) {
+                return { t: Number(point.t), x: Number(point.x), z: Number(point.z) };
+            }).sort(function (left, right) {
+                return left.t - right.t;
+            });
+
+            if (prepend.length > 0) {
+                buffer.samples = prepend.concat(buffer.samples);
+                if (buffer.samples.length > TRAIL_MAX_POINTS) {
+                    buffer.samples.splice(0, buffer.samples.length - TRAIL_MAX_POINTS);
+                }
+            }
+
+            buffer.lastMovedAt = 0;
+            for (var index = 1; index < buffer.samples.length; index++) {
+                if (worldDistance(
+                    buffer.samples[index - 1].x,
+                    buffer.samples[index - 1].z,
+                    buffer.samples[index].x,
+                    buffer.samples[index].z
+                ) > 0.5) {
+                    buffer.lastMovedAt = buffer.samples[index].t;
+                }
+            }
+            buffer.motion = calculateDerivedMotion(buffer.samples);
+            markerRecords.forEach(updatePlayerMarkerMotion);
+            renderTrails();
+            refreshOpenPopupContent();
+        } catch (error) {
+            if (trailBackfillWindows.get(key) === windowSeconds) {
+                trailBackfillWindows.delete(key);
+            }
+        }
+    }
+
+    function backfillVisiblePlayerTrails() {
+        latestPlayers.forEach(function (player) {
+            requestTrailBackfill("player", player.trailKey, 300);
+        });
+    }
+
     function evictTrailBuffers(timestamp) {
         trailBuffers.forEach(function (buffer, key) {
             if (timestamp - buffer.lastSeen <= TRAIL_EVICT_AGE_MS) {
@@ -1910,6 +1995,7 @@
             }
 
             trailBuffers.delete(key);
+            trailBackfillWindows.delete(key);
             selectedTrailTargets.forEach(function (target, id) {
                 if (target.key === key) {
                     selectedTrailTargets.delete(id);
@@ -1926,7 +2012,7 @@
     function recordPlayerTrails(players) {
         var timestamp = Date.now();
         players.forEach(function (player) {
-            appendTrailSample(player.key, "player", player.x, player.z, timestamp);
+            appendTrailSample(player.trailKey, "player", player.x, player.z, timestamp);
         });
         evictTrailBuffers(timestamp);
     }
@@ -1934,8 +2020,8 @@
     function recordEntityTrails(entities) {
         var timestamp = Date.now();
         entities.forEach(function (entity) {
-            if (entity.group === "ship" && entity.trailKey) {
-                appendTrailSample(entity.trailKey, "ship", entity.x, entity.z, timestamp);
+            if ((entity.group === "ship" || entity.group === "cart") && entity.trailKey) {
+                appendTrailSample(entity.trailKey, entity.group, entity.x, entity.z, timestamp);
             }
         });
         evictTrailBuffers(timestamp);
@@ -1956,9 +2042,9 @@
     }
 
     function trailStrokeColor(kind) {
-        var token = kind === "ship" ? "--frost" : "--accent";
+        var token = kind === "player" ? "--accent" : "--frost";
         var color = window.getComputedStyle(document.documentElement).getPropertyValue(token).trim();
-        return color || (kind === "ship" ? "#7eb1d6" : "#d9b168");
+        return color || (kind === "player" ? "#d9b168" : "#7eb1d6");
     }
 
     function renderTrailBuffer(buffer, windowMs, timestamp) {
@@ -2032,8 +2118,13 @@
         selectedTrailTargets.forEach(function (target) {
             addVisibleTrailTarget(targets, target.kind, target.key, TRAIL_TARGET_AGE_MS);
         });
-        if (followedPlayer) {
-            addVisibleTrailTarget(targets, "player", followedPlayer, TRAIL_TARGET_AGE_MS);
+        if (followTarget) {
+            addVisibleTrailTarget(
+                targets,
+                followTarget.kind,
+                followTarget.trailKey,
+                TRAIL_TARGET_AGE_MS
+            );
         }
         if (openPopupTrailTarget) {
             addVisibleTrailTarget(
@@ -2048,7 +2139,7 @@
                 addVisibleTrailTarget(
                     targets,
                     "player",
-                    player.key,
+                    player.trailKey,
                     TRAIL_ALL_PLAYERS_AGE_MS
                 );
             });
@@ -2069,6 +2160,13 @@
             openPopupTrailTarget = source && source._voTrailKind && source._voTrailKey
                 ? { kind: source._voTrailKind, key: source._voTrailKey }
                 : null;
+            if (openPopupTrailTarget) {
+                requestTrailBackfill(
+                    openPopupTrailTarget.kind,
+                    openPopupTrailTarget.key,
+                    1800
+                );
+            }
             window.clearInterval(popupRefreshTimer);
             refreshOpenPopupFooter();
             popupRefreshTimer = window.setInterval(refreshOpenPopupContent, 5000);
@@ -2098,11 +2196,24 @@
 
     function updateFollowPill() {
         ensureFollowPill();
-        var record = followedPlayer ? markerRecords.get(followedPlayer) : null;
+        var record = followTarget
+            ? followTarget.kind === "player"
+                ? markerRecords.get(followTarget.id)
+                : entityMarkerRecords.get(followTarget.id)
+            : null;
         followPill.hidden = !record;
-        followPill.textContent = record
-            ? "Following " + record.player.displayName + " — click to release"
-            : "";
+        if (!record) {
+            followPill.textContent = "";
+        } else if (followTarget.kind === "player") {
+            followPill.textContent =
+                "Following " + record.player.displayName + " — click to release";
+        } else {
+            followPill.textContent = "Following " +
+                (record.entity.group === "ship"
+                    ? shipDisplayName(record.entity.prefab)
+                    : "Cart") +
+                " — click to release";
+        }
     }
 
     function renderWorldTime(day, timeOfDay) {
@@ -3329,7 +3440,15 @@
     }
 
     function hashFollowName() {
-        var record = followedPlayer ? markerRecords.get(followedPlayer) : null;
+        if (!followTarget) {
+            return pendingHashFollowName;
+        }
+
+        if (followTarget.kind !== "player") {
+            return followTarget.trailKey;
+        }
+
+        var record = markerRecords.get(followTarget.id);
         return record ? record.player.displayName : pendingHashFollowName;
     }
 
@@ -3376,7 +3495,19 @@
     }
 
     function applyPendingHashFollow() {
-        if (!pendingHashFollowName || latestPlayers.length === 0) {
+        if (!pendingHashFollowName) {
+            return;
+        }
+        if (pendingHashFollowName.startsWith("entity:")) {
+            var entityRecord = entityMarkerRecords.get(pendingHashFollowName);
+            if (entityRecord) {
+                var entityKey = pendingHashFollowName;
+                pendingHashFollowName = "";
+                followEntity(entityRecord.entity.group, entityKey);
+            }
+            return;
+        }
+        if (latestPlayers.length === 0) {
             return;
         }
         var requestedName = pendingHashFollowName.toLocaleLowerCase();
@@ -3587,6 +3718,7 @@
     }
 
     function setSectionLayers(section, isEnabled) {
+        var trailsWereEnabled = layerSettings.trails;
         section.querySelectorAll("input[data-layer-key]").forEach(function (checkbox) {
             checkbox.checked = isEnabled;
             layerSettings[checkbox.dataset.layerKey] = isEnabled;
@@ -3594,6 +3726,9 @@
         saveLayerSettings();
         syncLayerVisibility();
         scheduleHashUpdate();
+        if (!trailsWereEnabled && layerSettings.trails) {
+            backfillVisiblePlayerTrails();
+        }
         updateEntityPolling(true);
         updateLayerCounts();
     }
@@ -3616,6 +3751,9 @@
             saveLayerSettings();
             syncLayerVisibility();
             scheduleHashUpdate();
+            if (key === "trails" && checkbox.checked) {
+                backfillVisiblePlayerTrails();
+            }
             if (Object.prototype.hasOwnProperty.call(ENTITY_GROUPS, key)) {
                 updateEntityPolling(true);
             }
@@ -4140,6 +4278,7 @@
                 name: rawName,
                 sessionStartUnixMs: finiteNumberOrNull(player.sessionStartUnixMs),
                 speedMps: finiteNumberOrNull(player.speedMps),
+                trailKey: playerId ? "player:" + playerId : key,
                 x: Number(player.x),
                 y: Number(player.y),
                 z: Number(player.z)
@@ -4196,7 +4335,7 @@
             return buildPlayerPopup(record.player);
         }, {
             kind: "player",
-            trailKey: player.key,
+            trailKey: player.trailKey,
             trailKind: "player"
         });
         updatePlayerMarkerMotion(record);
@@ -4232,8 +4371,8 @@
             cancelAnimationFrame(record.animationFrame);
             playerLayer.removeLayer(record.marker);
             markerRecords.delete(key);
-            if (followedPlayer === key) {
-                followedPlayer = null;
+            if (isFollowing("player", key)) {
+                followTarget = null;
                 followWasCleared = true;
             }
         });
@@ -4288,7 +4427,7 @@
                 start.lng + ((target.lng - start.lng) * eased)
             );
             record.marker.setLatLng(current);
-            if (followedPlayer === record.player.key) {
+            if (isFollowing("player", record.player.key)) {
                 map.panTo(current, { animate: false });
             }
 
@@ -4308,7 +4447,13 @@
             return;
         }
 
-        followedPlayer = key;
+        followTarget = {
+            id: key,
+            kind: "player",
+            trailKey: record.player.trailKey
+        };
+        updateEntityFocusPolling(false);
+        requestTrailBackfill("player", record.player.trailKey, 1800);
         updateFollowStyles();
         updateFollowPill();
         renderPlayerList(latestPlayers);
@@ -4325,12 +4470,43 @@
         }
     }
 
-    function clearFollow() {
-        if (!followedPlayer) {
+    function followEntity(kind, key) {
+        var record = entityMarkerRecords.get(key);
+        if (!record || !map || !hasLiveAccess() ||
+            (kind !== "ship" && kind !== "cart")) {
             return;
         }
 
-        followedPlayer = null;
+        followTarget = {
+            id: key,
+            kind: kind,
+            trailKey: record.entity.trailKey
+        };
+        requestTrailBackfill(kind, record.entity.trailKey, 1800);
+        updateFollowStyles();
+        updateFollowPill();
+        renderPlayerList(latestPlayers);
+        renderTrails();
+        refreshOpenPopupContent();
+        scheduleHashUpdate();
+        updateEntityFocusPolling(true);
+        map.panTo(record.marker.getLatLng(), {
+            animate: true,
+            duration: 0.35
+        });
+
+        if (window.matchMedia("(max-width: 759px)").matches) {
+            elements.sidebarState.checked = false;
+        }
+    }
+
+    function clearFollow() {
+        if (!followTarget) {
+            return;
+        }
+
+        followTarget = null;
+        updateEntityFocusPolling(false);
         updateFollowStyles();
         updateFollowPill();
         renderPlayerList(latestPlayers);
@@ -4343,7 +4519,16 @@
         markerRecords.forEach(function (record, key) {
             var markerElement = record.marker.getElement();
             if (markerElement) {
-                markerElement.classList.toggle("is-followed", key === followedPlayer);
+                markerElement.classList.toggle("is-followed", isFollowing("player", key));
+            }
+        });
+        entityMarkerRecords.forEach(function (record, key) {
+            var markerElement = record.marker.getElement();
+            if (markerElement) {
+                markerElement.classList.toggle(
+                    "is-followed",
+                    isFollowing(record.entity.group, key)
+                );
             }
         });
     }
@@ -4368,7 +4553,7 @@
 
             button.type = "button";
             button.className = "player-button";
-            button.classList.toggle("is-followed", player.key === followedPlayer);
+            button.classList.toggle("is-followed", isFollowing("player", player.key));
             button.addEventListener("click", function () {
                 followPlayer(player.key);
             });
@@ -4446,7 +4631,7 @@
     }
 
     function playerMotion(player) {
-        var fallback = derivedMotion(player.key);
+        var fallback = derivedMotion(player.trailKey);
         var speedMps = Number.isFinite(player.speedMps)
             ? player.speedMps
             : fallback && Number.isFinite(fallback.speedMps) ? fallback.speedMps : null;
@@ -4532,16 +4717,17 @@
             });
         }
 
-        var trailSelected = trailIsSelected("player", player.key);
+        var trailSelected = trailIsSelected("player", player.trailKey);
         return popupShell({
             actions: [{
                 action: "follow",
+                kind: "player",
                 key: player.key,
-                label: followedPlayer === player.key ? "Unfollow" : "Follow"
+                label: isFollowing("player", player.key) ? "Unfollow" : "Follow"
             }, {
                 action: "trail",
                 active: trailSelected,
-                key: player.key,
+                key: player.trailKey,
                 kind: "player",
                 label: trailSelected ? "Hide trail" : "Trail 15m"
             }],
@@ -4662,6 +4848,11 @@
         var trailSelected = trailIsSelected("ship", entity.trailKey);
         return popupShell({
             actions: [{
+                action: "follow",
+                key: entity.trailKey,
+                kind: "ship",
+                label: isFollowing("ship", entity.trailKey) ? "Unfollow" : "Follow"
+            }, {
                 action: "trail",
                 active: trailSelected,
                 key: entity.trailKey,
@@ -4684,7 +4875,20 @@
         } else {
             rows.push({ label: "Status", value: "Idle" });
         }
+        var trailSelected = trailIsSelected("cart", entity.trailKey);
         return popupShell({
+            actions: [{
+                action: "follow",
+                key: entity.trailKey,
+                kind: "cart",
+                label: isFollowing("cart", entity.trailKey) ? "Unfollow" : "Follow"
+            }, {
+                action: "trail",
+                active: trailSelected,
+                key: entity.trailKey,
+                kind: "cart",
+                label: trailSelected ? "Hide trail" : "Trail 15m"
+            }],
             feed: "entities",
             glyph: ENTITY_GROUPS.cart.glyph,
             kicker: "CART",
@@ -4916,6 +5120,9 @@
         if (!status.entities) {
             window.clearTimeout(entityPollTimer);
             entityPollTimer = 0;
+            if (followTarget && followTarget.kind !== "player") {
+                clearFollow();
+            }
             if (entityAvailability !== "unavailable") {
                 entityAvailability = "unavailable";
                 clearEntityLayers();
@@ -4954,7 +5161,9 @@
                 prefab: prefab,
                 rotYDeg: finiteNumberOrNull(entity.rotYDeg),
                 tag: typeof entity.tag === "string" ? entity.tag.trim() : "",
-                trailKey: group === "ship" && entityId ? "ship:" + entityId : "",
+                trailKey: (group === "ship" || group === "cart") && entityId
+                    ? "entity:" + entityId
+                    : "",
                 x: Number(entity.x),
                 y: Number(entity.y),
                 z: Number(entity.z)
@@ -5004,7 +5213,8 @@
 
     function renderEntityPayload(entities) {
         var popupSource = map && map._popup ? map._popup._source : null;
-        var reopenShipKey = popupSource && popupSource._voPopupKind === "ship"
+        var reopenEntityKey = popupSource &&
+            (popupSource._voPopupKind === "ship" || popupSource._voPopupKind === "cart")
             ? popupSource._voTrailKey
             : "";
         clearEntityLayers(true);
@@ -5035,12 +5245,14 @@
             }, {
                 kind: entity.group,
                 trailKey: entity.trailKey,
-                trailKind: entity.group === "ship" ? "ship" : ""
+                trailKind: entity.group === "ship" || entity.group === "cart"
+                    ? entity.group
+                    : ""
             });
             marker.addTo(entityLayers.get(entity.group));
-            if (entity.group === "ship") {
+            if ((entity.group === "ship" || entity.group === "cart") && entity.trailKey) {
                 entityMarkerRecords.set(entity.trailKey, record);
-                if (entity.trailKey === reopenShipKey) {
+                if (entity.trailKey === reopenEntityKey) {
                     reopenMarker = marker;
                 }
             }
@@ -5053,11 +5265,19 @@
                 }
             }, 0);
         }
+        if (followTarget && followTarget.kind !== "player" &&
+            !entityMarkerRecords.has(followTarget.id)) {
+            clearFollow();
+        }
+        updateFollowStyles();
+        updateFollowPill();
+        applyPendingHashFollow();
     }
 
     function updateEntityMarkerRecords(entities) {
         entities.forEach(function (entity) {
-            if (entity.group === "ship" && entityMarkerRecords.has(entity.trailKey)) {
+            if ((entity.group === "ship" || entity.group === "cart") &&
+                entityMarkerRecords.has(entity.trailKey)) {
                 entityMarkerRecords.get(entity.trailKey).entity = entity;
             }
         });
@@ -5132,6 +5352,85 @@
         } finally {
             entityRequestPending = false;
             updateEntityPolling(false);
+        }
+    }
+
+    function updateEntityFocusPolling(immediate) {
+        window.clearTimeout(entityFocusPollTimer);
+        entityFocusPollTimer = 0;
+        if (!map || !hasLiveAccess() || entityAvailability === "unavailable" ||
+            entityFocusRequestPending || !followTarget ||
+            (followTarget.kind !== "ship" && followTarget.kind !== "cart")) {
+            return;
+        }
+
+        var record = entityMarkerRecords.get(followTarget.id);
+        if (!record || !record.entity.id) {
+            return;
+        }
+
+        entityFocusPollTimer = window.setTimeout(
+            pollEntityFocus,
+            immediate ? 0 : POLL_INTERVAL_MS
+        );
+    }
+
+    async function pollEntityFocus() {
+        if (!followTarget ||
+            (followTarget.kind !== "ship" && followTarget.kind !== "cart")) {
+            return;
+        }
+
+        var targetKey = followTarget.id;
+        var record = entityMarkerRecords.get(targetKey);
+        if (!record || !record.entity.id || entityFocusRequestPending) {
+            return;
+        }
+
+        entityFocusRequestPending = true;
+        try {
+            var payload = await fetchJson(
+                "/api/entities?focus=" + encodeURIComponent(record.entity.id)
+            );
+            if (!isFollowing(record.entity.group, targetKey) ||
+                !payload || !payload.focus || payload.focus.found !== true) {
+                return;
+            }
+
+            var entities = normalizeEntityPayload({ entities: [payload.focus] });
+            if (entities.length !== 1) {
+                return;
+            }
+
+            var entity = entities[0];
+            entity.trailKey = targetKey;
+            record.entity = entity;
+            var target = worldToLatLng(entity.x, entity.z);
+            record.marker.setLatLng(target);
+            var timestamp = Number(payload.focus.unixMs);
+            appendTrailSample(
+                targetKey,
+                entity.group,
+                entity.x,
+                entity.z,
+                Number.isFinite(timestamp) ? timestamp : Date.now()
+            );
+            for (var index = 0; index < latestEntities.length; index++) {
+                if (latestEntities[index].id === entity.id) {
+                    latestEntities[index] = entity;
+                    break;
+                }
+            }
+            feedLastUpdated.entities = Date.now();
+            setFeedState("entities", true);
+            map.panTo(target, { animate: false });
+            renderTrails();
+            refreshOpenPopupContent();
+        } catch (error) {
+            setFeedState("entities", false);
+        } finally {
+            entityFocusRequestPending = false;
+            updateEntityFocusPolling(false);
         }
     }
 
@@ -5323,6 +5622,9 @@
             } else {
                 window.clearTimeout(entityPollTimer);
                 entityPollTimer = 0;
+                if (followTarget && followTarget.kind !== "player") {
+                    clearFollow();
+                }
                 setFeedState("entities", true);
                 applyRaidEvent(null);
             }
@@ -5499,6 +5801,9 @@
         }).sort().join("\n");
         latestPlayers = normalizePlayers(payload);
         recordPlayerTrails(latestPlayers);
+        if (layerSettings.trails) {
+            backfillVisiblePlayerTrails();
+        }
         var currentPlayerNames = latestPlayers.map(function (player) {
             return player.name || "";
         }).sort().join("\n");
@@ -5657,6 +5962,7 @@
     window.addEventListener("beforeunload", function () {
         window.clearTimeout(eventSourceRetryTimer);
         window.clearTimeout(hashUpdateTimer);
+        window.clearTimeout(entityFocusPollTimer);
         window.clearInterval(popupRefreshTimer);
         window.clearInterval(layersStalenessTimer);
         window.cancelAnimationFrame(minimapFrame);

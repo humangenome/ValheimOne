@@ -6,6 +6,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Added
 
+- LiveMap now keeps a rolling 30-minute server-side position history for players, ships, and carts, serving it through `GET /api/trail` with per-view authorization; `GET /api/entities?focus=<id>` adds a 2-second single-entity fast path for followed ships and carts, and the web client back-fills trails from history on click, follow, and the all-players mini-trails toggle.
 - LiveMap now supports a `ShareToken` spectator tier with names, full map layers, POIs, and follow without console or admin access, plus `RespectInGameVisibility` to control whether shared and public views honor players' in-game position-sharing preference.
 - LiveMap's web console now offers a categorized command helper dropdown with click and keyboard completion, including live player-name completion for commands that target a player.
 - The web console now renders `help`, `vo help`, and `/help` as a rich in-terminal command reference and includes a collapsible Commands panel for browsing all available commands.

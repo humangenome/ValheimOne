@@ -25,6 +25,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private volatile string _fogMode = "off";
     private readonly Dictionary<long, PlayerMotionState> _motion =
         new Dictionary<long, PlayerMotionState>();
+    private readonly PositionHistory _positionHistory = new PositionHistory();
     private string _worldName = string.Empty;
     private float _nextPlayerUpdate;
     private float _nextFogUpdate;
@@ -227,7 +228,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _fogTracker = new FogTracker(_renderer.CacheDirectory, log);
         _mapTableReader = new MapTableReader(_fogTracker, log);
         _mapTableReader.Start();
-        EntityTracker entityTracker = new EntityTracker(config, log);
+        EntityTracker entityTracker = new EntityTracker(config, _positionHistory, log);
         _entityTracker = entityTracker;
 
         _idle = GameAccess.GetPeers(network).Count == 0;
@@ -247,7 +248,10 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             () => _poiCatalog,
             () => _mapTableReader?.Snapshot ?? MapTableSnapshot.Empty,
             () => entityTracker.Snapshot,
+            () => entityTracker.FocusSnapshot,
             entityTracker.NoteEntitiesRequested,
+            entityTracker.NoteFocusRequested,
+            _positionHistory,
             () => _fogMode,
             GetEffectivePlayerUpdateSeconds,
             _fogTracker,
@@ -319,6 +323,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
 
             Vector3 position = peer.m_refPos;
             long id = peer.m_characterID.UserID;
+            _positionHistory.Record(PositionHistory.PlayerKey(id), position.x, position.z, nowMs);
             presentIds.Add(id);
             if (!_motion.TryGetValue(id, out PlayerMotionState? motion))
             {

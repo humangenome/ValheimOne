@@ -36,7 +36,10 @@ internal sealed class LiveMapHttpServer
     private readonly Func<PoiCatalog> _getPoiCatalog;
     private readonly Func<MapTableSnapshot> _getMapTableSnapshot;
     private readonly Func<EntityMapSnapshot> _getEntitySnapshot;
+    private readonly Func<EntityFocusSnapshot> _getEntityFocusSnapshot;
     private readonly Action _noteEntitiesRequested;
+    private readonly Action<string> _noteEntityFocusRequested;
+    private readonly PositionHistory _positionHistory;
     private readonly Func<string> _getFogMode;
     private readonly Func<float> _getEffectiveUpdateSeconds;
     private readonly FogTracker _fogTracker;
@@ -70,7 +73,10 @@ internal sealed class LiveMapHttpServer
         Func<PoiCatalog> getPoiCatalog,
         Func<MapTableSnapshot> getMapTableSnapshot,
         Func<EntityMapSnapshot> getEntitySnapshot,
+        Func<EntityFocusSnapshot> getEntityFocusSnapshot,
         Action noteEntitiesRequested,
+        Action<string> noteEntityFocusRequested,
+        PositionHistory positionHistory,
         Func<string> getFogMode,
         Func<float> getEffectiveUpdateSeconds,
         FogTracker fogTracker,
@@ -92,7 +98,10 @@ internal sealed class LiveMapHttpServer
         _getPoiCatalog = getPoiCatalog;
         _getMapTableSnapshot = getMapTableSnapshot;
         _getEntitySnapshot = getEntitySnapshot;
+        _getEntityFocusSnapshot = getEntityFocusSnapshot;
         _noteEntitiesRequested = noteEntitiesRequested;
+        _noteEntityFocusRequested = noteEntityFocusRequested;
+        _positionHistory = positionHistory;
         _getFogMode = getFogMode;
         _getEffectiveUpdateSeconds = getEffectiveUpdateSeconds;
         _fogTracker = fogTracker;
@@ -313,13 +322,17 @@ internal sealed class LiveMapHttpServer
             {
                 ServePlayers(response, viewLevel);
             }
+            else if (isGet && path == "/api/trail")
+            {
+                ServeTrail(request, response, viewLevel);
+            }
             else if (isGet && path == "/api/height")
             {
                 ServeHeight(request, response);
             }
             else if (isGet && path == "/api/entities")
             {
-                ServeEntities(response, viewLevel);
+                ServeEntities(request, response, viewLevel);
             }
             else if (isGet && path == "/api/events")
             {
@@ -1184,6 +1197,140 @@ internal sealed class LiveMapHttpServer
         return json.ToString();
     }
 
+    private void ServeTrail(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        ViewLevel viewLevel)
+    {
+        string requestedId = (request.QueryString["id"] ?? string.Empty).Trim();
+        if (!TryResolveHistoryKey(
+                requestedId,
+                out string historyKey,
+                out bool isPlayer,
+                out long playerId))
+        {
+            WriteJson(response, HttpStatusCode.BadRequest, "{\"error\":\"bad request\"}");
+            return;
+        }
+
+        if (isPlayer)
+        {
+            if (viewLevel == ViewLevel.Public && !IsPlayerVisibleToPublic(playerId))
+            {
+                WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+                return;
+            }
+        }
+        else if (viewLevel == ViewLevel.Public || !_config.EntityLayer)
+        {
+            WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
+        long windowSeconds = Math.Max(
+            60L,
+            Math.Min(1800L, ParseLong(request.QueryString["window"], 1800L)));
+        PositionSample[] points = _positionHistory.Snapshot(
+            historyKey,
+            windowSeconds * 1000L);
+        long unixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var json = new StringBuilder(96 + (points.Length * 48));
+        json.Append('{');
+        json.Append("\"id\":").Append(JsonWriter.Quote(historyKey));
+        json.Append(",\"window\":").Append(
+            windowSeconds.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"points\":[");
+        for (int index = 0; index < points.Length; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            PositionSample point = points[index];
+            json.Append('{');
+            json.Append("\"x\":").Append(JsonWriter.Number(point.X));
+            json.Append(",\"z\":").Append(JsonWriter.Number(point.Z));
+            json.Append(",\"t\":").Append(
+                point.UnixMs.ToString(CultureInfo.InvariantCulture));
+            json.Append('}');
+        }
+
+        json.Append("],\"unixMs\":").Append(unixMs.ToString(CultureInfo.InvariantCulture));
+        json.Append('}');
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private bool IsPlayerVisibleToPublic(long playerId)
+    {
+        if (!_publicView)
+        {
+            return false;
+        }
+
+        LiveMapPlayerSnapshot[] players = _getSnapshot().Players;
+        for (int index = 0; index < players.Length; index++)
+        {
+            if (players[index].Id == playerId)
+            {
+                return SeesAllPlayers(ViewLevel.Public) || players[index].IsPublic;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryResolveHistoryKey(
+        string requestedId,
+        out string historyKey,
+        out bool isPlayer,
+        out long playerId)
+    {
+        historyKey = string.Empty;
+        isPlayer = false;
+        playerId = 0L;
+        if (string.IsNullOrEmpty(requestedId))
+        {
+            return false;
+        }
+
+        if (requestedId.StartsWith("player:", StringComparison.Ordinal))
+        {
+            string value = requestedId.Substring("player:".Length);
+            isPlayer = true;
+            if (!long.TryParse(
+                    value,
+                    NumberStyles.Integer,
+                    CultureInfo.InvariantCulture,
+                    out playerId))
+            {
+                return false;
+            }
+
+            historyKey = PositionHistory.PlayerKey(playerId);
+            return true;
+        }
+
+        if (!requestedId.StartsWith("entity:", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        string entityValue = requestedId.Substring("entity:".Length);
+        if (!EntityTracker.TryParseEntityId(
+                entityValue,
+                out long userId,
+                out uint objectId))
+        {
+            return false;
+        }
+
+        string entityId = userId.ToString(CultureInfo.InvariantCulture) + ":" +
+                          objectId.ToString(CultureInfo.InvariantCulture);
+        historyKey = PositionHistory.EntityKey(entityId);
+        return true;
+    }
+
     private static void ServeHeight(
         HttpListenerRequest request,
         HttpListenerResponse response)
@@ -1212,11 +1359,38 @@ internal sealed class LiveMapHttpServer
         WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
 
-    private void ServeEntities(HttpListenerResponse response, ViewLevel viewLevel)
+    private void ServeEntities(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        ViewLevel viewLevel)
     {
         if (viewLevel == ViewLevel.Public || !_config.EntityLayer)
         {
             WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
+        string requestedFocus = (request.QueryString["focus"] ?? string.Empty).Trim();
+        if (!string.IsNullOrEmpty(requestedFocus))
+        {
+            if (requestedFocus.StartsWith("entity:", StringComparison.Ordinal))
+            {
+                requestedFocus = requestedFocus.Substring("entity:".Length);
+            }
+
+            if (!EntityTracker.TryParseEntityId(
+                    requestedFocus,
+                    out long focusUserId,
+                    out uint focusObjectId))
+            {
+                WriteJson(response, HttpStatusCode.BadRequest, "{\"error\":\"bad request\"}");
+                return;
+            }
+
+            string focusId = focusUserId.ToString(CultureInfo.InvariantCulture) + ":" +
+                             focusObjectId.ToString(CultureInfo.InvariantCulture);
+            _noteEntityFocusRequested(focusId);
+            ServeEntityFocus(response, focusId);
             return;
         }
 
@@ -1255,6 +1429,38 @@ internal sealed class LiveMapHttpServer
         json.Append("],\"event\":");
         AppendRaidEventJson(json, snapshot.Event);
         json.Append('}');
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private void ServeEntityFocus(HttpListenerResponse response, string requestedId)
+    {
+        EntityFocusSnapshot focus = _getEntityFocusSnapshot();
+        bool matches = string.Equals(focus.Id, requestedId, StringComparison.Ordinal);
+        long unixMs = matches
+            ? focus.UnixMs
+            : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var json = new StringBuilder(192);
+        // Focus responses contain one normal entity object so clients do not merge scan payloads.
+        json.Append("{\"focus\":{");
+        json.Append("\"id\":").Append(JsonWriter.Quote(requestedId));
+        json.Append(",\"found\":").Append(matches && focus.Found ? "true" : "false");
+        if (matches && focus.Found)
+        {
+            json.Append(",\"group\":").Append(JsonWriter.Quote(focus.Group));
+            json.Append(",\"prefab\":").Append(JsonWriter.Quote(focus.Prefab));
+            json.Append(",\"x\":").Append(JsonWriter.Number(focus.X));
+            json.Append(",\"y\":").Append(JsonWriter.Number(focus.Y));
+            json.Append(",\"z\":").Append(JsonWriter.Number(focus.Z));
+            json.Append(",\"rotYDeg\":").Append(JsonWriter.Number(
+                Math.Round(focus.RotYDeg, 1)));
+            if (!string.IsNullOrEmpty(focus.Tag))
+            {
+                json.Append(",\"tag\":").Append(JsonWriter.Quote(focus.Tag));
+            }
+        }
+
+        json.Append(",\"unixMs\":").Append(unixMs.ToString(CultureInfo.InvariantCulture));
+        json.Append("}}");
         WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
 
