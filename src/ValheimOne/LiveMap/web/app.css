@@ -1039,9 +1039,10 @@ input {
     height: 18px;
 }
 
-.compass-control {
+.leaflet-bottom .compass-control {
     width: 64px;
     height: 64px;
+    margin-bottom: 12px;
     border-radius: 50%;
     filter: drop-shadow(0 5px 10px rgba(18, 14, 10, 0.58));
 }
@@ -2970,6 +2971,14 @@ body.is-measuring .compass-control {
     #map,
     .render-status {
         left: 0;
+    }
+
+    .leaflet-top.leaflet-left {
+        margin-top: 48px;
+    }
+
+    .leaflet-bottom .compass-control {
+        margin-bottom: 14px;
     }
 
     .compass-control,
