@@ -23,6 +23,10 @@
     var TRAIL_BUCKET_COUNT = 10;
     var SHIP_MATCH_DISTANCE = 40;
     var MAP_PING_LIFETIME_MS = 30000;
+    var CINEMA_AUTO_CYCLE_MS = 20000;
+    var CINEMA_REFOLLOW_MS = 10 * 60 * 1000;
+    var CINEMA_AMBIENT_STEP_MS = 18000;
+    var CINEMA_AMBIENT_DURATION_SEC = 16;
     var LAYER_STORAGE_KEY = "vo-livemap-layers-v2";
     var LEGACY_LAYER_STORAGE_KEY = "vo-livemap-layers";
     var LEGACY_MINIMAP_STORAGE_KEY = "vo-livemap-minimap";
@@ -104,10 +108,16 @@
     var firstPlayersViewApplied = false;
     var hashUpdateTimer = 0;
     var pendingHashFollowName = "";
+    var pendingCinemaFromHash = false;
+    var firstPlayersPayloadReceived = false;
     var followTarget = null;
     var followPill = null;
+    var cinemaState = null;
+    var cinemaRaidOptOutIds = new Set();
+    var nextCinemaRaidId = 1;
     var compassButton = null;
     var compassWindNeedle = null;
+    var cinemaWindNeedle = null;
     var scaleBarElement = null;
     var coordinateChip = null;
     var coordinateUsesMapCenter = window.matchMedia("(hover: none), (pointer: coarse)").matches;
@@ -231,6 +241,23 @@
         commandReferenceBody: document.getElementById("console-command-reference-body"),
         commandReferenceClose: document.getElementById("console-command-reference-close"),
         commandsToggle: document.getElementById("console-commands-toggle"),
+        cinemaClock: document.getElementById("cinema-clock"),
+        cinemaDay: document.getElementById("cinema-day"),
+        cinemaExit: document.getElementById("cinema-exit"),
+        cinemaHud: document.getElementById("cinema-hud"),
+        cinemaModeChip: document.getElementById("cinema-mode-chip"),
+        cinemaPlayerBiome: document.getElementById("cinema-player-biome"),
+        cinemaPlayerCard: document.getElementById("cinema-player-card"),
+        cinemaPlayerHeading: document.getElementById("cinema-player-heading"),
+        cinemaPlayerName: document.getElementById("cinema-player-name"),
+        cinemaPlayerSession: document.getElementById("cinema-player-session"),
+        cinemaPlayerSpeed: document.getElementById("cinema-player-speed"),
+        cinemaSecondaryChip: document.getElementById("cinema-secondary-chip"),
+        cinemaServerName: document.getElementById("cinema-server-name"),
+        cinemaStaleness: document.getElementById("cinema-staleness"),
+        cinemaStayTarget: document.getElementById("cinema-stay-target"),
+        cinemaWind: document.getElementById("cinema-wind"),
+        cinemaWindLabel: document.getElementById("cinema-wind-label"),
         confirmBackdrop: document.getElementById("console-confirm-backdrop"),
         confirmCancel: document.getElementById("console-confirm-cancel"),
         confirmMessage: document.getElementById("console-confirm-message"),
@@ -268,7 +295,8 @@
         consolePlayerList: document.getElementById("console-player-list"),
         worldClock: document.getElementById("world-clock"),
         worldName: document.getElementById("world-name"),
-        windChip: document.getElementById("wind-chip")
+        windChip: document.getElementById("wind-chip"),
+        watchButton: document.getElementById("watch-button")
     };
 
     function hasLiveAccess() {
@@ -1869,6 +1897,8 @@
                 }
             } else if (action === "trail") {
                 toggleSelectedTrail(kind, key);
+            } else if (action === "watch" && kind === "player") {
+                enterCinema(key);
             } else if (action === "jump-tombstone") {
                 jumpToTombstone(key);
             } else if (action === "jump-portal") {
@@ -2164,7 +2194,17 @@
                 targets,
                 followTarget.kind,
                 followTarget.trailKey,
-                TRAIL_TARGET_AGE_MS
+                cinemaState && followTarget.kind === "player"
+                    ? TRAIL_MAX_AGE_MS
+                    : TRAIL_TARGET_AGE_MS
+            );
+        }
+        if (cinemaState && cinemaState.locked) {
+            addVisibleTrailTarget(
+                targets,
+                "player",
+                cinemaState.locked.trailKey,
+                TRAIL_MAX_AGE_MS
             );
         }
         if (openPopupTrailTarget) {
@@ -2302,19 +2342,26 @@
         elements.windChip.hidden = false;
         elements.statusChips.hidden = false;
 
-        if (!compassButton || !compassWindNeedle) {
-            return;
-        }
-
         // The server reports where wind comes from; the needle points where it blows toward.
         var towardDeg = (latestWind.fromDeg + 180) % 360;
         var scale = 0.3 + (0.7 * latestWind.intensity);
-        compassWindNeedle.style.opacity = String(0.3 + (0.7 * latestWind.intensity));
-        compassWindNeedle.style.transform = "rotate(" + towardDeg.toFixed(1) +
-            "deg) scaleY(" + scale.toFixed(3) + ")";
-        compassWindNeedle.classList.add("is-visible");
-        compassButton.title = "Wind from " + direction + " · " + intensityPct + "%";
-        compassButton.setAttribute("aria-label", compassButton.title);
+        var windTitle = "Wind from " + direction + " · " + intensityPct + "%";
+        if (compassButton && compassWindNeedle) {
+            compassWindNeedle.style.opacity = String(0.3 + (0.7 * latestWind.intensity));
+            compassWindNeedle.style.transform = "rotate(" + towardDeg.toFixed(1) +
+                "deg) scaleY(" + scale.toFixed(3) + ")";
+            compassWindNeedle.classList.add("is-visible");
+            compassButton.title = windTitle;
+            compassButton.setAttribute("aria-label", windTitle);
+        }
+        if (cinemaWindNeedle && elements.cinemaWind) {
+            cinemaWindNeedle.style.opacity = String(0.3 + (0.7 * latestWind.intensity));
+            cinemaWindNeedle.style.transform = "rotate(" + towardDeg.toFixed(1) +
+                "deg) scaleY(" + scale.toFixed(3) + ")";
+            cinemaWindNeedle.classList.add("is-visible");
+            elements.cinemaWind.title = windTitle;
+            elements.cinemaWindLabel.textContent = direction + " " + intensityPct + "%";
+        }
     }
 
     function updateWorldMetrics(status) {
@@ -2533,7 +2580,11 @@
         createMinimapControl();
         applyDensityPreferences();
         applyInitialHashState(Math.max(0, overviewZoom - 1));
-        map.on("dragstart", clearFollow);
+        map.on("dragstart", function () {
+            if (!cinemaState) {
+                clearFollow();
+            }
+        });
         map.on("zoomend", renderPoiLayers);
         map.on("moveend zoomend", scheduleHashUpdate);
         syncLayerVisibility();
@@ -3654,6 +3705,7 @@
 
     function applyInitialHashState(defaultZoom) {
         var parameters = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+        pendingCinemaFromHash = parameters.has("cinema");
         var layerKeys = parameters.get("ly");
         if (layerKeys) {
             layerKeys.split(",").forEach(function (key) {
@@ -3690,6 +3742,12 @@
     }
 
     function hashFollowName() {
+        if (cinemaState) {
+            return cinemaState.locked ? cinemaState.locked.trailKey : "";
+        }
+        if (pendingCinemaFromHash) {
+            return pendingHashFollowName;
+        }
         if (!followTarget) {
             return pendingHashFollowName;
         }
@@ -3713,6 +3771,9 @@
             return;
         }
         var parameters = new URLSearchParams();
+        if (cinemaState || pendingCinemaFromHash) {
+            parameters.set("cinema", "");
+        }
         parameters.set("x", String(Math.round(center.x)));
         parameters.set("z", String(Math.round(center.z)));
         parameters.set("zm", String(Number(map.getZoom().toFixed(2))));
@@ -3729,7 +3790,8 @@
             parameters.set("follow", followName);
         }
 
-        var hash = "#" + parameters.toString();
+        var serialized = parameters.toString().replace(/(^|&)cinema=(?=&|$)/, "$1cinema");
+        var hash = "#" + serialized;
         if (window.location.hash !== hash) {
             window.history.replaceState(
                 window.history.state,
@@ -3745,6 +3807,10 @@
     }
 
     function applyPendingHashFollow() {
+        if (pendingCinemaFromHash) {
+            tryBootCinemaFromHash();
+            return;
+        }
         if (!pendingHashFollowName) {
             return;
         }
@@ -3763,6 +3829,7 @@
         var requestedName = pendingHashFollowName.toLocaleLowerCase();
         var match = latestPlayers.find(function (player) {
             return player.key === pendingHashFollowName ||
+                player.trailKey === pendingHashFollowName ||
                 player.displayName.toLocaleLowerCase() === requestedName;
         });
         if (match) {
@@ -4139,7 +4206,8 @@
         var expected = {
             entities: ENTITIES_POLL_INTERVAL_MS,
             pins: PINS_POLL_INTERVAL_MS,
-            players: POLL_INTERVAL_MS
+            players: POLL_INTERVAL_MS,
+            status: POLL_INTERVAL_MS
         }[feed];
         var age = Date.now() - updatedAt;
         return {
@@ -4149,6 +4217,7 @@
     }
 
     function updateFeedStalenessDots() {
+        updateCinemaStalenessBadge();
         if (!layersRows) {
             return;
         }
@@ -4637,6 +4706,17 @@
             trailKey: player.trailKey,
             trailKind: "player"
         });
+        marker.on("click", function () {
+            if (!cinemaState) {
+                return;
+            }
+            cinemaLockPlayer(record.player.key);
+            window.setTimeout(function () {
+                if (map && map._popup) {
+                    map.closePopup();
+                }
+            }, 0);
+        });
         updatePlayerMarkerMotion(record);
         return record;
     }
@@ -4672,6 +4752,10 @@
             playerLayer.removeLayer(record.marker);
             markerRecords.delete(key);
             if (isFollowing("player", key)) {
+                if (cinemaState && cinemaState.locked &&
+                    cinemaState.locked.trailKey === record.player.trailKey) {
+                    cinemaBeginWaiting(record.player);
+                }
                 followTarget = null;
                 followWasCleared = true;
             }
@@ -4716,6 +4800,11 @@
 
     function animateMarker(record, target) {
         cancelAnimationFrame(record.animationFrame);
+        if (document.hidden) {
+            record.marker.setLatLng(target);
+            record.animationFrame = 0;
+            return;
+        }
         var start = record.marker.getLatLng();
         var startedAt = performance.now();
 
@@ -4727,7 +4816,8 @@
                 start.lng + ((target.lng - start.lng) * eased)
             );
             record.marker.setLatLng(current);
-            if (isFollowing("player", record.player.key)) {
+            if (isFollowing("player", record.player.key) &&
+                (!cinemaState || !cinemaState.raidJumpActive)) {
                 map.panTo(current, { animate: false });
             }
 
@@ -4741,10 +4831,15 @@
         record.animationFrame = requestAnimationFrame(step);
     }
 
-    function followPlayer(key) {
+    function followPlayer(key, options) {
+        options = options || {};
         var record = markerRecords.get(key);
         if (!record || !map) {
             return;
+        }
+
+        if (cinemaState && !options.cinemaTransient) {
+            cinemaSetLockedPlayer(record.player);
         }
 
         followTarget = {
@@ -4760,10 +4855,17 @@
         renderTrails();
         refreshOpenPopupContent();
         scheduleHashUpdate();
-        map.panTo(record.marker.getLatLng(), {
-            animate: true,
-            duration: 0.35
-        });
+        if (!cinemaState || !cinemaState.raidJumpActive) {
+            if (cinemaState) {
+                cinemaFlyToPlayer(record);
+            } else {
+                map.panTo(record.marker.getLatLng(), {
+                    animate: true,
+                    duration: 0.35
+                });
+            }
+        }
+        renderCinemaHud();
 
         if (window.matchMedia("(max-width: 759px)").matches) {
             elements.sidebarState.checked = false;
@@ -4800,7 +4902,12 @@
         }
     }
 
-    function clearFollow() {
+    function clearFollow(options) {
+        options = options || {};
+        if (cinemaState && !options.keepCinemaMode) {
+            cinemaUnlockToAuto();
+            return;
+        }
         if (!followTarget) {
             return;
         }
@@ -4830,6 +4937,674 @@
                     isFollowing(record.entity.group, key)
                 );
             }
+        });
+    }
+
+    function cinemaHasAccess() {
+        return currentView === "admin" || currentView === "shared";
+    }
+
+    function playerByFollowReference(reference) {
+        var requested = typeof reference === "string" ? reference.trim() : "";
+        var requestedName = requested.toLocaleLowerCase();
+        if (!requested) {
+            return null;
+        }
+        return latestPlayers.find(function (player) {
+            return player.key === requested || player.trailKey === requested ||
+                player.displayName.toLocaleLowerCase() === requestedName;
+        }) || null;
+    }
+
+    function cinemaPlayerRecordByTrailKey(trailKey) {
+        var player = latestPlayers.find(function (candidate) {
+            return candidate.trailKey === trailKey;
+        });
+        return player ? markerRecords.get(player.key) || null : null;
+    }
+
+    function cinemaCurrentPlayerRecord() {
+        if (!followTarget || followTarget.kind !== "player") {
+            return null;
+        }
+        return markerRecords.get(followTarget.id) || null;
+    }
+
+    function cinemaTargetZoom() {
+        if (!map || !mapMetrics) {
+            return 0;
+        }
+        var tighterDefault = Math.min(map.getMaxZoom(), mapMetrics.baseZoom + 1.5);
+        return Math.max(map.getMinZoom(), Math.max(map.getZoom(), tighterDefault));
+    }
+
+    function cinemaFlyToPlayer(record) {
+        if (!cinemaState || !record || !map || document.hidden ||
+            cinemaState.raidJumpActive) {
+            return;
+        }
+        map.flyTo(record.marker.getLatLng(), cinemaTargetZoom(), {
+            duration: 0.85,
+            easeLinearity: 0.24
+        });
+    }
+
+    function cinemaClearCycleTimer(state) {
+        window.clearTimeout(state.cycleTimer);
+        state.cycleTimer = 0;
+    }
+
+    function cinemaClearWaitingTimer(state) {
+        window.clearTimeout(state.waitingTimer);
+        state.waitingTimer = 0;
+    }
+
+    function cinemaStopAmbient(state, stopMap) {
+        window.clearTimeout(state.ambientTimer);
+        state.ambientTimer = 0;
+        if (stopMap && map) {
+            map.stop();
+        }
+    }
+
+    function cinemaStablePlayers() {
+        return latestPlayers.slice().sort(function (left, right) {
+            return left.trailKey.localeCompare(right.trailKey) ||
+                left.displayName.localeCompare(right.displayName);
+        });
+    }
+
+    function cinemaScheduleCycle(delay) {
+        if (!cinemaState) {
+            return;
+        }
+        cinemaClearCycleTimer(cinemaState);
+        if (cinemaState.locked || cinemaState.raidJumpActive || document.hidden ||
+            latestPlayers.length === 0) {
+            return;
+        }
+        var state = cinemaState;
+        state.cycleTimer = window.setTimeout(function () {
+            if (cinemaState !== state) {
+                return;
+            }
+            state.cycleTimer = 0;
+            cinemaCyclePlayer(false);
+        }, delay);
+    }
+
+    function cinemaCyclePlayer(initial) {
+        if (!cinemaState || cinemaState.locked || cinemaState.raidJumpActive ||
+            document.hidden) {
+            return;
+        }
+        var players = cinemaStablePlayers();
+        if (players.length === 0) {
+            cinemaStartAmbient();
+            renderCinemaHud();
+            return;
+        }
+
+        cinemaStopAmbient(cinemaState, false);
+        var currentRecord = cinemaCurrentPlayerRecord();
+        var currentTrailKey = currentRecord
+            ? currentRecord.player.trailKey
+            : cinemaState.currentAutoTrailKey;
+        var currentIndex = players.findIndex(function (player) {
+            return player.trailKey === currentTrailKey;
+        });
+        var nextIndex = initial || currentIndex < 0 ? Math.max(0, currentIndex) :
+            (currentIndex + 1) % players.length;
+        var player = players[nextIndex];
+        cinemaState.currentAutoTrailKey = player.trailKey;
+        followPlayer(player.key, { cinemaTransient: true });
+        cinemaScheduleCycle(CINEMA_AUTO_CYCLE_MS);
+        renderCinemaHud();
+    }
+
+    function cinemaAmbientAnchors() {
+        var anchors = [{ x: 0, z: 0 }];
+        latestPins.forEach(function (pin) {
+            anchors.push({ x: pin.x, z: pin.z });
+        });
+        POI_GROUP_ORDER.forEach(function (group) {
+            (poiRecords.get(group) || []).forEach(function (record) {
+                anchors.push({ x: record.x, z: record.z });
+            });
+        });
+        trailBuffers.forEach(function (buffer) {
+            if (buffer.samples.length > 0) {
+                var sample = buffer.samples[buffer.samples.length - 1];
+                anchors.push({ x: sample.x, z: sample.z });
+            }
+        });
+        return anchors;
+    }
+
+    function cinemaAmbientStep() {
+        if (!cinemaState) {
+            return;
+        }
+        cinemaState.ambientTimer = 0;
+        if (document.hidden || cinemaState.raidJumpActive || latestPlayers.length > 0 ||
+            !map || !mapMetrics) {
+            return;
+        }
+
+        var anchors = cinemaAmbientAnchors();
+        var state = cinemaState;
+        var anchor = anchors[state.ambientIndex % anchors.length];
+        state.ambientIndex++;
+        var worldExtent = mapMetrics.pixelSize * mapMetrics.textureSize / 2;
+        var jitter = Math.min(900, worldExtent * 0.045);
+        var x = Math.max(-worldExtent, Math.min(
+            worldExtent,
+            anchor.x + ((Math.random() - 0.5) * jitter)
+        ));
+        var z = Math.max(-worldExtent, Math.min(
+            worldExtent,
+            anchor.z + ((Math.random() - 0.5) * jitter)
+        ));
+        var zoom = Math.min(
+            map.getMaxZoom(),
+            Math.max(map.getMinZoom(), mapMetrics.baseZoom + 0.35 + Math.random() * 0.35)
+        );
+        map.flyTo(worldToLatLng(x, z), zoom, {
+            duration: CINEMA_AMBIENT_DURATION_SEC,
+            easeLinearity: 0.08
+        });
+        state.ambientTimer = window.setTimeout(
+            cinemaAmbientStep,
+            CINEMA_AMBIENT_STEP_MS
+        );
+    }
+
+    function cinemaStartAmbient() {
+        if (!cinemaState || cinemaState.ambientTimer || document.hidden ||
+            cinemaState.raidJumpActive || latestPlayers.length > 0) {
+            return;
+        }
+        cinemaClearCycleTimer(cinemaState);
+        cinemaAmbientStep();
+    }
+
+    function cinemaSetLockedPlayer(player) {
+        if (!cinemaState || !player) {
+            return;
+        }
+        cinemaClearCycleTimer(cinemaState);
+        cinemaClearWaitingTimer(cinemaState);
+        cinemaStopAmbient(cinemaState, false);
+        cinemaState.locked = {
+            missingSince: 0,
+            name: player.displayName,
+            trailKey: player.trailKey
+        };
+        cinemaState.currentAutoTrailKey = "";
+        requestTrailBackfill("player", player.trailKey, 1800);
+    }
+
+    function cinemaLockPlayer(key) {
+        if (!cinemaState) {
+            enterCinema(key);
+            return;
+        }
+        var record = markerRecords.get(key);
+        if (!record) {
+            return;
+        }
+        cinemaSetLockedPlayer(record.player);
+        followPlayer(key, { cinemaTransient: true });
+        renderCinemaHud();
+    }
+
+    function cinemaBeginWaiting(player) {
+        if (!cinemaState || !cinemaState.locked) {
+            return;
+        }
+        var state = cinemaState;
+        if (player) {
+            state.locked.name = player.displayName;
+            state.locked.trailKey = player.trailKey;
+        }
+        if (!state.locked.missingSince) {
+            state.locked.missingSince = Date.now();
+        }
+        cinemaClearWaitingTimer(state);
+        var remaining = Math.max(
+            0,
+            CINEMA_REFOLLOW_MS - (Date.now() - state.locked.missingSince)
+        );
+        state.waitingTimer = window.setTimeout(function () {
+            if (cinemaState === state && state.locked &&
+                !cinemaPlayerRecordByTrailKey(state.locked.trailKey)) {
+                cinemaUnlockToAuto();
+            }
+        }, remaining);
+        if (latestPlayers.length === 0) {
+            cinemaStartAmbient();
+        }
+        renderCinemaHud();
+    }
+
+    function cinemaUnlockToAuto() {
+        if (!cinemaState) {
+            return;
+        }
+        cinemaClearWaitingTimer(cinemaState);
+        cinemaState.locked = null;
+        cinemaState.currentAutoTrailKey = "";
+        followTarget = null;
+        updateEntityFocusPolling(false);
+        updateFollowStyles();
+        updateFollowPill();
+        renderPlayerList(latestPlayers);
+        renderTrails();
+        refreshOpenPopupContent();
+        scheduleHashUpdate();
+        if (latestPlayers.length > 0 && !cinemaState.raidJumpActive) {
+            cinemaCyclePlayer(true);
+        } else if (!cinemaState.raidJumpActive) {
+            cinemaStartAmbient();
+        }
+        renderCinemaHud();
+    }
+
+    function updateCinemaFromPlayers() {
+        if (!cinemaState) {
+            return;
+        }
+        if (cinemaState.locked) {
+            var lockedRecord = cinemaPlayerRecordByTrailKey(cinemaState.locked.trailKey);
+            if (lockedRecord) {
+                cinemaClearWaitingTimer(cinemaState);
+                cinemaState.locked.missingSince = 0;
+                cinemaState.locked.name = lockedRecord.player.displayName;
+                cinemaStopAmbient(cinemaState, false);
+                if (!isFollowing("player", lockedRecord.player.key)) {
+                    followPlayer(lockedRecord.player.key, { cinemaTransient: true });
+                }
+            } else {
+                cinemaBeginWaiting(null);
+            }
+            renderCinemaHud();
+            return;
+        }
+        if (cinemaState.raidJumpActive) {
+            renderCinemaHud();
+            return;
+        }
+        if (latestPlayers.length === 0) {
+            followTarget = null;
+            updateFollowStyles();
+            updateFollowPill();
+            renderTrails();
+            cinemaStartAmbient();
+            renderCinemaHud();
+            return;
+        }
+
+        cinemaStopAmbient(cinemaState, false);
+        var record = cinemaCurrentPlayerRecord();
+        if (!record) {
+            cinemaCyclePlayer(true);
+            return;
+        }
+        cinemaState.currentAutoTrailKey = record.player.trailKey;
+        if (!cinemaState.cycleTimer) {
+            cinemaScheduleCycle(CINEMA_AUTO_CYCLE_MS);
+        }
+        renderCinemaHud();
+    }
+
+    function cinemaFlyToRaid(event) {
+        if (!cinemaState || !event || !map || document.hidden) {
+            return;
+        }
+        cinemaClearCycleTimer(cinemaState);
+        cinemaStopAmbient(cinemaState, true);
+        cinemaState.raidJumpActive = true;
+        cinemaState.raidEventId = event.id;
+        document.body.classList.add("is-cinema-raid");
+        var center = worldToLatLng(event.x, event.z);
+        var radius = Math.max(worldDistanceToMap(event.radius), 0.001);
+        var bounds = L.latLngBounds([
+            [center.lat - radius, center.lng - radius],
+            [center.lat + radius, center.lng + radius]
+        ]);
+        var zoom = Math.max(
+            map.getMinZoom(),
+            Math.min(map.getMaxZoom(), map.getBoundsZoom(bounds) - 0.5)
+        );
+        map.flyTo(center, zoom, { duration: 1.15, easeLinearity: 0.2 });
+        renderCinemaHud();
+    }
+
+    function cinemaResumeCamera() {
+        if (!cinemaState || cinemaState.raidJumpActive || document.hidden) {
+            return;
+        }
+        if (cinemaState.locked) {
+            var lockedRecord = cinemaPlayerRecordByTrailKey(cinemaState.locked.trailKey);
+            if (lockedRecord) {
+                cinemaFlyToPlayer(lockedRecord);
+            } else if (latestPlayers.length === 0) {
+                cinemaStartAmbient();
+            }
+            return;
+        }
+        var record = cinemaCurrentPlayerRecord();
+        if (record) {
+            cinemaFlyToPlayer(record);
+            cinemaScheduleCycle(CINEMA_AUTO_CYCLE_MS);
+        } else if (latestPlayers.length > 0) {
+            cinemaCyclePlayer(true);
+        } else {
+            cinemaStartAmbient();
+        }
+    }
+
+    function syncCinemaRaid(previousEvent, nextEvent) {
+        if (!cinemaState) {
+            return;
+        }
+        var previousId = previousEvent ? previousEvent.id : "";
+        var nextId = nextEvent ? nextEvent.id : "";
+        if (cinemaState.raidEventId && cinemaState.raidEventId !== nextId) {
+            cinemaState.raidJumpActive = false;
+            cinemaState.raidEventId = "";
+            document.body.classList.remove("is-cinema-raid");
+        }
+        if (nextEvent && previousId !== nextId && !cinemaRaidOptOutIds.has(nextId)) {
+            cinemaFlyToRaid(nextEvent);
+            return;
+        }
+        if (!nextEvent && previousEvent) {
+            renderCinemaHud();
+            cinemaResumeCamera();
+            return;
+        }
+        renderCinemaHud();
+    }
+
+    function cinemaStayOnTarget() {
+        if (!cinemaState || !currentRaidEvent || !cinemaState.raidJumpActive) {
+            return;
+        }
+        cinemaRaidOptOutIds.add(currentRaidEvent.id);
+        cinemaState.raidJumpActive = false;
+        document.body.classList.remove("is-cinema-raid");
+        renderCinemaHud();
+        cinemaResumeCamera();
+    }
+
+    function renderCinemaHud() {
+        if (!cinemaState || !elements.cinemaHud) {
+            return;
+        }
+        elements.cinemaServerName.textContent = elements.serverName.textContent;
+        elements.cinemaDay.textContent = elements.dayNumber.textContent;
+        elements.cinemaClock.textContent = elements.worldClock.textContent;
+
+        var record = cinemaCurrentPlayerRecord();
+        elements.cinemaPlayerCard.hidden = !record;
+        if (record) {
+            var player = record.player;
+            var motion = playerMotion(player);
+            elements.cinemaPlayerName.textContent = player.displayName;
+            elements.cinemaPlayerBiome.textContent = player.biome || "Unknown wilds";
+            elements.cinemaPlayerSpeed.textContent = motion && Number.isFinite(motion.speedMps)
+                ? motion.speedMps.toFixed(1) + " m/s · " + playerMovementMode(player, motion)
+                : "— m/s · unknown";
+            elements.cinemaPlayerHeading.textContent = motion &&
+                Number.isFinite(motion.headingDeg)
+                ? headingLabel(motion.headingDeg)
+                : "—";
+            elements.cinemaPlayerSession.textContent =
+                Number.isFinite(player.sessionStartUnixMs) && player.sessionStartUnixMs > 0
+                    ? formatSessionDuration(player.sessionStartUnixMs)
+                    : "—";
+        }
+
+        var primary = "";
+        var secondary = "";
+        var showStayButton = false;
+        if (cinemaState.raidJumpActive && currentRaidEvent) {
+            primary = "Raid · " + currentRaidEvent.name;
+            showStayButton = true;
+        } else if (cinemaState.locked) {
+            primary = cinemaState.locked.missingSince
+                ? "Waiting for " + cinemaState.locked.name + " to return…"
+                : "Locked on " + cinemaState.locked.name;
+            if (latestPlayers.length === 0) {
+                secondary = "No vikings ashore — " + elements.dayNumber.textContent;
+            }
+        } else if (latestPlayers.length === 0) {
+            primary = "No vikings ashore — " + elements.dayNumber.textContent;
+        } else {
+            primary = "Auto-cycling · click a player to lock";
+        }
+        elements.cinemaModeChip.textContent = primary;
+        elements.cinemaModeChip.hidden = !primary;
+        elements.cinemaSecondaryChip.textContent = secondary;
+        elements.cinemaSecondaryChip.hidden = !secondary;
+        elements.cinemaStayTarget.hidden = !showStayButton;
+        updateCinemaStalenessBadge();
+    }
+
+    function updateCinemaStalenessBadge() {
+        if (!elements.cinemaStaleness) {
+            return;
+        }
+        var playerFeed = feedStaleness("players");
+        var statusFeed = feedStaleness("status");
+        var priority = { grey: 0, green: 1, amber: 2, red: 3 };
+        var worst = priority[playerFeed.state] >= priority[statusFeed.state]
+            ? playerFeed
+            : statusFeed;
+        if (failedFeeds.has("players") || failedFeeds.has("status")) {
+            worst = { state: "red", title: "feed reconnecting" };
+        }
+        var labels = {
+            amber: "Feed delayed",
+            green: "Live",
+            grey: "Waiting for feeds",
+            red: "Feed stale"
+        };
+        elements.cinemaStaleness.className = "cinema-staleness is-" + worst.state;
+        elements.cinemaStaleness.textContent = labels[worst.state];
+        elements.cinemaStaleness.title =
+            "Players " + playerFeed.title + " · Status " + statusFeed.title;
+    }
+
+    function cinemaVisibilityChanged() {
+        if (!cinemaState) {
+            return;
+        }
+        cinemaClearCycleTimer(cinemaState);
+        cinemaStopAmbient(cinemaState, document.hidden);
+        if (!document.hidden) {
+            if (cinemaState.raidJumpActive && currentRaidEvent) {
+                cinemaFlyToRaid(currentRaidEvent);
+            } else {
+                cinemaResumeCamera();
+            }
+        }
+    }
+
+    function enterCinema(playerKey, waitingTrailKey) {
+        if (!cinemaHasAccess() || !map || !mapMetrics) {
+            return;
+        }
+        if (cinemaState) {
+            if (playerKey) {
+                cinemaLockPlayer(playerKey);
+            }
+            return;
+        }
+
+        var priorFollow = followTarget ? {
+            id: followTarget.id,
+            kind: followTarget.kind,
+            trailKey: followTarget.trailKey
+        } : null;
+        var priorPendingFollow = pendingCinemaFromHash ? "" : pendingHashFollowName;
+        var priorCenter = map.getCenter();
+        cinemaState = {
+            ambientIndex: 0,
+            ambientTimer: 0,
+            currentAutoTrailKey: "",
+            cycleTimer: 0,
+            locked: null,
+            prior: {
+                activeTab: activeTab,
+                center: L.latLng(priorCenter.lat, priorCenter.lng),
+                followTarget: priorFollow,
+                measureActive: measureActive,
+                pendingHashFollowName: priorPendingFollow,
+                pingArmed: pingArmed,
+                sidebarChecked: elements.sidebarState.checked,
+                zoom: map.getZoom()
+            },
+            raidEventId: "",
+            raidJumpActive: false,
+            stalenessTimer: 0,
+            visibilityHandler: cinemaVisibilityChanged,
+            waitingTimer: 0
+        };
+        pendingCinemaFromHash = false;
+        pendingHashFollowName = "";
+        setActiveTab("map", false);
+        if (measureActive) {
+            finishMeasurement();
+        }
+        disarmMapPing();
+        if (map._popup) {
+            map.closePopup();
+        }
+        document.body.classList.add("is-cinema");
+        elements.cinemaHud.hidden = false;
+        document.addEventListener("visibilitychange", cinemaState.visibilityHandler);
+        cinemaState.stalenessTimer = window.setInterval(
+            updateCinemaStalenessBadge,
+            5000
+        );
+        map.invalidateSize({ animate: false });
+
+        var record = playerKey ? markerRecords.get(playerKey) : null;
+        if (record) {
+            cinemaSetLockedPlayer(record.player);
+            followPlayer(record.player.key, { cinemaTransient: true });
+        } else if (waitingTrailKey && waitingTrailKey.startsWith("player:")) {
+            cinemaState.locked = {
+                missingSince: Date.now(),
+                name: waitingTrailKey.slice("player:".length) || "viking",
+                trailKey: waitingTrailKey
+            };
+            requestTrailBackfill("player", waitingTrailKey, 1800);
+            cinemaBeginWaiting(null);
+        } else {
+            followTarget = null;
+            updateFollowStyles();
+            updateFollowPill();
+            updateCinemaFromPlayers();
+        }
+        if (currentRaidEvent) {
+            syncCinemaRaid(null, currentRaidEvent);
+        }
+        renderTrails();
+        renderCinemaHud();
+        scheduleHashUpdate();
+    }
+
+    function teardownCinemaState(state) {
+        cinemaClearCycleTimer(state);
+        cinemaClearWaitingTimer(state);
+        cinemaStopAmbient(state, true);
+        window.clearInterval(state.stalenessTimer);
+        document.removeEventListener("visibilitychange", state.visibilityHandler);
+    }
+
+    function exitCinema() {
+        if (!cinemaState) {
+            return;
+        }
+        var state = cinemaState;
+        cinemaState = null;
+        pendingCinemaFromHash = false;
+        teardownCinemaState(state);
+        document.body.classList.remove("is-cinema", "is-cinema-raid");
+        elements.cinemaHud.hidden = true;
+        elements.sidebarState.checked = state.prior.sidebarChecked;
+
+        followTarget = state.prior.followTarget;
+        pendingHashFollowName = state.prior.pendingHashFollowName;
+        updateEntityFocusPolling(Boolean(
+            followTarget && (followTarget.kind === "ship" || followTarget.kind === "cart")
+        ));
+        updateFollowStyles();
+        updateFollowPill();
+        renderPlayerList(latestPlayers);
+        renderTrails();
+        refreshOpenPopupContent();
+        setActiveTab(state.prior.activeTab, false);
+        map.setView(state.prior.center, state.prior.zoom, { animate: false });
+        map.invalidateSize({ animate: false });
+        if (state.prior.measureActive && measureModeEnabled) {
+            measureActive = true;
+            measureDoubleClickZoomWasEnabled = map.doubleClickZoom.enabled();
+            if (measureDoubleClickZoomWasEnabled) {
+                map.doubleClickZoom.disable();
+            }
+            document.body.classList.add("is-measuring");
+            updateMeasureHud();
+        }
+        if (state.prior.pingArmed && currentView === "admin") {
+            armMapPing();
+        }
+        scheduleHashUpdate();
+    }
+
+    function tryBootCinemaFromHash() {
+        if (!pendingCinemaFromHash || cinemaState || !firstPlayersPayloadReceived ||
+            !map || currentView === null) {
+            return;
+        }
+        if (!cinemaHasAccess()) {
+            pendingCinemaFromHash = false;
+            pendingHashFollowName = "";
+            scheduleHashUpdate();
+            return;
+        }
+
+        var reference = pendingHashFollowName;
+        var player = playerByFollowReference(reference);
+        if (player) {
+            enterCinema(player.key);
+        } else {
+            enterCinema("", reference);
+        }
+    }
+
+    function bindCinemaEvents() {
+        cinemaWindNeedle = elements.cinemaWind
+            ? elements.cinemaWind.querySelector(".cinema-wind-needle")
+            : null;
+        elements.watchButton.addEventListener("click", function () {
+            var targetKey = followTarget && followTarget.kind === "player"
+                ? followTarget.id
+                : "";
+            enterCinema(targetKey);
+        });
+        elements.cinemaExit.addEventListener("click", exitCinema);
+        elements.cinemaStayTarget.addEventListener("click", cinemaStayOnTarget);
+        document.addEventListener("keydown", function (event) {
+            if (event.key !== "Escape" || !cinemaState) {
+                return;
+            }
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            exitCinema();
         });
     }
 
@@ -5272,19 +6047,29 @@
         }
 
         var trailSelected = trailIsSelected("player", player.trailKey);
-        return popupShell({
-            actions: [{
-                action: "follow",
+        var actions = [{
+            action: "follow",
+            kind: "player",
+            key: player.key,
+            label: isFollowing("player", player.key) ? "Unfollow" : "Follow"
+        }];
+        if (hasLiveAccess()) {
+            actions.push({
+                action: "watch",
                 kind: "player",
                 key: player.key,
-                label: isFollowing("player", player.key) ? "Unfollow" : "Follow"
-            }, {
-                action: "trail",
-                active: trailSelected,
-                key: player.trailKey,
-                kind: "player",
-                label: trailSelected ? "Hide trail" : "Trail 15m"
-            }],
+                label: "Watch"
+            });
+        }
+        actions.push({
+            action: "trail",
+            active: trailSelected,
+            key: player.trailKey,
+            kind: "player",
+            label: trailSelected ? "Hide trail" : "Trail 15m"
+        });
+        return popupShell({
+            actions: actions,
             feed: "players",
             glyph: "●",
             kicker: "PLAYER",
@@ -6126,6 +6911,8 @@
         }
 
         return {
+            duration: Math.max(0, Number(value.duration) || 0),
+            elapsed: Math.max(0, Number(value.elapsed) || 0),
             name: typeof value.name === "string" && value.name.trim() ? value.name.trim() : "Event",
             radius: Number(value.radius),
             x: Number(value.x),
@@ -6134,8 +6921,20 @@
     }
 
     function applyRaidEvent(value) {
-        var hadRaid = Boolean(currentRaidEvent);
-        currentRaidEvent = normalizeRaidEvent(value);
+        var previousEvent = currentRaidEvent;
+        var hadRaid = Boolean(previousEvent);
+        var nextEvent = normalizeRaidEvent(value);
+        if (nextEvent) {
+            var sameEvent = previousEvent && previousEvent.name === nextEvent.name &&
+                Math.round(previousEvent.x) === Math.round(nextEvent.x) &&
+                Math.round(previousEvent.z) === Math.round(nextEvent.z) &&
+                nextEvent.elapsed + 2 >= previousEvent.elapsed;
+            nextEvent.id = sameEvent
+                ? previousEvent.id
+                : "raid:" + nextCinemaRaidId++ + ":" +
+                    nextEvent.name.toLocaleLowerCase().replace(/\s+/g, "-");
+        }
+        currentRaidEvent = nextEvent;
         elements.raidBadge.hidden = !currentRaidEvent;
         elements.raidBadge.textContent = currentRaidEvent ? "Raid: " + currentRaidEvent.name : "";
 
@@ -6149,6 +6948,7 @@
             }
             renderLegend();
             updateLayerCounts();
+            syncCinemaRaid(previousEvent, currentRaidEvent);
             return;
         }
 
@@ -6177,6 +6977,7 @@
         }
         renderLegend();
         updateLayerCounts();
+        syncCinemaRaid(previousEvent, currentRaidEvent);
     }
 
     function createPinTooltip(pin) {
@@ -6280,11 +7081,15 @@
         elements.publicViewBadge.textContent = nextView === "shared"
             ? "Shared view"
             : "Public view";
+        elements.watchButton.hidden = nextView === "public";
         if (nextView === currentView) {
             return;
         }
 
         currentView = nextView;
+        if (currentView === "public" && cinemaState) {
+            exitCinema();
+        }
         syncMapPingControl();
         if (map) {
             loadPoisForCurrentView();
@@ -6302,6 +7107,7 @@
                 applyRaidEvent(null);
             }
         }
+        tryBootCinemaFromHash();
     }
 
     function updateFogStatus(status) {
@@ -6460,6 +7266,8 @@
         updateFogStatus(status.map && status.map.fog);
         ensureMap(status.map);
         applyRaidEvent(status.event);
+        renderCinemaHud();
+        tryBootCinemaFromHash();
     }
 
     function handlePlayersPayload(payload) {
@@ -6469,6 +7277,7 @@
 
         feedLastUpdated.players = Date.now();
         setFeedState("players", true);
+        firstPlayersPayloadReceived = true;
         var hadPlayers = latestPlayers.length > 0;
         var previousPlayerNames = latestPlayers.map(function (player) {
             return player.name || "";
@@ -6490,6 +7299,7 @@
         applyInitialPlayersView();
         updateLayerCounts();
         applyPendingHashFollow();
+        updateCinemaFromPlayers();
         if (previousPlayerNames !== currentPlayerNames &&
             document.activeElement === elements.commandInput &&
             findPlayerSuggestionContext(elements.commandInput.value.replace(/^\s+/, ""))) {
@@ -6622,6 +7432,7 @@
         run();
     }
 
+    bindCinemaEvents();
     bindConsoleEvents();
     bindPopupDocumentEvents();
     elements.sidebarState.addEventListener("change", function () {
@@ -6640,6 +7451,9 @@
     startPolling(pollPlayers, POLL_INTERVAL_MS);
     connectEventStream();
     window.addEventListener("beforeunload", function () {
+        if (cinemaState) {
+            teardownCinemaState(cinemaState);
+        }
         window.clearTimeout(eventSourceRetryTimer);
         window.clearTimeout(hashUpdateTimer);
         window.clearTimeout(entityFocusPollTimer);

@@ -88,6 +88,14 @@
             <div class="brand-badges">
                 <span id="public-view-badge" class="public-view-badge" hidden>Public view</span>
                 <span id="offline-badge" class="offline-badge" hidden>Offline</span>
+                <button id="watch-button" class="watch-button" type="button"
+                        title="Watch the world in cinema mode" hidden>
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M2.5 12s3.4-5 9.5-5 9.5 5 9.5 5-3.4 5-9.5 5-9.5-5-9.5-5Z" />
+                        <circle cx="12" cy="12" r="2.5" />
+                    </svg>
+                    <span>Watch</span>
+                </button>
             </div>
         </header>
 
@@ -139,6 +147,67 @@
     </aside>
 
     <main id="map" aria-label="Valheim world map" aria-labelledby="map-tab" role="tabpanel"></main>
+
+    <section id="cinema-hud" class="cinema-hud" aria-label="Watch mode display" hidden>
+        <div class="cinema-topbar">
+            <span id="cinema-server-name" class="cinema-chip cinema-server-chip">—</span>
+            <span id="cinema-day" class="cinema-chip">Day —</span>
+            <span id="cinema-clock" class="cinema-chip cinema-clock">--:--</span>
+            <span id="cinema-wind" class="cinema-chip cinema-wind" title="Wind unavailable">
+                <svg viewBox="0 0 80 80" aria-hidden="true" focusable="false">
+                    <circle class="compass-disc" cx="40" cy="40" r="29" />
+                    <circle class="compass-ring" cx="40" cy="40" r="25" />
+                    <g class="compass-staves">
+                        <path d="M40 40V15M40 15l-5 6m5-6 5 6M36 24h8" />
+                        <path d="M40 40l18-18m0 0 5-5m-5 5-7-1m7 1 1 7" />
+                        <path d="M40 40h25m0 0-6-5m6 5-6 5M56 36v8" />
+                        <path d="M40 40l18 18m0 0 5 5m-5-5 1-7m-1 7-7-1" />
+                        <path d="M40 40v25m0 0-5-6m5 6 5-6M36 56h8" />
+                        <path d="M40 40 22 58m0 0-5 5m5-5 7-1m-7 1-1-7" />
+                        <path d="M40 40H15m0 0 6-5m-6 5 6 5M24 36v8" />
+                        <path d="M40 40 22 22m0 0-5-5m5 5-1 7m1-7 7 1" />
+                    </g>
+                    <g class="cinema-wind-needle"><path d="M40 40V19" /></g>
+                    <circle class="compass-hub" cx="40" cy="40" r="2.8" />
+                    <g class="compass-cardinals">
+                        <text class="compass-north" x="40" y="8">N</text>
+                        <text x="74" y="43">E</text>
+                        <text x="40" y="78">S</text>
+                        <text x="6" y="43">W</text>
+                    </g>
+                </svg>
+                <span id="cinema-wind-label">—</span>
+            </span>
+            <span id="cinema-staleness" class="cinema-staleness is-grey" role="status">
+                Waiting for feeds
+            </span>
+        </div>
+
+        <div class="cinema-notices" aria-live="polite">
+            <span id="cinema-mode-chip" class="cinema-mode-chip" hidden></span>
+            <span id="cinema-secondary-chip" class="cinema-mode-chip is-secondary" hidden></span>
+            <button id="cinema-stay-target" class="cinema-mode-button" type="button" hidden>
+                Stay on target
+            </button>
+        </div>
+
+        <article id="cinema-player-card" class="cinema-player-card" hidden>
+            <div class="cinema-player-heading">
+                <span class="cinema-player-kicker">FOLLOWING</span>
+                <h1 id="cinema-player-name">—</h1>
+            </div>
+            <dl class="cinema-player-facts">
+                <div><dt>Biome</dt><dd id="cinema-player-biome">—</dd></div>
+                <div><dt>Speed</dt><dd id="cinema-player-speed">—</dd></div>
+                <div><dt>Heading</dt><dd id="cinema-player-heading">—</dd></div>
+                <div><dt>Session</dt><dd id="cinema-player-session">—</dd></div>
+            </dl>
+        </article>
+
+        <button id="cinema-exit" class="cinema-exit" type="button" aria-label="Exit watch mode"
+                title="Exit watch mode (Esc)">×</button>
+        <div class="cinema-raid-vignette" aria-hidden="true"></div>
+    </section>
 
     <section id="console-pane" class="console-pane" aria-labelledby="console-tab" role="tabpanel" hidden>
         <div class="console-layout">

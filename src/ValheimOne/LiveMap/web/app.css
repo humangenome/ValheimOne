@@ -212,6 +212,50 @@ input {
     color: #e8a08c;
 }
 
+.watch-button {
+    display: inline-flex;
+    min-height: 25px;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 7px;
+    border: 1px solid rgba(217, 177, 104, 0.48);
+    border-radius: 999px;
+    background: rgba(217, 177, 104, 0.1);
+    color: var(--accent);
+    cursor: pointer;
+    font-family: var(--font-display);
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.065em;
+    line-height: 1;
+    text-transform: uppercase;
+    transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease,
+        box-shadow 140ms ease;
+}
+
+.watch-button[hidden] {
+    display: none;
+}
+
+.watch-button svg {
+    width: 13px;
+    height: 13px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.7;
+}
+
+.watch-button:hover,
+.watch-button:focus-visible {
+    border-color: rgba(217, 177, 104, 0.8);
+    outline: none;
+    background: rgba(217, 177, 104, 0.2);
+    box-shadow: 0 0 12px rgba(217, 177, 104, 0.16);
+    color: #f4ddb0;
+}
+
 .server-details {
     display: grid;
     gap: 10px;
@@ -3200,6 +3244,375 @@ body.is-pinging #map .leaflet-overlay-pane path {
     display: none;
 }
 
+body.is-cinema #sidebar,
+body.is-cinema > .sidebar-toggle,
+body.is-cinema #console-pane,
+body.is-cinema #render-status,
+body.is-cinema #map > .leaflet-control-container,
+body.is-cinema #map > .measure-hud,
+body.is-cinema #map > .follow-pill {
+    display: none !important;
+}
+
+body.is-cinema #map {
+    left: 0;
+}
+
+.cinema-hud {
+    position: fixed;
+    z-index: 1500;
+    inset: 0;
+    overflow: hidden;
+    color: var(--text);
+    pointer-events: none;
+}
+
+.cinema-hud[hidden],
+.cinema-mode-chip[hidden],
+.cinema-mode-button[hidden],
+.cinema-player-card[hidden] {
+    display: none;
+}
+
+.cinema-topbar {
+    position: absolute;
+    z-index: 2;
+    top: 24px;
+    left: 50%;
+    display: flex;
+    width: min(1120px, calc(100% - 144px));
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    transform: translateX(-50%);
+}
+
+.cinema-chip,
+.cinema-staleness,
+.cinema-mode-chip,
+.cinema-mode-button {
+    border: 1px solid rgba(217, 177, 104, 0.48);
+    background:
+        linear-gradient(180deg, rgba(48, 37, 25, 0.96), rgba(25, 19, 13, 0.94));
+    box-shadow:
+        inset 0 0 0 1px rgba(255, 232, 191, 0.045),
+        0 8px 28px rgba(6, 4, 2, 0.42);
+    backdrop-filter: blur(9px);
+}
+
+.cinema-chip {
+    display: inline-flex;
+    min-height: 52px;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 18px;
+    border-radius: 9px;
+    color: #ead8b8;
+    font-size: clamp(15px, 1.25vw, 20px);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    letter-spacing: 0.025em;
+    line-height: 1;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.72);
+    white-space: nowrap;
+}
+
+.cinema-server-chip {
+    max-width: min(36vw, 430px);
+    overflow: hidden;
+    color: var(--accent);
+    font-family: var(--font-display);
+    letter-spacing: 0.045em;
+    text-overflow: ellipsis;
+}
+
+.cinema-clock {
+    min-width: 92px;
+    color: #f4ddb0;
+    font-size: clamp(20px, 1.65vw, 27px);
+}
+
+.cinema-wind {
+    min-width: 128px;
+    gap: 6px;
+    padding: 5px 14px 5px 7px;
+}
+
+.cinema-wind svg {
+    display: block;
+    width: 40px;
+    height: 40px;
+    flex: 0 0 40px;
+    overflow: visible;
+}
+
+.cinema-wind .compass-disc {
+    fill: rgba(18, 14, 10, 0.68);
+}
+
+.cinema-wind-needle {
+    fill: none;
+    stroke: var(--sun);
+    stroke-linecap: round;
+    stroke-width: 2.8;
+    transform-origin: 40px 40px;
+    transition: opacity 600ms ease, transform 600ms ease;
+    visibility: hidden;
+}
+
+.cinema-wind-needle.is-visible {
+    visibility: visible;
+}
+
+.cinema-staleness {
+    display: inline-flex;
+    min-height: 52px;
+    align-items: center;
+    gap: 9px;
+    padding: 10px 15px;
+    border-radius: 9px;
+    color: #bcae97;
+    font-size: clamp(12px, 0.95vw, 15px);
+    font-weight: 700;
+    letter-spacing: 0.035em;
+    white-space: nowrap;
+}
+
+.cinema-staleness::before {
+    width: 9px;
+    height: 9px;
+    flex: 0 0 9px;
+    border-radius: 50%;
+    background: var(--marker-muted);
+    box-shadow: 0 0 0 2px rgba(180, 166, 143, 0.13);
+    content: "";
+}
+
+.cinema-staleness.is-green::before {
+    background: #78b985;
+    box-shadow: 0 0 9px rgba(120, 185, 133, 0.62);
+}
+
+.cinema-staleness.is-amber::before {
+    background: var(--sun);
+    box-shadow: 0 0 10px rgba(224, 168, 60, 0.68);
+}
+
+.cinema-staleness.is-red::before {
+    background: var(--raid);
+    box-shadow: 0 0 11px rgba(201, 106, 82, 0.76);
+}
+
+.cinema-notices {
+    position: absolute;
+    z-index: 2;
+    top: 92px;
+    left: 50%;
+    display: flex;
+    max-width: calc(100% - 64px);
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transform: translateX(-50%);
+}
+
+.cinema-mode-chip,
+.cinema-mode-button {
+    min-height: 34px;
+    padding: 7px 14px;
+    border-radius: 999px;
+    color: #dbc9aa;
+    font-size: clamp(12px, 1vw, 15px);
+    font-weight: 700;
+    letter-spacing: 0.025em;
+    line-height: 1.1;
+    white-space: nowrap;
+}
+
+.cinema-mode-chip.is-secondary {
+    border-color: rgba(138, 116, 88, 0.48);
+    color: #b7a487;
+}
+
+.cinema-mode-button {
+    border-color: rgba(201, 106, 82, 0.7);
+    background: linear-gradient(180deg, rgba(95, 43, 34, 0.94), rgba(51, 25, 20, 0.96));
+    color: #f1b09d;
+    cursor: pointer;
+    pointer-events: auto;
+    transition: border-color 140ms ease, box-shadow 140ms ease, color 140ms ease;
+}
+
+.cinema-mode-button:hover,
+.cinema-mode-button:focus-visible {
+    border-color: #e49a83;
+    outline: none;
+    box-shadow: 0 0 18px rgba(201, 106, 82, 0.36);
+    color: #ffd0c2;
+}
+
+.cinema-player-card {
+    position: absolute;
+    z-index: 2;
+    bottom: 30px;
+    left: 50%;
+    display: grid;
+    width: min(860px, calc(100% - 64px));
+    min-height: 146px;
+    grid-template-columns: minmax(210px, 0.8fr) minmax(470px, 1.8fr);
+    align-items: stretch;
+    overflow: hidden;
+    border: 1px solid rgba(217, 177, 104, 0.64);
+    border-radius: 13px;
+    background:
+        linear-gradient(105deg, rgba(48, 37, 25, 0.97), rgba(25, 19, 13, 0.95)),
+        radial-gradient(circle at top left, rgba(217, 177, 104, 0.14), transparent 46%);
+    box-shadow:
+        inset 0 0 0 1px rgba(255, 232, 191, 0.055),
+        0 15px 48px rgba(4, 3, 2, 0.55),
+        0 0 30px rgba(217, 177, 104, 0.07);
+    transform: translateX(-50%);
+    backdrop-filter: blur(11px);
+}
+
+.cinema-player-card::before {
+    position: absolute;
+    top: 0;
+    right: 12%;
+    left: 12%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #f0c777, transparent);
+    content: "";
+    opacity: 0.86;
+}
+
+.cinema-player-heading {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    justify-content: center;
+    padding: 25px 28px;
+    border-right: 1px solid rgba(217, 177, 104, 0.24);
+    background: rgba(217, 177, 104, 0.035);
+}
+
+.cinema-player-kicker {
+    color: var(--accent);
+    font-family: var(--font-display);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.17em;
+}
+
+.cinema-player-heading h1 {
+    margin: 7px 0 0;
+    overflow: hidden;
+    color: #f1e3ca;
+    font-family: var(--font-display);
+    font-size: clamp(25px, 2.25vw, 37px);
+    font-weight: 400;
+    letter-spacing: 0.015em;
+    line-height: 1.05;
+    text-overflow: ellipsis;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.64);
+    white-space: nowrap;
+}
+
+.cinema-player-facts {
+    display: grid;
+    min-width: 0;
+    margin: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-content: center;
+    padding: 18px 25px;
+}
+
+.cinema-player-facts > div {
+    min-width: 0;
+    padding: 9px 14px;
+}
+
+.cinema-player-facts > div:nth-child(even) {
+    border-left: 1px solid rgba(217, 177, 104, 0.16);
+}
+
+.cinema-player-facts > div:nth-child(n + 3) {
+    border-top: 1px solid rgba(217, 177, 104, 0.16);
+}
+
+.cinema-player-facts dt {
+    margin: 0 0 4px;
+    color: #a58d6c;
+    font-family: var(--font-display);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.cinema-player-facts dd {
+    margin: 0;
+    overflow: hidden;
+    color: #eadbc2;
+    font-size: clamp(15px, 1.25vw, 19px);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cinema-exit {
+    position: absolute;
+    z-index: 4;
+    top: 18px;
+    right: 18px;
+    display: grid;
+    width: 42px;
+    height: 42px;
+    padding: 0 0 3px;
+    border: 1px solid rgba(217, 177, 104, 0.38);
+    border-radius: 50%;
+    background: rgba(24, 18, 12, 0.88);
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.42);
+    color: #e8dcc4;
+    cursor: pointer;
+    font-size: 28px;
+    line-height: 1;
+    opacity: 0.2;
+    pointer-events: auto;
+    place-items: center;
+    transition: opacity 160ms ease, border-color 160ms ease, background-color 160ms ease,
+        box-shadow 160ms ease;
+}
+
+.cinema-exit:hover,
+.cinema-exit:focus-visible {
+    border-color: rgba(217, 177, 104, 0.86);
+    outline: none;
+    background: rgba(41, 31, 21, 0.97);
+    box-shadow: 0 0 19px rgba(217, 177, 104, 0.22);
+    opacity: 1;
+}
+
+.cinema-raid-vignette {
+    position: absolute;
+    z-index: 1;
+    inset: 0;
+    border: 5px solid rgba(201, 106, 82, 0.78);
+    box-shadow:
+        inset 0 0 95px 20px rgba(157, 37, 26, 0.52),
+        inset 0 0 240px 32px rgba(94, 18, 14, 0.22);
+    opacity: 0;
+    pointer-events: none;
+    visibility: hidden;
+}
+
+body.is-cinema.is-cinema-raid .cinema-raid-vignette {
+    animation: cinema-raid-vignette 1.65s ease-in-out infinite;
+    visibility: visible;
+}
+
 @keyframes spin {
     to {
         transform: rotate(360deg);
@@ -3227,6 +3640,17 @@ body.is-pinging #map .leaflet-overlay-pane path {
 
     50% {
         opacity: 0.94;
+    }
+}
+
+@keyframes cinema-raid-vignette {
+    0%,
+    100% {
+        opacity: 0.42;
+    }
+
+    50% {
+        opacity: 0.92;
     }
 }
 
@@ -3350,6 +3774,123 @@ body.is-pinging #map .leaflet-overlay-pane path {
         padding-right: 12px;
         padding-left: 12px;
         text-overflow: ellipsis;
+    }
+
+    .cinema-topbar {
+        top: 12px;
+        width: calc(100% - 76px);
+        justify-content: flex-start;
+        gap: 5px;
+        overflow-x: auto;
+        transform: translateX(calc(-50% - 18px));
+        scrollbar-width: none;
+    }
+
+    .cinema-topbar::-webkit-scrollbar {
+        display: none;
+    }
+
+    .cinema-chip,
+    .cinema-staleness {
+        min-height: 40px;
+        padding: 7px 10px;
+        border-radius: 7px;
+        font-size: 12px;
+    }
+
+    .cinema-server-chip {
+        max-width: 42vw;
+    }
+
+    .cinema-clock {
+        min-width: 68px;
+        font-size: 16px;
+    }
+
+    .cinema-wind {
+        min-width: 102px;
+        padding: 3px 9px 3px 4px;
+    }
+
+    .cinema-wind svg {
+        width: 32px;
+        height: 32px;
+        flex-basis: 32px;
+    }
+
+    .cinema-staleness {
+        gap: 6px;
+        font-size: 10px;
+    }
+
+    .cinema-notices {
+        top: 62px;
+        max-width: calc(100% - 24px);
+        flex-wrap: wrap;
+        gap: 5px;
+    }
+
+    .cinema-mode-chip,
+    .cinema-mode-button {
+        min-height: 29px;
+        padding: 6px 10px;
+        font-size: 10px;
+    }
+
+    .cinema-player-card {
+        bottom: 12px;
+        width: calc(100% - 24px);
+        min-height: 0;
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .cinema-player-heading {
+        padding: 14px 17px 12px;
+        border-right: 0;
+        border-bottom: 1px solid rgba(217, 177, 104, 0.2);
+    }
+
+    .cinema-player-kicker {
+        font-size: 8px;
+    }
+
+    .cinema-player-heading h1 {
+        margin-top: 3px;
+        font-size: 21px;
+    }
+
+    .cinema-player-facts {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        padding: 7px 8px 9px;
+    }
+
+    .cinema-player-facts > div {
+        padding: 5px 7px;
+    }
+
+    .cinema-player-facts > div:nth-child(n) {
+        border-top: 0;
+        border-left: 1px solid rgba(217, 177, 104, 0.16);
+    }
+
+    .cinema-player-facts > div:first-child {
+        border-left: 0;
+    }
+
+    .cinema-player-facts dt {
+        font-size: 7px;
+    }
+
+    .cinema-player-facts dd {
+        font-size: 10px;
+    }
+
+    .cinema-exit {
+        top: 11px;
+        right: 10px;
+        width: 35px;
+        height: 35px;
+        font-size: 23px;
     }
 
     .console-pane {
