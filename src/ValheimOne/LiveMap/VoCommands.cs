@@ -11,6 +11,28 @@ namespace ValheimOne.LiveMap;
 
 internal static class VoCommands
 {
+    private const string InitTerminalMethodName = "InitTerminal";
+
+    private static readonly Lazy<MethodInfo> InitTerminalMethod = new(
+        () => AccessTools.Method(typeof(Terminal), InitTerminalMethodName, Type.EmptyTypes) ??
+              throw new MissingMethodException(
+                  typeof(Terminal).FullName,
+                  InitTerminalMethodName));
+
+    private static readonly Lazy<FieldInfo> TerminalInitializedField = new(
+        () => AccessTools.Field(typeof(Terminal), "m_terminalInitialized") ??
+              throw new MissingFieldException(
+                  typeof(Terminal).FullName,
+                  "m_terminalInitialized"));
+
+    private static readonly Lazy<FieldInfo> ForceEnvironmentField = new(
+        () => AccessTools.Field(typeof(EnvMan), "m_forceEnv") ??
+              throw new MissingFieldException(typeof(EnvMan).FullName, "m_forceEnv"));
+
+    private static readonly Lazy<FieldInfo> NextEnvironmentField = new(
+        () => AccessTools.Field(typeof(EnvMan), "m_nextEnv") ??
+              throw new MissingFieldException(typeof(EnvMan).FullName, "m_nextEnv"));
+
     private static readonly BossDefinition[] Bosses =
     {
         new BossDefinition("Eikthyr", "defeated_eikthyr"),
@@ -41,16 +63,11 @@ internal static class VoCommands
 
     public static void ApplyPatches(Harmony harmony)
     {
-        MethodInfo initTerminal = AccessTools.Method(
-            typeof(Terminal),
-            nameof(Terminal.InitTerminal),
-            Type.EmptyTypes) ??
-            throw new MissingMethodException(nameof(Terminal), nameof(Terminal.InitTerminal));
         harmony.Patch(
-            initTerminal,
+            InitTerminalMethod.Value,
             postfix: new HarmonyMethod(typeof(VoCommands), nameof(InitTerminalPostfix)));
 
-        if (Terminal.m_terminalInitialized)
+        if (TerminalInitializedField.Value.GetValue(null) is bool initialized && initialized)
         {
             RegisterTerminalCommand();
         }
@@ -588,12 +605,15 @@ internal static class VoCommands
             args,
             $"Wind: {compass} {degrees.ToString("0", CultureInfo.InvariantCulture)}° | " +
             $"intensity {intensity.ToString("0.00", CultureInfo.InvariantCulture)}");
-        if (!string.IsNullOrWhiteSpace(environmentManager.m_forceEnv))
+        string? forcedEnvironment =
+            ForceEnvironmentField.Value.GetValue(environmentManager) as string;
+        if (!string.IsNullOrWhiteSpace(forcedEnvironment))
         {
-            Write(args, "Forced environment: " + environmentManager.m_forceEnv);
+            Write(args, "Forced environment: " + forcedEnvironment);
         }
 
-        EnvSetup? upcoming = environmentManager.m_nextEnv;
+        EnvSetup? upcoming =
+            NextEnvironmentField.Value.GetValue(environmentManager) as EnvSetup;
         if (upcoming != null && !string.IsNullOrWhiteSpace(upcoming.m_name))
         {
             Write(args, "Upcoming environment: " + upcoming.m_name);

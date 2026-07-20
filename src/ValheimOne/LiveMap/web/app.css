@@ -432,11 +432,24 @@ input {
 .sidebar-footer {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: center;
     padding: 13px 18px;
     border-top: 1px solid var(--border);
     color: var(--secondary);
     font-size: 10px;
+}
+
+.sidebar-footer a {
+    color: var(--secondary);
+    text-align: center;
+    text-decoration: none;
+    transition: color 120ms ease;
+}
+
+.sidebar-footer a:hover,
+.sidebar-footer a:focus-visible {
+    outline: none;
+    color: var(--accent);
 }
 
 .view-tabs {
@@ -481,14 +494,6 @@ input {
     border-color: rgba(217, 177, 104, 0.45);
     background: rgba(217, 177, 104, 0.12);
     color: var(--accent);
-}
-
-.footer-tag {
-    color: var(--secondary);
-    font-family: var(--font-display);
-    font-weight: 650;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
 }
 
 #map {
@@ -1111,11 +1116,49 @@ input {
     letter-spacing: 0.025em;
 }
 
-.console-terminal-header div > span {
+.console-terminal-title > span {
     display: block;
     margin-top: 2px;
     color: var(--secondary);
     font-size: 10px;
+}
+
+.console-terminal-title {
+    min-width: 0;
+}
+
+.console-terminal-actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 10px;
+}
+
+.console-header-button,
+.console-reference-close {
+    padding: 5px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--secondary);
+    cursor: pointer;
+    font-family: var(--font-display);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    transition: border-color 120ms ease, box-shadow 120ms ease, color 120ms ease;
+}
+
+.console-header-button:hover,
+.console-header-button:focus-visible,
+.console-header-button.is-active,
+.console-reference-close:hover,
+.console-reference-close:focus-visible {
+    border-color: var(--border-strong);
+    outline: none;
+    box-shadow: 0 0 0 1px var(--border);
+    color: var(--accent);
 }
 
 .console-live-indicator {
@@ -1193,6 +1236,140 @@ input {
 
 .console-log-line.is-output .console-log-text {
     color: #b4a68f;
+}
+
+.console-log-line.is-help-separator {
+    min-height: 9px;
+    margin: 8px 0;
+    border-top: 1px solid var(--border-strong);
+}
+
+.console-log-line.is-help-category {
+    margin: 13px 0 5px;
+    color: var(--accent);
+    font-family: var(--font-display);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.console-log-line.is-help-command {
+    display: grid;
+    min-height: 0;
+    grid-template-columns: minmax(170px, 0.7fr) minmax(0, 1.3fr);
+    gap: 2px 12px;
+    padding: 3px 0;
+    white-space: normal;
+}
+
+.console-help-usage {
+    color: var(--accent);
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    overflow-wrap: anywhere;
+}
+
+.console-help-description {
+    color: var(--text);
+}
+
+.console-help-examples {
+    grid-column: 1 / -1;
+    padding-left: 12px;
+    color: var(--secondary);
+    font-size: 10px;
+}
+
+.console-log-line.is-help-hint {
+    margin-top: 4px;
+    color: var(--secondary);
+    font-style: italic;
+}
+
+.console-command-reference {
+    position: absolute;
+    z-index: 3;
+    inset: 0;
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    background: var(--panel);
+}
+
+.console-command-reference[hidden] {
+    display: none;
+}
+
+.console-command-reference > header {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--background);
+}
+
+.console-command-reference h2,
+.console-command-reference h3 {
+    margin: 0;
+    color: var(--accent);
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+}
+
+.console-command-reference h2 {
+    font-size: 12px;
+}
+
+.console-command-reference-body {
+    min-height: 0;
+    padding: 10px 14px 18px;
+    overflow-y: auto;
+    scrollbar-color: var(--border-strong) transparent;
+    scrollbar-width: thin;
+}
+
+.console-reference-category + .console-reference-category {
+    margin-top: 16px;
+}
+
+.console-command-reference h3 {
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+}
+
+.console-reference-row {
+    display: grid;
+    grid-template-columns: minmax(150px, 0.7fr) minmax(0, 1.3fr);
+    gap: 10px;
+    padding: 6px 3px;
+    border-bottom: 1px solid var(--border);
+}
+
+.console-reference-usage {
+    color: var(--accent);
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 10px;
+    overflow-wrap: anywhere;
+}
+
+.console-reference-description {
+    color: var(--text);
+    font-size: 10px;
+    line-height: 1.35;
+}
+
+.console-reference-empty {
+    margin: 0;
+    padding: 20px 0;
+    color: var(--secondary);
+    font-size: 11px;
+    text-align: center;
 }
 
 .console-resume {
@@ -1277,23 +1454,41 @@ input {
     right: 12px;
     bottom: calc(100% - 1px);
     left: 12px;
-    max-height: min(330px, 50vh);
+    max-height: min(390px, 55vh);
     padding: 5px;
     overflow-y: auto;
     border: 1px solid var(--border-strong);
     border-radius: 8px;
     background: var(--panel);
-    box-shadow: 0 -9px 28px rgb(0 0 0 / 38%);
+    box-shadow: 0 -9px 28px var(--background);
+}
+
+.console-suggestion-group + .console-suggestion-group {
+    margin-top: 4px;
+}
+
+.console-suggestion-category {
+    position: sticky;
+    z-index: 1;
+    top: -5px;
+    padding: 5px 8px 3px;
+    background: var(--panel);
+    color: var(--secondary);
+    font-family: var(--font-display);
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
 }
 
 .console-suggestion {
     display: flex;
     width: 100%;
-    min-height: 44px;
+    min-height: 52px;
     flex-direction: column;
     align-items: stretch;
     justify-content: center;
-    gap: 2px;
+    gap: 4px;
     padding: 6px 8px;
     border: 1px solid transparent;
     border-radius: 6px;
@@ -1306,21 +1501,30 @@ input {
 .console-suggestion:hover,
 .console-suggestion:focus-visible,
 .console-suggestion.is-selected {
-    border-color: rgba(217, 177, 104, 0.26);
+    border-color: var(--border-strong);
     outline: none;
-    background: rgba(217, 177, 104, 0.08);
+    background: var(--background);
+    box-shadow: inset 0 0 0 1px var(--border);
 }
 
 .console-suggestion-heading {
     display: flex;
     min-width: 0;
-    align-items: center;
-    gap: 7px;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.console-suggestion-identity {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 1px;
 }
 
 .console-suggestion-name {
     overflow: hidden;
-    color: var(--text);
+    color: var(--accent);
     font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
     font-size: 11px;
     font-weight: 650;
@@ -1328,25 +1532,56 @@ input {
     white-space: nowrap;
 }
 
-.console-suggestion-description {
+.console-suggestion-usage {
     overflow: hidden;
     color: var(--secondary);
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 9px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.console-suggestion-tags {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 4px;
+}
+
+.console-suggestion-description {
+    overflow: hidden;
+    color: var(--text);
     font-size: 10px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
-.console-cheat-badge {
+.console-cheat-badge,
+.console-category-tag {
     flex: 0 0 auto;
     padding: 2px 5px;
-    border: 1px solid rgba(224, 168, 60, 0.35);
+    border: 1px solid var(--border);
     border-radius: 999px;
-    background: rgba(224, 168, 60, 0.08);
+    background: var(--panel);
     color: var(--sun);
     font-size: 8px;
     font-weight: 750;
     letter-spacing: 0.05em;
     text-transform: uppercase;
+}
+
+.console-category-tag {
+    color: var(--secondary);
+}
+
+.console-suggestion-hint {
+    display: block;
+    min-height: 0;
+    padding: 10px 8px;
+    color: var(--secondary);
+    cursor: default;
+    font-size: 10px;
+    pointer-events: none;
 }
 
 .console-side {
@@ -1688,6 +1923,12 @@ input {
 
     .console-side {
         overflow: visible;
+    }
+
+    .console-log-line.is-help-command,
+    .console-reference-row {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 2px;
     }
 
     #sidebar {

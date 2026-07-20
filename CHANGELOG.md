@@ -6,6 +6,9 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Added
 
+- LiveMap's web console now offers a categorized command helper dropdown with click and keyboard completion, including live player-name completion for commands that target a player.
+- The web console now renders `help`, `vo help`, and `/help` as a rich in-terminal command reference and includes a collapsible Commands panel for browsing all available commands.
+- The LiveMap sidebar footer now includes a subtle SurvivalServers.com hosting attribution link.
 - Server-side `vo` administration commands now provide categorized self-help, privacy-aware player and session details, moderation and save actions, server diagnostics, weather and boss status, and LiveMap entity summaries from both the native console and web console; `/api/console/meta` now publishes usage, category, examples, and player-argument metadata for these commands and the curated vanilla command set.
 - LiveMap `/api/status` and `/api/players` now report snapshot timestamps and ages through `unixMs` and `snapshotAgeMs`, with a `stale` flag when player data has missed three update intervals.
 

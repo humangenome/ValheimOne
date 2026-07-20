@@ -17,6 +17,14 @@
     var SSE_RETRY_MAX_MS = 60000;
     var LAYER_STORAGE_KEY = "vo-livemap-layers";
     var TAB_SESSION_KEY = "vo-livemap-active-tab";
+    var CONSOLE_CATEGORY_ORDER = ["server", "players", "moderation", "world", "diagnostics"];
+    var CONSOLE_CATEGORY_LABELS = {
+        server: "Server",
+        players: "Players",
+        moderation: "Moderation",
+        world: "World",
+        diagnostics: "Diagnostics"
+    };
 
     var POI_GROUP_ORDER = [
         "spawn",
@@ -111,10 +119,12 @@
     var consoleBanRefreshQueued = false;
     var consoleMetaRequestPending = false;
     var consoleMetaLoaded = false;
+    var consoleMetaPromise = null;
     var consoleCursor = 0;
     var consoleFollowLog = true;
     var consoleCommands = [];
     var consoleSuggestions = [];
+    var consoleSuggestionIndex = -1;
     var consoleSuggestionClosed = false;
     var commandHistory = [];
     var commandHistoryIndex = 0;
@@ -133,6 +143,10 @@
         bannedList: document.getElementById("console-banned-list"),
         commandForm: document.getElementById("console-command-form"),
         commandInput: document.getElementById("console-command"),
+        commandReference: document.getElementById("console-command-reference"),
+        commandReferenceBody: document.getElementById("console-command-reference-body"),
+        commandReferenceClose: document.getElementById("console-command-reference-close"),
+        commandsToggle: document.getElementById("console-commands-toggle"),
         confirmBackdrop: document.getElementById("console-confirm-backdrop"),
         confirmCancel: document.getElementById("console-confirm-cancel"),
         confirmMessage: document.getElementById("console-confirm-message"),
@@ -365,6 +379,44 @@
             return line;
         }
 
+        if (entry.kind === "help-separator") {
+            line.classList.add("is-help-separator");
+            line.setAttribute("role", "separator");
+            return line;
+        }
+
+        if (entry.kind === "help-category") {
+            line.classList.add("is-help-category");
+            line.textContent = entry.text == null ? "" : String(entry.text);
+            return line;
+        }
+
+        if (entry.kind === "help-command") {
+            var helpUsage = document.createElement("span");
+            var helpDescription = document.createElement("span");
+            helpUsage.className = "console-help-usage";
+            helpUsage.textContent = entry.usage || entry.name || "";
+            helpDescription.className = "console-help-description";
+            helpDescription.textContent = entry.description || "No description available.";
+            line.classList.add("is-help-command");
+            line.appendChild(helpUsage);
+            line.appendChild(helpDescription);
+
+            if (Array.isArray(entry.examples) && entry.examples.length > 0) {
+                var helpExamples = document.createElement("span");
+                helpExamples.className = "console-help-examples";
+                helpExamples.textContent = "e.g. " + entry.examples.join(" · ");
+                line.appendChild(helpExamples);
+            }
+            return line;
+        }
+
+        if (entry.kind === "help-hint") {
+            line.classList.add("is-help-hint");
+            line.textContent = entry.text == null ? "" : String(entry.text);
+            return line;
+        }
+
         var content = document.createElement("span");
         content.className = "console-log-text";
         content.textContent = entry.text == null ? "" : String(entry.text);
@@ -428,9 +480,293 @@
 
     function closeSuggestions() {
         consoleSuggestions = [];
+        consoleSuggestionIndex = -1;
         elements.suggestionList.textContent = "";
         elements.suggestionList.hidden = true;
         elements.commandInput.setAttribute("aria-expanded", "false");
+        elements.commandInput.removeAttribute("aria-activedescendant");
+    }
+
+    function normalizeConsoleCategory(value) {
+        var category = typeof value === "string" ? value.trim().toLowerCase() : "";
+        return category || "server";
+    }
+
+    function consoleCategoryLabel(category) {
+        if (CONSOLE_CATEGORY_LABELS[category]) {
+            return CONSOLE_CATEGORY_LABELS[category];
+        }
+        return category ? category.charAt(0).toUpperCase() + category.slice(1) : "Server";
+    }
+
+    function orderedConsoleCategoryKeys(categories) {
+        var keys = [];
+        CONSOLE_CATEGORY_ORDER.forEach(function (category) {
+            if (categories[category]) {
+                keys.push(category);
+            }
+        });
+        Object.keys(categories).filter(function (category) {
+            return CONSOLE_CATEGORY_ORDER.indexOf(category) === -1;
+        }).sort(function (left, right) {
+            return consoleCategoryLabel(left).localeCompare(consoleCategoryLabel(right));
+        }).forEach(function (category) {
+            keys.push(category);
+        });
+        return keys;
+    }
+
+    function groupConsoleCommands(commands) {
+        var categories = Object.create(null);
+        commands.forEach(function (command) {
+            var category = normalizeConsoleCategory(command.category);
+            if (!categories[category]) {
+                categories[category] = [];
+            }
+            categories[category].push(command);
+        });
+        Object.keys(categories).forEach(function (category) {
+            categories[category].sort(function (left, right) {
+                return left.name.toLowerCase().localeCompare(right.name.toLowerCase());
+            });
+        });
+        return categories;
+    }
+
+    function showSuggestionList() {
+        elements.suggestionList.hidden = false;
+        elements.commandInput.setAttribute("aria-expanded", "true");
+    }
+
+    function setConsoleSuggestionIndex(index) {
+        if (consoleSuggestions.length === 0) {
+            consoleSuggestionIndex = -1;
+            elements.commandInput.removeAttribute("aria-activedescendant");
+            return;
+        }
+
+        consoleSuggestionIndex = index;
+        var options = elements.suggestionList.querySelectorAll("[data-suggestion-index]");
+        Array.prototype.forEach.call(options, function (option) {
+            var isSelected = Number(option.getAttribute("data-suggestion-index")) === index;
+            option.classList.toggle("is-selected", isSelected);
+            option.setAttribute("aria-selected", String(isSelected));
+            if (isSelected) {
+                elements.commandInput.setAttribute("aria-activedescendant", option.id);
+                option.scrollIntoView({ block: "nearest" });
+            }
+        });
+    }
+
+    function moveConsoleSuggestionSelection(direction) {
+        if (consoleSuggestions.length === 0) {
+            return false;
+        }
+
+        var nextIndex;
+        if (consoleSuggestionIndex < 0) {
+            nextIndex = direction > 0 ? 0 : consoleSuggestions.length - 1;
+        } else {
+            nextIndex = (consoleSuggestionIndex + direction + consoleSuggestions.length) %
+                consoleSuggestions.length;
+        }
+        setConsoleSuggestionIndex(nextIndex);
+        return true;
+    }
+
+    function appendSuggestionOption(group, suggestion, index) {
+        var option = document.createElement("button");
+        var heading = document.createElement("span");
+        var identity = document.createElement("span");
+        var name = document.createElement("span");
+        var tags = document.createElement("span");
+        option.type = "button";
+        option.tabIndex = -1;
+        option.id = "console-suggestion-" + index;
+        option.className = "console-suggestion";
+        option.setAttribute("role", "option");
+        option.setAttribute("aria-selected", "false");
+        option.setAttribute("data-suggestion-index", String(index));
+        heading.className = "console-suggestion-heading";
+        identity.className = "console-suggestion-identity";
+        name.className = "console-suggestion-name";
+        tags.className = "console-suggestion-tags";
+
+        if (suggestion.kind === "player") {
+            name.textContent = suggestion.playerName;
+            identity.appendChild(name);
+            var onlineTag = document.createElement("span");
+            onlineTag.className = "console-category-tag";
+            onlineTag.textContent = "Online";
+            tags.appendChild(onlineTag);
+            heading.appendChild(identity);
+            heading.appendChild(tags);
+            option.appendChild(heading);
+        } else {
+            var command = suggestion.command;
+            name.textContent = command.name;
+            identity.appendChild(name);
+            if (command.usage && command.usage.toLowerCase() !== command.name.toLowerCase()) {
+                var usage = document.createElement("span");
+                usage.className = "console-suggestion-usage";
+                usage.textContent = command.usage;
+                identity.appendChild(usage);
+            }
+            if (command.cheat) {
+                var badge = document.createElement("span");
+                badge.className = "console-cheat-badge";
+                badge.textContent = "Cheat";
+                tags.appendChild(badge);
+            }
+            var categoryTag = document.createElement("span");
+            categoryTag.className = "console-category-tag";
+            categoryTag.textContent = consoleCategoryLabel(normalizeConsoleCategory(command.category));
+            tags.appendChild(categoryTag);
+            heading.appendChild(identity);
+            heading.appendChild(tags);
+            option.appendChild(heading);
+
+            if (command.description) {
+                var description = document.createElement("span");
+                description.className = "console-suggestion-description";
+                description.textContent = command.description;
+                option.appendChild(description);
+            }
+        }
+
+        option.addEventListener("mouseenter", function () {
+            setConsoleSuggestionIndex(index);
+        });
+        option.addEventListener("mousedown", function (event) {
+            event.preventDefault();
+            completeSuggestion(index);
+        });
+        group.appendChild(option);
+    }
+
+    function appendSuggestionGroup(category, suggestions) {
+        var group = document.createElement("div");
+        var header = document.createElement("div");
+        var groupId = "console-suggestion-group-" + category.replace(/[^a-z0-9_-]/g, "-");
+        group.className = "console-suggestion-group";
+        group.setAttribute("role", "group");
+        group.setAttribute("aria-labelledby", groupId);
+        header.id = groupId;
+        header.className = "console-suggestion-category";
+        header.textContent = consoleCategoryLabel(category);
+        group.appendChild(header);
+        suggestions.forEach(function (suggestion) {
+            var index = consoleSuggestions.indexOf(suggestion);
+            appendSuggestionOption(group, suggestion, index);
+        });
+        elements.suggestionList.appendChild(group);
+    }
+
+    function renderPlayerSuggestions(context) {
+        var query = context.query.toLowerCase();
+        var seen = Object.create(null);
+        var names = latestPlayers.map(function (player) {
+            return typeof player.name === "string" ? player.name.trim() : "";
+        }).filter(function (name) {
+            var key = name.toLowerCase();
+            if (!name || seen[key]) {
+                return false;
+            }
+            seen[key] = true;
+            return true;
+        }).map(function (name) {
+            var lowerName = name.toLowerCase();
+            return {
+                kind: "player",
+                command: context.command,
+                playerName: name,
+                rank: lowerName.indexOf(query) === 0 ? 0 : 1
+            };
+        }).filter(function (suggestion) {
+            return !query || suggestion.playerName.toLowerCase().indexOf(query) !== -1;
+        }).sort(function (left, right) {
+            return left.rank - right.rank || left.playerName.localeCompare(right.playerName);
+        }).slice(0, 10);
+
+        if (names.length === 0) {
+            var hintGroup = document.createElement("div");
+            var hintHeader = document.createElement("div");
+            var hint = document.createElement("div");
+            hintGroup.className = "console-suggestion-group";
+            hintGroup.setAttribute("role", "group");
+            hintGroup.setAttribute("aria-labelledby", "console-suggestion-player-group");
+            hintHeader.id = "console-suggestion-player-group";
+            hintHeader.className = "console-suggestion-category";
+            hintHeader.textContent = "Players";
+            hint.className = "console-suggestion console-suggestion-hint";
+            hint.setAttribute("role", "option");
+            hint.setAttribute("aria-selected", "false");
+            hint.setAttribute("aria-disabled", "true");
+            hint.textContent = latestPlayers.length === 0 ? "No players online" : "No matching players";
+            hintGroup.appendChild(hintHeader);
+            hintGroup.appendChild(hint);
+            elements.suggestionList.appendChild(hintGroup);
+            showSuggestionList();
+            return;
+        }
+
+        consoleSuggestions = names;
+        appendSuggestionGroup("players", names);
+        showSuggestionList();
+    }
+
+    function findPlayerSuggestionContext(input) {
+        var lowerInput = input.toLowerCase();
+        var matches = consoleCommands.filter(function (command) {
+            var commandName = command.name.toLowerCase();
+            return command.playerArg && lowerInput.indexOf(commandName) === 0 &&
+                input.length > command.name.length && /\s/.test(input.charAt(command.name.length));
+        }).sort(function (left, right) {
+            return right.name.length - left.name.length;
+        });
+        if (matches.length === 0) {
+            return null;
+        }
+
+        var command = matches[0];
+        var query = input.slice(command.name.length).replace(/^\s+/, "");
+        var lowerQuery = query.toLowerCase();
+        var completedPlayer = latestPlayers.some(function (player) {
+            var playerName = typeof player.name === "string" ? player.name.toLowerCase() : "";
+            return playerName && lowerQuery.indexOf(playerName) === 0 &&
+                query.length > playerName.length && /\s/.test(query.charAt(playerName.length));
+        });
+        if (completedPlayer) {
+            return null;
+        }
+        return { command: command, query: query };
+    }
+
+    function commandSuggestionQuery(input) {
+        if (!input) {
+            return "";
+        }
+        if (!/\s/.test(input) || /^vo(?:\s+[^\s]*)?$/i.test(input)) {
+            return input;
+        }
+        return "";
+    }
+
+    function findCommandSuggestions(query) {
+        var lowerQuery = query.toLowerCase();
+        return consoleCommands.map(function (command) {
+            var lowerName = command.name.toLowerCase();
+            var lowerDescription = command.description.toLowerCase();
+            var rank = lowerName.indexOf(lowerQuery) === 0 ? 0 :
+                (lowerName.indexOf(lowerQuery) !== -1 ? 1 :
+                    (lowerDescription.indexOf(lowerQuery) !== -1 ? 2 : -1));
+            return { kind: "command", command: command, rank: rank };
+        }).filter(function (suggestion) {
+            return suggestion.rank !== -1;
+        }).sort(function (left, right) {
+            return left.rank - right.rank ||
+                left.command.name.toLowerCase().localeCompare(right.command.name.toLowerCase());
+        }).slice(0, 10);
     }
 
     function renderCommandSuggestions() {
@@ -440,56 +776,35 @@
         }
 
         var input = elements.commandInput.value.replace(/^\s+/, "");
-        if (!input || /\s/.test(input)) {
+        var playerContext = findPlayerSuggestionContext(input);
+        if (playerContext) {
+            renderPlayerSuggestions(playerContext);
             return;
         }
 
-        var prefix = input.toLowerCase();
-        consoleSuggestions = consoleCommands.filter(function (command) {
-            return command.name.toLowerCase().indexOf(prefix) === 0;
-        }).slice(0, 8);
-        if (consoleSuggestions.length === 0) {
+        var query = commandSuggestionQuery(input);
+        if (!query) {
             return;
         }
 
-        consoleSuggestions.forEach(function (command, index) {
-            var option = document.createElement("button");
-            var heading = document.createElement("span");
-            var name = document.createElement("span");
-            option.type = "button";
-            option.className = "console-suggestion";
-            option.classList.toggle("is-selected", index === 0);
-            option.setAttribute("role", "option");
-            option.setAttribute("aria-selected", String(index === 0));
-            heading.className = "console-suggestion-heading";
-            name.className = "console-suggestion-name";
-            name.textContent = command.name;
-            heading.appendChild(name);
+        var matches = findCommandSuggestions(query);
+        if (matches.length === 0) {
+            return;
+        }
 
-            if (command.cheat) {
-                var badge = document.createElement("span");
-                badge.className = "console-cheat-badge";
-                badge.textContent = "Cheat";
-                heading.appendChild(badge);
+        consoleSuggestions = matches;
+        var categories = Object.create(null);
+        matches.forEach(function (suggestion) {
+            var category = normalizeConsoleCategory(suggestion.command.category);
+            if (!categories[category]) {
+                categories[category] = [];
             }
-
-            option.appendChild(heading);
-            if (command.description) {
-                var description = document.createElement("span");
-                description.className = "console-suggestion-description";
-                description.textContent = command.description;
-                option.appendChild(description);
-            }
-
-            option.addEventListener("mousedown", function (event) {
-                event.preventDefault();
-                completeSuggestion(index);
-            });
-            elements.suggestionList.appendChild(option);
+            categories[category].push(suggestion);
         });
-
-        elements.suggestionList.hidden = false;
-        elements.commandInput.setAttribute("aria-expanded", "true");
+        orderedConsoleCategoryKeys(categories).forEach(function (category) {
+            appendSuggestionGroup(category, categories[category]);
+        });
+        showSuggestionList();
     }
 
     function completeSuggestion(index) {
@@ -498,7 +813,9 @@
             return;
         }
 
-        elements.commandInput.value = suggestion.name + " ";
+        elements.commandInput.value = suggestion.kind === "player"
+            ? suggestion.command.name + " " + suggestion.playerName + " "
+            : suggestion.command.name + " ";
         closeSuggestions();
         elements.commandInput.focus();
     }
@@ -516,7 +833,16 @@
                 return;
             }
 
-            var command = { name: name, description: "", cheat: false, whitelisted: true };
+            var command = {
+                name: name,
+                description: entry && typeof entry.description === "string" ? entry.description.trim() : "",
+                cheat: false,
+                usage: name,
+                category: "server",
+                examples: [],
+                playerArg: false,
+                whitelisted: true
+            };
             byName[name.toLowerCase()] = command;
             commands.push(command);
         });
@@ -531,12 +857,31 @@
             var key = name.toLowerCase();
             var command = byName[key];
             if (!command) {
-                command = { name: name, description: "", cheat: false, whitelisted: false };
+                command = {
+                    name: name,
+                    description: "",
+                    cheat: false,
+                    usage: name,
+                    category: "server",
+                    examples: [],
+                    playerArg: false,
+                    whitelisted: false
+                };
                 byName[key] = command;
                 commands.push(command);
             }
             command.description = entry && typeof entry.description === "string" ? entry.description.trim() : "";
             command.cheat = entry && entry.cheat === true;
+            command.usage = entry && typeof entry.usage === "string" && entry.usage.trim()
+                ? entry.usage.trim()
+                : name;
+            command.category = normalizeConsoleCategory(entry && entry.category);
+            command.examples = entry && Array.isArray(entry.examples) ? entry.examples.map(function (example) {
+                return typeof example === "string" ? example.trim() : "";
+            }).filter(function (example) {
+                return Boolean(example);
+            }) : [];
+            command.playerArg = entry && entry.playerArg === true;
         });
 
         commands.sort(function (left, right) {
@@ -549,22 +894,126 @@
     }
 
     async function loadConsoleMeta() {
-        if (!consoleIsActive() || consoleMetaLoaded || consoleMetaRequestPending) {
-            return;
+        if (!consoleIsActive()) {
+            return consoleCommands;
+        }
+        if (consoleMetaLoaded) {
+            return consoleCommands;
+        }
+        if (consoleMetaPromise) {
+            return consoleMetaPromise;
         }
 
         consoleMetaRequestPending = true;
-        try {
-            var payload = await fetchConsoleJson("/api/console/meta");
-            consoleCommands = normalizeConsoleCommands(payload);
-            consoleMetaLoaded = true;
-            clearConsoleFailure("meta");
-            renderCommandSuggestions();
-        } catch (error) {
-            reportConsoleFailure("meta", "Command metadata", error);
-        } finally {
-            consoleMetaRequestPending = false;
+        consoleMetaPromise = (async function () {
+            try {
+                var payload = await fetchConsoleJson("/api/console/meta");
+                consoleCommands = normalizeConsoleCommands(payload);
+                consoleMetaLoaded = true;
+                clearConsoleFailure("meta");
+                renderCommandSuggestions();
+                if (!elements.commandReference.hidden) {
+                    buildCommandReference();
+                }
+            } catch (error) {
+                reportConsoleFailure("meta", "Command metadata", error);
+            } finally {
+                consoleMetaRequestPending = false;
+                consoleMetaPromise = null;
+            }
+            return consoleCommands;
+        }());
+        return consoleMetaPromise;
+    }
+
+    function buildCommandReference() {
+        elements.commandReferenceBody.textContent = "";
+        if (consoleCommands.length === 0) {
+            var empty = document.createElement("p");
+            empty.className = "console-reference-empty";
+            empty.textContent = consoleMetaRequestPending
+                ? "Loading command metadata…"
+                : "No command metadata available.";
+            elements.commandReferenceBody.appendChild(empty);
+            return;
         }
+
+        var categories = groupConsoleCommands(consoleCommands);
+        orderedConsoleCategoryKeys(categories).forEach(function (category) {
+            var section = document.createElement("section");
+            var heading = document.createElement("h3");
+            section.className = "console-reference-category";
+            heading.textContent = consoleCategoryLabel(category);
+            section.appendChild(heading);
+            categories[category].forEach(function (command) {
+                var row = document.createElement("div");
+                var usage = document.createElement("span");
+                var description = document.createElement("span");
+                row.className = "console-reference-row";
+                usage.className = "console-reference-usage";
+                usage.textContent = command.usage || command.name;
+                description.className = "console-reference-description";
+                description.textContent = command.description || "No description available.";
+                row.appendChild(usage);
+                row.appendChild(description);
+                section.appendChild(row);
+            });
+            elements.commandReferenceBody.appendChild(section);
+        });
+    }
+
+    function setCommandReferenceOpen(isOpen) {
+        elements.commandReference.hidden = !isOpen;
+        elements.commandsToggle.setAttribute("aria-expanded", String(isOpen));
+        elements.commandsToggle.classList.toggle("is-active", isOpen);
+    }
+
+    async function toggleCommandReference() {
+        var isOpening = elements.commandReference.hidden;
+        setCommandReferenceOpen(isOpening);
+        if (!isOpening) {
+            return;
+        }
+
+        buildCommandReference();
+        await loadConsoleMeta();
+        if (!elements.commandReference.hidden) {
+            buildCommandReference();
+        }
+    }
+
+    function renderConsoleHelp() {
+        if (consoleCommands.length === 0) {
+            appendConsoleEntries([{
+                kind: "output",
+                text: "No command metadata available. Try again in a moment."
+            }]);
+            return;
+        }
+
+        var entries = [{ kind: "help-separator" }];
+        var categories = groupConsoleCommands(consoleCommands);
+        orderedConsoleCategoryKeys(categories).forEach(function (category) {
+            entries.push({
+                kind: "help-category",
+                text: consoleCategoryLabel(category)
+            });
+            categories[category].forEach(function (command) {
+                entries.push({
+                    kind: "help-command",
+                    name: command.name,
+                    usage: command.usage,
+                    description: command.description,
+                    examples: command.examples
+                });
+            });
+        });
+        entries.push({ kind: "help-separator" });
+        entries.push({
+            kind: "help-hint",
+            text: "click a command above the input while typing to autocomplete"
+        });
+        appendConsoleEntries(entries);
     }
 
     function handleConsoleLogPayload(payload, preserveNewerCursor) {
@@ -868,6 +1317,13 @@
         elements.commandInput.value = "";
         closeSuggestions();
 
+        var lowerCommand = command.toLowerCase();
+        if (lowerCommand === "help" || lowerCommand === "vo help" || lowerCommand === "/help") {
+            await loadConsoleMeta();
+            renderConsoleHelp();
+            return;
+        }
+
         try {
             var payload = await postConsoleJson("/api/console/exec", { command: command });
             if (!payload || payload.ok !== true) {
@@ -936,6 +1392,11 @@
             elements.consoleLog.scrollTop = elements.consoleLog.scrollHeight;
             elements.consoleResume.hidden = true;
         });
+        elements.commandsToggle.addEventListener("click", toggleCommandReference);
+        elements.commandReferenceClose.addEventListener("click", function () {
+            setCommandReferenceOpen(false);
+            elements.commandsToggle.focus();
+        });
         elements.commandForm.addEventListener("submit", function (event) {
             event.preventDefault();
             submitConsoleCommand();
@@ -948,13 +1409,22 @@
         elements.commandInput.addEventListener("keydown", function (event) {
             if (event.key === "ArrowUp") {
                 event.preventDefault();
-                walkCommandHistory(-1);
+                if (!elements.suggestionList.hidden && consoleSuggestions.length > 0) {
+                    moveConsoleSuggestionSelection(-1);
+                } else {
+                    walkCommandHistory(-1);
+                }
             } else if (event.key === "ArrowDown") {
                 event.preventDefault();
-                walkCommandHistory(1);
-            } else if (event.key === "Tab" && consoleSuggestions.length > 0) {
+                if (!elements.suggestionList.hidden && consoleSuggestions.length > 0) {
+                    moveConsoleSuggestionSelection(1);
+                } else {
+                    walkCommandHistory(1);
+                }
+            } else if ((event.key === "Tab" || event.key === "Enter") &&
+                consoleSuggestionIndex >= 0) {
                 event.preventDefault();
-                completeSuggestion(0);
+                completeSuggestion(consoleSuggestionIndex);
             } else if (event.key === "Escape") {
                 consoleSuggestionClosed = true;
                 closeSuggestions();
@@ -971,6 +1441,9 @@
         document.addEventListener("keydown", function (event) {
             if (event.key === "Escape" && !elements.confirmBackdrop.hidden) {
                 closeConfirmDialog();
+            } else if (event.key === "Escape" && !elements.commandReference.hidden) {
+                setCommandReferenceOpen(false);
+                elements.commandsToggle.focus();
             }
         });
     }
@@ -2290,10 +2763,21 @@
         }
 
         setFeedState("players", true);
+        var previousPlayerNames = latestPlayers.map(function (player) {
+            return player.name || "";
+        }).sort().join("\n");
         latestPlayers = normalizePlayers(payload);
+        var currentPlayerNames = latestPlayers.map(function (player) {
+            return player.name || "";
+        }).sort().join("\n");
         renderPlayerList(latestPlayers);
         renderConsolePlayers();
         updatePlayerMarkers(latestPlayers);
+        if (previousPlayerNames !== currentPlayerNames &&
+            document.activeElement === elements.commandInput &&
+            findPlayerSuggestionContext(elements.commandInput.value.replace(/^\s+/, ""))) {
+            renderCommandSuggestions();
+        }
     }
 
     async function pollStatus() {

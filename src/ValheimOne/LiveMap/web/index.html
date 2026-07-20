@@ -129,8 +129,8 @@
         </section>
 
         <footer class="sidebar-footer">
-            <span class="footer-tag">ValheimOne</span>
-            <span>Longhouse services</span>
+            <a href="https://www.survivalservers.com/services/game_servers/valheim/?utm_source=valheimone&amp;utm_medium=livemap_footer&amp;utm_campaign=valheim_one"
+               target="_blank" rel="noopener">Server hosting by SurvivalServers.com</a>
         </footer>
     </aside>
 
@@ -140,15 +140,28 @@
         <div class="console-layout">
             <section class="console-terminal" aria-labelledby="console-heading">
                 <header class="console-terminal-header">
-                    <div>
+                    <div class="console-terminal-title">
                         <h1 id="console-heading">Longhouse Console</h1>
                         <span>Live log · streaming with polling fallback</span>
                     </div>
-                    <span class="console-live-indicator">Live</span>
+                    <div class="console-terminal-actions">
+                        <button id="console-commands-toggle" class="console-header-button" type="button"
+                                aria-controls="console-command-reference" aria-expanded="false">Commands</button>
+                        <span class="console-live-indicator">Live</span>
+                    </div>
                 </header>
 
                 <div class="console-log-shell">
                     <div id="console-log" class="console-log" role="log" aria-live="polite"></div>
+                    <section id="console-command-reference" class="console-command-reference"
+                             aria-labelledby="console-command-reference-heading" hidden>
+                        <header>
+                            <h2 id="console-command-reference-heading">Commands</h2>
+                            <button id="console-command-reference-close" class="console-reference-close"
+                                    type="button" aria-label="Close commands reference">Close</button>
+                        </header>
+                        <div id="console-command-reference-body" class="console-command-reference-body"></div>
+                    </section>
                     <button id="console-resume" class="console-resume" type="button" hidden>
                         New lines · Resume
                     </button>
@@ -160,7 +173,9 @@
                     <label class="console-command-label" for="console-command">
                         <span aria-hidden="true">&gt;</span>
                         <input id="console-command" type="text" inputmode="text" spellcheck="false"
+                               role="combobox"
                                aria-autocomplete="list" aria-controls="console-suggestions"
+                               aria-expanded="false"
                                placeholder="Enter a server command">
                     </label>
                 </form>
