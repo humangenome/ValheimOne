@@ -794,6 +794,328 @@ input {
     height: 18px;
 }
 
+.compass-control {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    filter: drop-shadow(0 5px 10px rgba(18, 14, 10, 0.58));
+}
+
+.compass-button {
+    display: block;
+    width: 64px;
+    height: 64px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    outline: 0;
+    background: transparent;
+    color: var(--accent);
+    cursor: pointer;
+}
+
+.compass-button svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+}
+
+.compass-disc {
+    fill: rgba(28, 22, 16, 0.96);
+    stroke: var(--border-strong);
+    stroke-width: 1.5;
+}
+
+.compass-ring,
+.compass-staves,
+.compass-wind-needle {
+    fill: none;
+    stroke: var(--accent);
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.compass-ring {
+    stroke-opacity: 0.7;
+    stroke-width: 1.2;
+}
+
+.compass-staves {
+    stroke-width: 1.75;
+}
+
+.compass-wind-needle {
+    display: none;
+    stroke: var(--sun);
+    stroke-width: 2.5;
+}
+
+.compass-hub {
+    fill: var(--accent);
+}
+
+.compass-cardinals text {
+    fill: var(--text);
+    font-family: var(--font-display);
+    font-size: 8px;
+    font-weight: 700;
+    text-anchor: middle;
+}
+
+.compass-cardinals .compass-north {
+    fill: #e0a83c;
+}
+
+.map-scale-control {
+    position: relative;
+    height: 27px;
+    min-width: 34px;
+    max-width: 120px;
+    border-right: 1.5px solid var(--accent);
+    border-bottom: 2px solid var(--accent);
+    border-left: 1.5px solid var(--accent);
+    border-radius: 0 0 3px 3px;
+    background: linear-gradient(180deg, rgba(28, 22, 16, 0.12), rgba(28, 22, 16, 0.9));
+    box-shadow: 0 5px 14px rgb(0 0 0 / 30%);
+    color: var(--text);
+    pointer-events: none;
+}
+
+.map-scale-label {
+    position: absolute;
+    right: -14px;
+    bottom: 6px;
+    left: -14px;
+    font-size: 10px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    text-align: center;
+    text-shadow: 0 1px 3px var(--background), 0 0 5px var(--background);
+    white-space: nowrap;
+}
+
+.map-tool-control {
+    background: rgba(28, 22, 16, 0.94);
+}
+
+.leaflet-bar .map-tool-button {
+    display: grid;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    outline: 0;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 17px;
+    line-height: 1;
+    place-items: center;
+}
+
+.leaflet-bar .map-tool-button:hover,
+.leaflet-bar .map-tool-button.is-active {
+    background: #2a2117;
+    color: var(--accent);
+}
+
+.map-tool-button svg {
+    width: 17px;
+    height: 17px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.8;
+}
+
+.measure-hud {
+    position: absolute;
+    z-index: 900;
+    top: 12px;
+    right: 210px;
+    left: 50px;
+    width: auto;
+    max-width: 590px;
+    margin: auto;
+    padding: 7px 12px 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: rgba(28, 22, 16, 0.95);
+    box-shadow: 0 7px 22px rgb(0 0 0 / 38%);
+    color: var(--text);
+    pointer-events: none;
+    text-align: center;
+}
+
+.measure-hud[hidden] {
+    display: none;
+}
+
+.measure-instruction {
+    color: var(--accent);
+    font-size: 10px;
+    font-weight: 700;
+}
+
+.measure-total {
+    margin-top: 3px;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+}
+
+.measure-footnote {
+    margin-top: 2px;
+    color: var(--secondary);
+    font-size: 9px;
+    font-style: italic;
+}
+
+.measure-vertex-div-icon {
+    border: 0;
+    background: transparent;
+}
+
+.measure-vertex {
+    display: block;
+    width: 8px;
+    height: 8px;
+    border: 1px solid var(--background);
+    background: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent), 0 0 7px rgba(217, 177, 104, 0.72);
+    transform: rotate(45deg);
+}
+
+body.is-measuring #map.leaflet-container,
+body.is-measuring #map .leaflet-grab,
+body.is-measuring #map .leaflet-dragging {
+    cursor: crosshair;
+}
+
+body.is-measuring #map .leaflet-marker-pane,
+body.is-measuring #map .leaflet-popup-pane,
+body.is-measuring #map .leaflet-overlay-pane path {
+    pointer-events: none !important;
+}
+
+body.is-measuring .compass-control {
+    display: none;
+}
+
+.coordinate-chip.vo-copy {
+    min-width: 118px;
+    min-height: 29px;
+    padding: 5px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 7px;
+    background: rgba(28, 22, 16, 0.94);
+    box-shadow: 0 5px 18px rgb(0 0 0 / 28%);
+    color: var(--text);
+    cursor: copy;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.coordinate-chip.vo-copy.is-copied {
+    color: var(--accent);
+}
+
+.minimap-control {
+    position: relative;
+    width: 158px;
+    height: 158px;
+    padding: 4px;
+    overflow: hidden;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: rgba(28, 22, 16, 0.94);
+    box-shadow: 0 7px 22px rgb(0 0 0 / 34%);
+    transition: width 140ms ease, height 140ms ease;
+}
+
+.minimap-control.is-collapsed {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+}
+
+.minimap-frame {
+    position: relative;
+    width: 148px;
+    height: 148px;
+    overflow: hidden;
+    border-radius: 4px;
+    background: var(--map-ocean);
+    cursor: crosshair;
+}
+
+.minimap-control.is-collapsed .minimap-frame {
+    display: none;
+}
+
+.minimap-image {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: fill;
+    pointer-events: none;
+    user-select: none;
+}
+
+.minimap-view-rect {
+    position: absolute;
+    min-width: 2px;
+    min-height: 2px;
+    border: 1.5px solid var(--accent);
+    box-shadow: 0 0 6px rgba(217, 177, 104, 0.72), inset 0 0 4px rgba(217, 177, 104, 0.2);
+    pointer-events: none;
+}
+
+.minimap-toggle {
+    position: absolute;
+    z-index: 2;
+    top: 5px;
+    right: 5px;
+    display: grid;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid var(--border-strong);
+    border-radius: 5px;
+    outline: 0;
+    background: rgba(18, 14, 10, 0.9);
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    place-items: center;
+}
+
+.minimap-control.is-collapsed .minimap-toggle {
+    top: 2px;
+    right: 2px;
+}
+
+.compass-button:focus-visible,
+.map-tool-button:focus-visible,
+.coordinate-chip.vo-copy:focus-visible,
+.minimap-toggle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.map-tool-button:focus-visible,
+.minimap-control.is-collapsed .minimap-toggle:focus-visible {
+    outline-offset: -2px;
+}
+
 .fog-overlay {
     image-rendering: auto;
     pointer-events: none;
@@ -2176,6 +2498,38 @@ input {
     #map,
     .render-status {
         left: 0;
+    }
+
+    .compass-control,
+    .compass-button {
+        width: 44px;
+        height: 44px;
+    }
+
+    .map-scale-control,
+    .coordinate-chip,
+    .minimap-control {
+        display: none !important;
+    }
+
+    .measure-hud {
+        top: 166px;
+        right: auto;
+        left: 50%;
+        width: calc(100% - 24px);
+        max-width: none;
+        margin: 0;
+        padding-right: 9px;
+        padding-left: 9px;
+        transform: translateX(-50%);
+    }
+
+    .measure-instruction {
+        font-size: 9px;
+    }
+
+    .measure-total {
+        font-size: 10px;
     }
 
     .vo-popup {

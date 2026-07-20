@@ -23,6 +23,7 @@
     var TRAIL_BUCKET_COUNT = 10;
     var SHIP_MATCH_DISTANCE = 40;
     var LAYER_STORAGE_KEY = "vo-livemap-layers";
+    var MINIMAP_STORAGE_KEY = "vo-livemap-minimap";
     var TAB_SESSION_KEY = "vo-livemap-active-tab";
     var CONSOLE_CATEGORY_ORDER = ["server", "players", "moderation", "world", "diagnostics"];
     var CONSOLE_CATEGORY_LABELS = {
@@ -90,8 +91,26 @@
     var tileLayer = null;
     var mapMetrics = null;
     var worldBounds = null;
+    var hashViewApplied = false;
+    var hashUpdateTimer = 0;
+    var pendingHashFollowName = "";
     var followedPlayer = null;
     var followPill = null;
+    var scaleBarElement = null;
+    var coordinateChip = null;
+    var coordinateUsesMapCenter = window.matchMedia("(hover: none), (pointer: coarse)").matches;
+    var minimapElement = null;
+    var minimapViewRect = null;
+    var minimapFrame = 0;
+    var measureButton = null;
+    var measureHud = null;
+    var measureLine = null;
+    var measureLayer = null;
+    var measureModeEnabled = false;
+    var measureActive = false;
+    var measurePoints = [];
+    var measureVertexMarkers = [];
+    var measureDoubleClickZoomWasEnabled = false;
     var playerLayer = null;
     var pinLayer = null;
     var trailLayer = null;
@@ -1731,11 +1750,7 @@
             var copyButton = target.closest(".vo-copy[data-copy]");
             if (copyButton) {
                 event.preventDefault();
-                copyText(copyButton.getAttribute("data-copy")).then(function () {
-                    flashCopyButton(copyButton);
-                }).catch(function () {
-                    return;
-                });
+                copyFromButton(copyButton);
                 return;
             }
 
@@ -2143,6 +2158,8 @@
         tileLayer.removeFrom(map);
         tileLayer.addTo(map);
         map.setView(center, zoom, { animate: false });
+        updateScaleBar();
+        scheduleMinimapUpdate();
     }
 
     function ensureMap(statusMap) {
@@ -2208,11 +2225,19 @@
         bindMapPopupEvents();
         ensureFollowPill();
         createLayersControl();
-        map.setView(worldToLatLng(0, 0), Math.max(0, overviewZoom - 1));
+        createCompassControl();
+        createScaleBarControl();
+        createMeasureControl();
+        createFullscreenControl();
+        createCoordinateControl();
+        createMinimapControl();
+        applyInitialHashState(Math.max(0, overviewZoom - 1));
         map.on("dragstart", clearFollow);
         map.on("zoomend", renderPoiLayers);
+        map.on("moveend zoomend", scheduleHashUpdate);
         syncLayerVisibility();
         updatePlayerMarkers(latestPlayers);
+        applyPendingHashFollow();
         loadPoisForCurrentView();
         applyFogStatus();
         applyRaidEvent(currentRaidEvent);
@@ -2246,12 +2271,670 @@
         );
     }
 
+    function latLngToWorld(latLng) {
+        if (!mapMetrics || !latLng) {
+            return null;
+        }
+
+        // Exact inverse of worldToLatLng: recover source pixels, then world meters.
+        return {
+            x: (latLng.lng / mapMetrics.unitsPerPixel - mapMetrics.textureSize / 2) *
+                mapMetrics.pixelSize,
+            z: (mapMetrics.textureSize / 2 - (-latLng.lat / mapMetrics.unitsPerPixel)) *
+                mapMetrics.pixelSize
+        };
+    }
+
     function worldDistanceToMap(distance) {
         if (!mapMetrics) {
             return 0;
         }
 
         return Math.abs(distance / mapMetrics.pixelSize * mapMetrics.unitsPerPixel);
+    }
+
+    function createCompassControl() {
+        var CompassControl = L.Control.extend({
+            options: { position: "bottomleft" },
+            onAdd: function () {
+                var container = L.DomUtil.create("div", "leaflet-control compass-control");
+                var button = L.DomUtil.create("button", "compass-button", container);
+                var clickTimer = 0;
+                button.type = "button";
+                button.title = "Click: home · Double-click: fit world";
+                button.setAttribute("aria-label", button.title);
+                // wind needle stubbed until Phase 2 wind fields
+                button.innerHTML = '<svg viewBox="0 0 80 80" aria-hidden="true" focusable="false">' +
+                    '<circle class="compass-disc" cx="40" cy="40" r="29" />' +
+                    '<circle class="compass-ring" cx="40" cy="40" r="25" />' +
+                    '<g class="compass-staves">' +
+                    '<path d="M40 40V15M40 15l-5 6m5-6 5 6M36 24h8" />' +
+                    '<path d="M40 40l18-18m0 0 5-5m-5 5-7-1m7 1 1 7" />' +
+                    '<path d="M40 40h25m0 0-6-5m6 5-6 5M56 36v8" />' +
+                    '<path d="M40 40l18 18m0 0 5 5m-5-5 1-7m-1 7-7-1" />' +
+                    '<path d="M40 40v25m0 0-5-6m5 6 5-6M36 56h8" />' +
+                    '<path d="M40 40 22 58m0 0-5 5m5-5 7-1m-7 1-1-7" />' +
+                    '<path d="M40 40H15m0 0 6-5m-6 5 6 5M24 36v8" />' +
+                    '<path d="M40 40 22 22m0 0-5-5m5 5-1 7m1-7 7 1" />' +
+                    '</g><g class="compass-wind-needle"><path d="M40 40V19" /></g>' +
+                    '<circle class="compass-hub" cx="40" cy="40" r="2.8" />' +
+                    '<g class="compass-cardinals"><text class="compass-north" x="40" y="8">N</text>' +
+                    '<text x="74" y="43">E</text><text x="40" y="78">S</text>' +
+                    '<text x="6" y="43">W</text></g></svg>';
+
+                button.addEventListener("click", function () {
+                    window.clearTimeout(clickTimer);
+                    clickTimer = window.setTimeout(function () {
+                        map.flyTo(worldToLatLng(0, 0), map.getZoom(), { duration: 0.45 });
+                    }, 250);
+                });
+                button.addEventListener("dblclick", function (event) {
+                    event.preventDefault();
+                    window.clearTimeout(clickTimer);
+                    clickTimer = 0;
+                    map.fitBounds(worldBounds, { animate: true, duration: 0.45 });
+                });
+                L.DomEvent.disableClickPropagation(container);
+                L.DomEvent.disableScrollPropagation(container);
+                return container;
+            }
+        });
+
+        new CompassControl().addTo(map);
+    }
+
+    function formatScaleDistance(distance) {
+        if (distance >= 1000) {
+            return (distance / 1000).toLocaleString("en-US", {
+                maximumFractionDigits: distance < 10000 ? 1 : 0
+            }) + " km";
+        }
+        return distance.toLocaleString("en-US", {
+            maximumFractionDigits: distance < 10 ? 1 : 0
+        }) + " m";
+    }
+
+    function updateScaleBar() {
+        if (!scaleBarElement || !map || !mapMetrics) {
+            return;
+        }
+
+        var zoom = map.getZoom();
+        if (!Number.isFinite(zoom)) {
+            return;
+        }
+        var metersPerCssPixel = mapMetrics.pixelSize * mapMetrics.textureSize / TILE_SIZE /
+            Math.pow(2, zoom);
+        var maximumDistance = metersPerCssPixel * 120;
+        if (!Number.isFinite(maximumDistance) || maximumDistance <= 0) {
+            return;
+        }
+
+        var magnitude = Math.pow(10, Math.floor(Math.log(maximumDistance) / Math.LN10));
+        var distance = magnitude;
+        [5, 2, 1].some(function (multiple) {
+            var candidate = multiple * magnitude;
+            if (candidate <= maximumDistance) {
+                distance = candidate;
+                return true;
+            }
+            return false;
+        });
+        scaleBarElement.style.width = (distance / metersPerCssPixel).toFixed(1) + "px";
+        scaleBarElement.querySelector(".map-scale-label").textContent = formatScaleDistance(distance);
+    }
+
+    function createScaleBarControl() {
+        var ScaleBarControl = L.Control.extend({
+            options: { position: "bottomleft" },
+            onAdd: function () {
+                var container = L.DomUtil.create("div", "leaflet-control map-scale-control");
+                var label = L.DomUtil.create("span", "map-scale-label", container);
+                label.textContent = "—";
+                scaleBarElement = container;
+                L.DomEvent.disableClickPropagation(container);
+                return container;
+            }
+        });
+
+        new ScaleBarControl().addTo(map);
+        map.on("zoomend resize", updateScaleBar);
+        updateScaleBar();
+    }
+
+    function formatMeasurementDistance(distance) {
+        if (distance >= 1000) {
+            return "~" + (distance / 1000).toLocaleString("en-US", {
+                maximumFractionDigits: 2,
+                minimumFractionDigits: distance < 10000 ? 2 : 1
+            }) + " km straight line";
+        }
+        return "~" + Math.round(distance).toLocaleString("en-US") + " m straight line";
+    }
+
+    function formatTravelTime(distance, speed) {
+        var totalSeconds = Math.max(0, Math.round(distance / speed));
+        return Math.floor(totalSeconds / 60) + "m " + padTwo(totalSeconds % 60) + "s";
+    }
+
+    function measurementDistance() {
+        var total = 0;
+        for (var index = 1; index < measurePoints.length; index++) {
+            var previous = latLngToWorld(measurePoints[index - 1]);
+            var current = latLngToWorld(measurePoints[index]);
+            if (previous && current) {
+                total += worldDistance(previous.x, previous.z, current.x, current.z);
+            }
+        }
+        return total;
+    }
+
+    function updateMeasureHud() {
+        if (!measureHud) {
+            return;
+        }
+
+        var distance = measurementDistance();
+        measureHud.querySelector(".measure-instruction").textContent = measureActive
+            ? "Click to add points · double-click or Esc to finish · Backspace undoes"
+            : "Measurement finished · Esc or ruler clears";
+        measureHud.querySelector(".measure-total").textContent =
+            formatMeasurementDistance(distance) + " · run ~" + formatTravelTime(distance, 7) +
+            " · longship ~" + formatTravelTime(distance, 6.5);
+        measureHud.hidden = !measureModeEnabled;
+    }
+
+    function redrawMeasurement() {
+        if (!measureLayer) {
+            return;
+        }
+
+        measureLayer.clearLayers();
+        measureLine = null;
+        measureVertexMarkers = [];
+        if (measurePoints.length > 1) {
+            measureLine = L.polyline(measurePoints, {
+                color: "#d9b168",
+                dashArray: "6 6",
+                interactive: false,
+                opacity: 0.95,
+                weight: 2
+            }).addTo(measureLayer);
+        }
+        measurePoints.forEach(function (point) {
+            var marker = L.marker(point, {
+                icon: L.divIcon({
+                    className: "measure-vertex-div-icon",
+                    html: '<span class="measure-vertex" aria-hidden="true"></span>',
+                    iconAnchor: [5, 5],
+                    iconSize: [10, 10]
+                }),
+                interactive: false,
+                keyboard: false
+            }).addTo(measureLayer);
+            measureVertexMarkers.push(marker);
+        });
+        updateMeasureHud();
+    }
+
+    function restoreMeasureDoubleClickZoom() {
+        if (measureDoubleClickZoomWasEnabled && map && !map.doubleClickZoom.enabled()) {
+            map.doubleClickZoom.enable();
+        }
+        measureDoubleClickZoomWasEnabled = false;
+    }
+
+    function finishMeasurement() {
+        if (!measureActive) {
+            return;
+        }
+        measureActive = false;
+        document.body.classList.remove("is-measuring");
+        restoreMeasureDoubleClickZoom();
+        updateMeasureHud();
+    }
+
+    function clearMeasurement() {
+        measureActive = false;
+        measureModeEnabled = false;
+        measurePoints = [];
+        measureLine = null;
+        measureVertexMarkers = [];
+        document.body.classList.remove("is-measuring");
+        restoreMeasureDoubleClickZoom();
+        if (measureLayer) {
+            measureLayer.clearLayers();
+        }
+        if (measureButton) {
+            measureButton.classList.remove("is-active");
+            measureButton.title = "Measure distance";
+            measureButton.setAttribute("aria-label", "Measure distance");
+            measureButton.setAttribute("aria-pressed", "false");
+        }
+        if (measureHud) {
+            measureHud.hidden = true;
+        }
+    }
+
+    function startMeasurement() {
+        measureModeEnabled = true;
+        measureActive = true;
+        measurePoints = [];
+        if (map._popup) {
+            map.closePopup();
+        }
+        measureLayer.clearLayers();
+        measureDoubleClickZoomWasEnabled = map.doubleClickZoom.enabled();
+        if (measureDoubleClickZoomWasEnabled) {
+            map.doubleClickZoom.disable();
+        }
+        document.body.classList.add("is-measuring");
+        measureButton.classList.add("is-active");
+        measureButton.title = "Clear measurement";
+        measureButton.setAttribute("aria-label", "Clear measurement");
+        measureButton.setAttribute("aria-pressed", "true");
+        updateMeasureHud();
+    }
+
+    function createMeasureControl() {
+        var MeasureControl = L.Control.extend({
+            options: { position: "topleft" },
+            onAdd: function () {
+                var container = L.DomUtil.create("div", "leaflet-control leaflet-bar map-tool-control");
+                measureButton = L.DomUtil.create("button", "map-tool-button measure-button", container);
+                measureButton.type = "button";
+                measureButton.title = "Measure distance";
+                measureButton.setAttribute("aria-label", "Measure distance");
+                measureButton.setAttribute("aria-pressed", "false");
+                measureButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+                    '<path d="M5 18 18 5l2 2L7 20zM9 15l2 2m1-5 2 2m1-5 2 2" /></svg>';
+                measureButton.addEventListener("click", function () {
+                    if (measureModeEnabled) {
+                        clearMeasurement();
+                    } else {
+                        startMeasurement();
+                    }
+                });
+                L.DomEvent.disableClickPropagation(container);
+                L.DomEvent.disableScrollPropagation(container);
+                return container;
+            }
+        });
+
+        measureLayer = L.layerGroup().addTo(map);
+        measureHud = document.createElement("div");
+        measureHud.className = "measure-hud";
+        measureHud.hidden = true;
+        measureHud.innerHTML = '<div class="measure-instruction"></div>' +
+            '<div class="measure-total"></div>' +
+            '<div class="measure-footnote">sail time varies with wind (longship 3.6-9.4 m/s)</div>';
+        elements.mapPane.appendChild(measureHud);
+        new MeasureControl().addTo(map);
+
+        map.on("click", function (event) {
+            if (!measureActive || (event.originalEvent && event.originalEvent.detail > 1)) {
+                return;
+            }
+            measurePoints.push(event.latlng);
+            redrawMeasurement();
+        });
+        map.on("dblclick", function (event) {
+            if (!measureActive) {
+                return;
+            }
+            if (event.originalEvent) {
+                event.originalEvent.preventDefault();
+            }
+            finishMeasurement();
+        });
+        document.addEventListener("keydown", function (event) {
+            if (event.key === "Escape") {
+                if (measureActive) {
+                    event.preventDefault();
+                    finishMeasurement();
+                } else if (measureModeEnabled) {
+                    event.preventDefault();
+                    clearMeasurement();
+                }
+            } else if (event.key === "Backspace" && measureActive && measurePoints.length > 0) {
+                event.preventDefault();
+                measurePoints.pop();
+                redrawMeasurement();
+            }
+        });
+    }
+
+    function copyFromButton(button) {
+        return copyText(button.getAttribute("data-copy") || "").then(function () {
+            flashCopyButton(button);
+        }).catch(function () {
+            return;
+        });
+    }
+
+    function updateCoordinateChip(latLng) {
+        if (!coordinateChip || !worldBounds || !latLng || !worldBounds.contains(latLng)) {
+            if (coordinateChip) {
+                coordinateChip.hidden = true;
+            }
+            return;
+        }
+
+        var world = latLngToWorld(latLng);
+        if (!world || !Number.isFinite(world.x) || !Number.isFinite(world.z)) {
+            coordinateChip.hidden = true;
+            return;
+        }
+        var x = Math.round(world.x);
+        var z = Math.round(world.z);
+        var label = "X " + x + " · Z " + z;
+        coordinateChip.hidden = false;
+        coordinateChip.setAttribute("data-copy", x + ", " + z);
+        coordinateChip._voCopyLabel = label;
+        if (!coordinateChip.classList.contains("is-copied")) {
+            coordinateChip.textContent = label;
+        }
+    }
+
+    function createCoordinateControl() {
+        var CoordinateControl = L.Control.extend({
+            options: { position: "bottomright" },
+            onAdd: function () {
+                coordinateChip = L.DomUtil.create("button", "leaflet-control coordinate-chip vo-copy");
+                coordinateChip.type = "button";
+                coordinateChip.title = "Copy world coordinates";
+                coordinateChip.setAttribute("aria-label", "Copy world coordinates");
+                coordinateChip.hidden = true;
+                coordinateChip.addEventListener("click", function () {
+                    copyFromButton(coordinateChip);
+                });
+                L.DomEvent.disableClickPropagation(coordinateChip);
+                L.DomEvent.disableScrollPropagation(coordinateChip);
+                return coordinateChip;
+            }
+        });
+
+        new CoordinateControl().addTo(map);
+        // Touch uses honest map-center coordinates; a long-press crosshair is future polish.
+        if (coordinateUsesMapCenter) {
+            map.on("moveend", function () {
+                updateCoordinateChip(map.getCenter());
+            });
+            if (map._loaded) {
+                updateCoordinateChip(map.getCenter());
+            }
+        } else {
+            map.on("mousemove", function (event) {
+                updateCoordinateChip(event.latlng);
+            });
+            map.getContainer().addEventListener("mouseleave", function () {
+                coordinateChip.hidden = true;
+            });
+        }
+    }
+
+    function createFullscreenControl() {
+        var FullscreenControl = L.Control.extend({
+            options: { position: "topleft" },
+            onAdd: function () {
+                var container = L.DomUtil.create("div", "leaflet-control leaflet-bar map-tool-control");
+                var button = L.DomUtil.create("button", "map-tool-button fullscreen-button", container);
+
+                function fullscreenElement() {
+                    return document.fullscreenElement || document.webkitFullscreenElement;
+                }
+
+                function syncFullscreenButton() {
+                    var isFullscreen = Boolean(fullscreenElement());
+                    button.textContent = isFullscreen ? "⤡" : "⛶";
+                    button.title = isFullscreen ? "Exit fullscreen" : "Enter fullscreen";
+                    button.setAttribute("aria-label", button.title);
+                    button.setAttribute("aria-pressed", String(isFullscreen));
+                }
+
+                button.type = "button";
+                button.addEventListener("click", function () {
+                    var action;
+                    if (fullscreenElement()) {
+                        action = document.exitFullscreen || document.webkitExitFullscreen;
+                        if (action) {
+                            var exitResult = action.call(document);
+                            if (exitResult && typeof exitResult.catch === "function") {
+                                exitResult.catch(function () {
+                                    return;
+                                });
+                            }
+                        }
+                    } else {
+                        action = document.documentElement.requestFullscreen ||
+                            document.documentElement.webkitRequestFullscreen;
+                        if (action) {
+                            var result = action.call(document.documentElement);
+                            if (result && typeof result.catch === "function") {
+                                result.catch(function () {
+                                    return;
+                                });
+                            }
+                        }
+                    }
+                });
+                document.addEventListener("fullscreenchange", syncFullscreenButton);
+                document.addEventListener("webkitfullscreenchange", syncFullscreenButton);
+                syncFullscreenButton();
+                L.DomEvent.disableClickPropagation(container);
+                L.DomEvent.disableScrollPropagation(container);
+                return container;
+            }
+        });
+
+        new FullscreenControl().addTo(map);
+    }
+
+    function loadMinimapPreference() {
+        try {
+            var value = window.localStorage.getItem(MINIMAP_STORAGE_KEY);
+            return value === "1" || value === "true";
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function saveMinimapPreference(isOpen) {
+        try {
+            window.localStorage.setItem(MINIMAP_STORAGE_KEY, isOpen ? "1" : "0");
+        } catch (error) {
+            return;
+        }
+    }
+
+    function clampUnit(value) {
+        return Math.max(0, Math.min(1, value));
+    }
+
+    function updateMinimapView() {
+        minimapFrame = 0;
+        if (!map || !mapMetrics || !worldBounds || !minimapElement || !minimapViewRect ||
+            minimapElement.classList.contains("is-collapsed")) {
+            return;
+        }
+
+        var longitudeSpan = worldBounds.getEast() - worldBounds.getWest();
+        var latitudeSpan = worldBounds.getNorth() - worldBounds.getSouth();
+        if (!Number.isFinite(longitudeSpan) || !Number.isFinite(latitudeSpan) ||
+            longitudeSpan <= 0 || latitudeSpan <= 0) {
+            return;
+        }
+
+        var bounds = map.getBounds();
+        var left = clampUnit((bounds.getWest() - worldBounds.getWest()) / longitudeSpan);
+        var right = clampUnit((bounds.getEast() - worldBounds.getWest()) / longitudeSpan);
+        var top = clampUnit((worldBounds.getNorth() - bounds.getNorth()) / latitudeSpan);
+        var bottom = clampUnit((worldBounds.getNorth() - bounds.getSouth()) / latitudeSpan);
+        minimapViewRect.style.left = (left * 100).toFixed(2) + "%";
+        minimapViewRect.style.top = (top * 100).toFixed(2) + "%";
+        minimapViewRect.style.width = (Math.max(0, right - left) * 100).toFixed(2) + "%";
+        minimapViewRect.style.height = (Math.max(0, bottom - top) * 100).toFixed(2) + "%";
+    }
+
+    function scheduleMinimapUpdate() {
+        if (!minimapFrame) {
+            minimapFrame = window.requestAnimationFrame(updateMinimapView);
+        }
+    }
+
+    function createMinimapControl() {
+        var MinimapControl = L.Control.extend({
+            options: { position: "bottomright" },
+            onAdd: function () {
+                var container = L.DomUtil.create("section", "leaflet-control minimap-control");
+                var frame = L.DomUtil.create("div", "minimap-frame", container);
+                var image = L.DomUtil.create("img", "minimap-image", frame);
+                minimapViewRect = L.DomUtil.create("div", "minimap-view-rect", frame);
+                var toggle = L.DomUtil.create("button", "minimap-toggle", container);
+                var isOpen = loadMinimapPreference();
+
+                function setOpen(nextOpen) {
+                    isOpen = nextOpen;
+                    container.classList.toggle("is-collapsed", !isOpen);
+                    toggle.setAttribute("aria-expanded", String(isOpen));
+                    toggle.title = isOpen ? "Hide minimap" : "Show minimap";
+                    toggle.setAttribute("aria-label", toggle.title);
+                    saveMinimapPreference(isOpen);
+                    if (isOpen) {
+                        scheduleMinimapUpdate();
+                    }
+                }
+
+                image.src = authorizedUrl("/base.png");
+                image.alt = "World overview";
+                image.draggable = false;
+                toggle.type = "button";
+                toggle.textContent = "◱";
+                toggle.addEventListener("click", function () {
+                    setOpen(!isOpen);
+                });
+                frame.addEventListener("click", function (event) {
+                    var rectangle = frame.getBoundingClientRect();
+                    if (!isOpen || rectangle.width <= 0 || rectangle.height <= 0 || !worldBounds) {
+                        return;
+                    }
+                    var xAmount = clampUnit((event.clientX - rectangle.left) / rectangle.width);
+                    var yAmount = clampUnit((event.clientY - rectangle.top) / rectangle.height);
+                    clearFollow();
+                    map.setView(L.latLng(
+                        worldBounds.getNorth() - yAmount *
+                            (worldBounds.getNorth() - worldBounds.getSouth()),
+                        worldBounds.getWest() + xAmount *
+                            (worldBounds.getEast() - worldBounds.getWest())
+                    ), map.getZoom());
+                });
+                minimapElement = container;
+                setOpen(isOpen);
+                L.DomEvent.disableClickPropagation(container);
+                L.DomEvent.disableScrollPropagation(container);
+                return container;
+            }
+        });
+
+        new MinimapControl().addTo(map);
+        map.on("move zoom resize", scheduleMinimapUpdate);
+    }
+
+    function applyInitialHashState(defaultZoom) {
+        var parameters = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+        var layerKeys = parameters.get("ly");
+        if (layerKeys) {
+            layerKeys.split(",").forEach(function (key) {
+                if (key !== "legendCollapsed" &&
+                    Object.prototype.hasOwnProperty.call(layerSettings, key)) {
+                    layerSettings[key] = true;
+                }
+            });
+            saveLayerSettings();
+            renderLayerRows();
+        }
+
+        var xText = parameters.get("x");
+        var zText = parameters.get("z");
+        var zoomText = parameters.get("zm");
+        var x = Number(xText);
+        var z = Number(zText);
+        var zoom = Number(zoomText);
+        if (xText !== null && xText !== "" && zText !== null && zText !== "" &&
+            zoomText !== null && zoomText !== "" && Number.isFinite(x) &&
+            Number.isFinite(z) && Number.isFinite(zoom)) {
+            var worldExtent = mapMetrics.pixelSize * mapMetrics.textureSize / 2;
+            x = Math.max(-worldExtent, Math.min(worldExtent, x));
+            z = Math.max(-worldExtent, Math.min(worldExtent, z));
+            zoom = Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), zoom));
+            map.setView(worldToLatLng(x, z), zoom, { animate: false });
+            hashViewApplied = true;
+        } else {
+            map.setView(worldToLatLng(0, 0), defaultZoom);
+        }
+
+        pendingHashFollowName = (parameters.get("follow") || "").trim();
+    }
+
+    function hashFollowName() {
+        var record = followedPlayer ? markerRecords.get(followedPlayer) : null;
+        return record ? record.player.displayName : pendingHashFollowName;
+    }
+
+    function writeMapHash() {
+        hashUpdateTimer = 0;
+        if (!map || !mapMetrics) {
+            return;
+        }
+
+        var center = latLngToWorld(map.getCenter());
+        if (!center) {
+            return;
+        }
+        var parameters = new URLSearchParams();
+        parameters.set("x", String(Math.round(center.x)));
+        parameters.set("z", String(Math.round(center.z)));
+        parameters.set("zm", String(Number(map.getZoom().toFixed(2))));
+        var enabledNonDefaultLayers = Object.keys(layerSettings).filter(function (key) {
+            return key !== "legendCollapsed" && layerSettings[key] === true &&
+                LAYER_DEFAULTS[key] === false;
+        });
+        if (enabledNonDefaultLayers.length > 0) {
+            parameters.set("ly", enabledNonDefaultLayers.join(","));
+        }
+        var followName = hashFollowName();
+        if (followName) {
+            parameters.set("follow", followName);
+        }
+
+        var hash = "#" + parameters.toString();
+        if (window.location.hash !== hash) {
+            window.history.replaceState(
+                window.history.state,
+                "",
+                window.location.pathname + window.location.search + hash
+            );
+        }
+    }
+
+    function scheduleHashUpdate() {
+        window.clearTimeout(hashUpdateTimer);
+        hashUpdateTimer = window.setTimeout(writeMapHash, 400);
+    }
+
+    function applyPendingHashFollow() {
+        if (!pendingHashFollowName || latestPlayers.length === 0) {
+            return;
+        }
+        var requestedName = pendingHashFollowName.toLocaleLowerCase();
+        var match = latestPlayers.find(function (player) {
+            return player.key === pendingHashFollowName ||
+                player.displayName.toLocaleLowerCase() === requestedName;
+        });
+        if (match) {
+            pendingHashFollowName = "";
+            followPlayer(match.key);
+        }
     }
 
     function createLayersControl() {
@@ -2340,6 +3023,7 @@
             layerSettings[key] = checkbox.checked;
             saveLayerSettings();
             syncLayerVisibility();
+            scheduleHashUpdate();
             if (Object.prototype.hasOwnProperty.call(ENTITY_GROUPS, key)) {
                 updateEntityPolling(true);
             }
@@ -2614,6 +3298,7 @@
         renderTrails();
         if (followWasCleared) {
             renderPlayerList(latestPlayers);
+            scheduleHashUpdate();
         }
     }
 
@@ -2656,6 +3341,7 @@
         renderPlayerList(latestPlayers);
         renderTrails();
         refreshOpenPopupContent();
+        scheduleHashUpdate();
         map.panTo(record.marker.getLatLng(), {
             animate: true,
             duration: 0.35
@@ -2677,6 +3363,7 @@
         renderPlayerList(latestPlayers);
         renderTrails();
         refreshOpenPopupContent();
+        scheduleHashUpdate();
     }
 
     function updateFollowStyles() {
@@ -3739,6 +4426,7 @@
         renderPlayerList(latestPlayers);
         renderConsolePlayers();
         updatePlayerMarkers(latestPlayers);
+        applyPendingHashFollow();
         if (previousPlayerNames !== currentPlayerNames &&
             document.activeElement === elements.commandInput &&
             findPlayerSuggestionContext(elements.commandInput.value.replace(/^\s+/, ""))) {
@@ -3877,7 +4565,9 @@
     connectEventStream();
     window.addEventListener("beforeunload", function () {
         window.clearTimeout(eventSourceRetryTimer);
+        window.clearTimeout(hashUpdateTimer);
         window.clearInterval(popupRefreshTimer);
+        window.cancelAnimationFrame(minimapFrame);
         if (eventSource) {
             eventSource.close();
         }
