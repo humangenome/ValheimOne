@@ -332,7 +332,8 @@ internal sealed class DetailTileRenderer
                     height,
                     lavaMasks[sampleIndex],
                     worldX,
-                    worldZ);
+                    worldZ,
+                    pixelSpan);
                 int offset = ((py * tileSize) + px) * 4;
                 color.WriteRgba(pixels, offset);
 
@@ -568,7 +569,8 @@ internal sealed class DetailTileRenderer
                 -100f,
                 0f,
                 WorldMapRenderer.WorldRadius + (2f * OceanMargin),
-                0f);
+                0f,
+                WorldMapRenderer.PixelSize);
             for (int index = 0; index < tileSize * tileSize; index++)
             {
                 ocean.WriteRgba(pixels, index * 4);

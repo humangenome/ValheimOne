@@ -14,7 +14,7 @@ internal sealed class WorldMapRenderer
 {
     public const float PixelSize = 12f;
     public const int WorldRadius = 10500;
-    public const int RendererVersion = 4;
+    public const int RendererVersion = 5;
 
     // Deepest zoom served through on-demand detail tiles (about 0.375 m/px for a
     // 2048 base at 12 m/px, providing sub-meter detail).
@@ -228,7 +228,13 @@ internal sealed class WorldMapRenderer
                 {
                     heights[pixelIndex] = -100f;
                     land[pixelIndex] = false;
-                    MapShading.Compose(Heightmap.Biome.Ocean, -100f, 0f, worldX, worldZ)
+                    MapShading.Compose(
+                            Heightmap.Biome.Ocean,
+                            -100f,
+                            0f,
+                            worldX,
+                            worldZ,
+                            PixelSize)
                         .WriteRgba(pixels, pixelIndex * 4);
                     continue;
                 }
@@ -240,7 +246,13 @@ internal sealed class WorldMapRenderer
                 bool isLand = height >= MapShading.WaterLevel;
                 land[pixelIndex] = isLand;
                 float lavaMask = biome == Heightmap.Biome.AshLands ? mask.a : 0f;
-                MapColor color = MapShading.Compose(biome, height, lavaMask, worldX, worldZ);
+                MapColor color = MapShading.Compose(
+                    biome,
+                    height,
+                    lavaMask,
+                    worldX,
+                    worldZ,
+                    PixelSize);
                 color.WriteRgba(pixels, pixelIndex * 4);
             }
 

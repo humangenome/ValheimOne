@@ -6,8 +6,9 @@ namespace ValheimOne.LiveMap;
 // Shared per-pixel shading for the base overview render and on-demand detail tiles.
 // The structure mirrors the game's own minimap pixel logic: biome base color plus
 // per-biome forest rules (InForest for Meadows, forest factor < 0.8 for Plains,
-// always-forest for Black Forest, smooth-stepped forest factor for Mistlands) and
-// a sub-water depth ramp with the Ashlands ocean gradient.
+// always-forest for Black Forest, smooth-stepped forest factor for Mistlands),
+// zoom-aware forest stippling that becomes soft world-anchored tree dots at deep
+// zooms, and a sub-water depth ramp with the Ashlands ocean gradient.
 internal static class MapShading
 {
     public const float WaterLevel = 30f;
@@ -21,7 +22,12 @@ internal static class MapShading
     public const float EdgeFadeStartRadius = 10150f;
     public const float EdgeOceanRadius = 10470f;
 
-    private const float StippleCellMeters = 6f;
+    private const float FineStippleMetersPerPixel = 1.5f;
+    private const float CoarseStippleMetersPerPixel = 3f;
+    private const float TreeCellMeters = 6f;
+    private const float TreeJitterMeters = 2.2f;
+    private const float TreeFullRadiusMeters = 1.2f;
+    private const float TreeFadeRadiusMeters = 2.4f;
 
     private static readonly MapColor ShallowWater = new MapColor(0.290f, 0.446f, 0.600f);
     private static readonly MapColor DeepWater = new MapColor(0.088f, 0.140f, 0.240f);
@@ -46,7 +52,8 @@ internal static class MapShading
         float height,
         float lavaMask,
         float worldX,
-        float worldZ)
+        float worldZ,
+        float metersPerPixel)
     {
         float edge = EdgeOceanFactor(worldX, worldZ);
         if (edge >= 1f)
@@ -57,7 +64,7 @@ internal static class MapShading
         MapColor landColor = BiomePalette.Get(biome, height);
         MapColor color = height < WaterLevel
             ? ComposeWater(landColor, height, worldX, worldZ)
-            : ComposeLand(landColor, biome, lavaMask, worldX, worldZ);
+            : ComposeLand(landColor, biome, lavaMask, worldX, worldZ, metersPerPixel);
         return edge > 0f ? MapColor.Lerp(color, DeepWater, edge) : color;
     }
 
@@ -66,33 +73,31 @@ internal static class MapShading
         Heightmap.Biome biome,
         float lavaMask,
         float worldX,
-        float worldZ)
+        float worldZ,
+        float metersPerPixel)
     {
         switch (biome)
         {
             case Heightmap.Biome.Meadows:
-                if (WorldGenerator.InForest(new Vector3(worldX, 0f, worldZ)) &&
-                    IsStippleCell(worldX, worldZ))
+                if (WorldGenerator.InForest(new Vector3(worldX, 0f, worldZ)))
                 {
-                    return color.Multiply(0.82f);
+                    return ApplyForestStipple(color, 0.82f, worldX, worldZ, metersPerPixel);
                 }
 
                 return color;
             case Heightmap.Biome.Plains:
-                if (WorldGenerator.GetForestFactor(new Vector3(worldX, 0f, worldZ)) < 0.8f &&
-                    IsStippleCell(worldX, worldZ))
+                if (WorldGenerator.GetForestFactor(new Vector3(worldX, 0f, worldZ)) < 0.8f)
                 {
-                    return color.Multiply(0.88f);
+                    return ApplyForestStipple(color, 0.88f, worldX, worldZ, metersPerPixel);
                 }
 
                 return color;
             case Heightmap.Biome.BlackForest:
-                return IsStippleCell(worldX, worldZ) ? color.Multiply(0.86f) : color;
+                return ApplyForestStipple(color, 0.86f, worldX, worldZ, metersPerPixel);
             case Heightmap.Biome.Swamp:
-                if (WorldGenerator.InForest(new Vector3(worldX, 0f, worldZ)) &&
-                    IsStippleCell(worldX, worldZ))
+                if (WorldGenerator.InForest(new Vector3(worldX, 0f, worldZ)))
                 {
-                    return color.Multiply(0.90f);
+                    return ApplyForestStipple(color, 0.90f, worldX, worldZ, metersPerPixel);
                 }
 
                 return color;
@@ -101,9 +106,14 @@ internal static class MapShading
                 float forestFactor = WorldGenerator.GetForestFactor(new Vector3(worldX, 0f, worldZ));
                 float open = 1f - SmoothStep(1.1f, 1.3f, forestFactor);
                 float speckDensity = 1f - open;
-                if (speckDensity > 0f && StippleNoise(worldX, worldZ) < speckDensity * 0.45f)
+                if (speckDensity > 0f)
                 {
-                    return MapColor.Lerp(color, MistlandsSpeck, 0.85f);
+                    return ApplyMistlandsStipple(
+                        color,
+                        speckDensity * 0.45f,
+                        worldX,
+                        worldZ,
+                        metersPerPixel);
                 }
 
                 return color;
@@ -147,21 +157,153 @@ internal static class MapShading
         return MapColor.Lerp(landColor, water, 0.5f + (0.5f * shore));
     }
 
-    // Deterministic world-anchored stipple so patterns stay identical across zoom levels.
-    private static bool IsStippleCell(float worldX, float worldZ)
+    private static MapColor ApplyForestStipple(
+        MapColor color,
+        float multiplier,
+        float worldX,
+        float worldZ,
+        float metersPerPixel)
     {
-        return (CellHash(worldX, worldZ) & 3u) != 0u;
+        MapColor darkened = color.Multiply(multiplier);
+        if (metersPerPixel >= CoarseStippleMetersPerPixel)
+        {
+            return IsCoarseStipplePixel(worldX, worldZ, metersPerPixel) ? darkened : color;
+        }
+
+        float fineCoverage = FineStippleCoverage(worldX, worldZ, 0.75f, true);
+        if (metersPerPixel <= FineStippleMetersPerPixel)
+        {
+            return MapColor.Lerp(color, darkened, fineCoverage);
+        }
+
+        float coarseCoverage = IsCoarseStipplePixel(worldX, worldZ, metersPerPixel) ? 1f : 0f;
+        float coarseBlend = SmoothStep(
+            FineStippleMetersPerPixel,
+            CoarseStippleMetersPerPixel,
+            metersPerPixel);
+        float coverage = fineCoverage + ((coarseCoverage - fineCoverage) * coarseBlend);
+        return MapColor.Lerp(color, darkened, coverage);
     }
 
-    private static float StippleNoise(float worldX, float worldZ)
+    private static MapColor ApplyMistlandsStipple(
+        MapColor color,
+        float activationProbability,
+        float worldX,
+        float worldZ,
+        float metersPerPixel)
     {
-        return (CellHash(worldX, worldZ) & 0xFFFFu) / 65535f;
+        float amount;
+        if (metersPerPixel >= CoarseStippleMetersPerPixel)
+        {
+            amount = StippleNoise(worldX, worldZ, metersPerPixel) < activationProbability
+                ? 0.85f
+                : 0f;
+        }
+        else
+        {
+            float fineAmount = FineStippleCoverage(
+                worldX,
+                worldZ,
+                activationProbability,
+                false) * 0.85f;
+            if (metersPerPixel <= FineStippleMetersPerPixel)
+            {
+                amount = fineAmount;
+            }
+            else
+            {
+                float coarseAmount = StippleNoise(worldX, worldZ, metersPerPixel) < activationProbability
+                    ? 0.85f
+                    : 0f;
+                float coarseBlend = SmoothStep(
+                    FineStippleMetersPerPixel,
+                    CoarseStippleMetersPerPixel,
+                    metersPerPixel);
+                amount = fineAmount + ((coarseAmount - fineAmount) * coarseBlend);
+            }
+        }
+
+        return amount > 0f ? MapColor.Lerp(color, MistlandsSpeck, amount) : color;
     }
 
-    private static uint CellHash(float worldX, float worldZ)
+    // Coarse pixels hash cells the size of their own footprint; below 3 m/px the
+    // result blends into deterministic, jittered soft dots anchored on a 6 m
+    // world grid. Explicit floors keep negative coordinates aligned correctly.
+    private static bool IsCoarseStipplePixel(float worldX, float worldZ, float metersPerPixel)
     {
-        int cellX = (int)Math.Floor(worldX / StippleCellMeters);
-        int cellZ = (int)Math.Floor(worldZ / StippleCellMeters);
+        return (CellHash(worldX, worldZ, metersPerPixel) & 3u) != 0u;
+    }
+
+    private static float FineStippleCoverage(
+        float worldX,
+        float worldZ,
+        float activationProbability,
+        bool useThreeQuarterMask)
+    {
+        int centerCellX = (int)Math.Floor(worldX / TreeCellMeters);
+        int centerCellZ = (int)Math.Floor(worldZ / TreeCellMeters);
+        float nearestDistanceSquared = float.MaxValue;
+
+        for (int cellZ = centerCellZ - 1; cellZ <= centerCellZ + 1; cellZ++)
+        {
+            for (int cellX = centerCellX - 1; cellX <= centerCellX + 1; cellX++)
+            {
+                uint hash = CellHash(cellX, cellZ);
+                bool active = useThreeQuarterMask
+                    ? (hash & 3u) != 0u
+                    : HashNoise(hash) < activationProbability;
+                if (!active)
+                {
+                    continue;
+                }
+
+                float treeX = ((cellX + 0.5f) * TreeCellMeters) + HashJitter(hash, 2);
+                float treeZ = ((cellZ + 0.5f) * TreeCellMeters) + HashJitter(hash, 17);
+                float deltaX = worldX - treeX;
+                float deltaZ = worldZ - treeZ;
+                float distanceSquared = (deltaX * deltaX) + (deltaZ * deltaZ);
+                if (distanceSquared < nearestDistanceSquared)
+                {
+                    nearestDistanceSquared = distanceSquared;
+                }
+            }
+        }
+
+        if (nearestDistanceSquared >= TreeFadeRadiusMeters * TreeFadeRadiusMeters)
+        {
+            return 0f;
+        }
+
+        float distance = (float)Math.Sqrt(nearestDistanceSquared);
+        return 1f - SmoothStep(TreeFullRadiusMeters, TreeFadeRadiusMeters, distance);
+    }
+
+    private static float HashJitter(uint hash, int shift)
+    {
+        const uint jitterMask = 0x7FFFu;
+        float normalized = ((hash >> shift) & jitterMask) / (float)jitterMask;
+        return ((normalized * 2f) - 1f) * TreeJitterMeters;
+    }
+
+    private static float StippleNoise(float worldX, float worldZ, float cellMeters)
+    {
+        return HashNoise(CellHash(worldX, worldZ, cellMeters));
+    }
+
+    private static float HashNoise(uint hash)
+    {
+        return (hash & 0xFFFFu) / 65535f;
+    }
+
+    private static uint CellHash(float worldX, float worldZ, float cellMeters)
+    {
+        int cellX = (int)Math.Floor(worldX / cellMeters);
+        int cellZ = (int)Math.Floor(worldZ / cellMeters);
+        return CellHash(cellX, cellZ);
+    }
+
+    private static uint CellHash(int cellX, int cellZ)
+    {
         uint hash = (uint)unchecked((cellX * 73856093) ^ (cellZ * 19349663));
         return hash * 2654435761u;
     }
