@@ -30,6 +30,7 @@
     var SAVED_BADGE_REFRESH_MS = 30000;
     var SAVED_STALE_MS = 30 * 60 * 1000;
     var DAY_TOAST_DURATION_MS = 4000;
+    var NOTICE_TOAST_DURATION_MS = 6000;
     var CINEMA_AUTO_CYCLE_MS = 20000;
     var CINEMA_REFOLLOW_MS = 10 * 60 * 1000;
     var CINEMA_AMBIENT_STEP_MS = 18000;
@@ -37,6 +38,7 @@
     var LAYER_STORAGE_KEY = "vo-livemap-layers-v2";
     var LEGACY_LAYER_STORAGE_KEY = "vo-livemap-layers";
     var LEGACY_MINIMAP_STORAGE_KEY = "vo-livemap-minimap";
+    var MOTD_VERSION_STORAGE_KEY = "vo-livemap-motd-version";
     var TAB_SESSION_KEY = "vo-livemap-active-tab";
     var CONSOLE_CATEGORY_ORDER = ["server", "players", "moderation", "world", "diagnostics"];
     var CONSOLE_CATEGORY_LABELS = {
@@ -420,6 +422,9 @@
     var lastSavedUnixMs = 0;
     var savedBadgeTimer = 0;
     var dayToastTimer = 0;
+    var noticeToastTimer = 0;
+    var storageWriteWarningShown = false;
+    var noticeToastElement = document.getElementById("notice-toast");
     var latestWind = null;
     var tintOverlay = null;
     var regionLayer = null;
@@ -2154,6 +2159,19 @@
         return Math.max(20, Math.min(100, Math.round(opacity / 5) * 5));
     }
 
+    function storageWrite(key, value) {
+        try {
+            window.localStorage.setItem(key, value);
+            return true;
+        } catch (error) {
+            if (!storageWriteWarningShown) {
+                storageWriteWarningShown = true;
+                showNoticeToast("Settings can't be saved — browser storage is unavailable");
+            }
+            return false;
+        }
+    }
+
     function loadLayerSettings() {
         var settings = {};
         Object.keys(LAYER_DEFAULTS).forEach(function (key) {
@@ -2210,7 +2228,7 @@
                 }
             }
             if (isMigration || migratedPoiKeys) {
-                window.localStorage.setItem(LAYER_STORAGE_KEY, JSON.stringify(settings));
+                storageWrite(LAYER_STORAGE_KEY, JSON.stringify(settings));
             }
         } catch (error) {
             return settings;
@@ -2220,11 +2238,7 @@
     }
 
     function saveLayerSettings() {
-        try {
-            window.localStorage.setItem(LAYER_STORAGE_KEY, JSON.stringify(layerSettings));
-        } catch (error) {
-            return;
-        }
+        storageWrite(LAYER_STORAGE_KEY, JSON.stringify(layerSettings));
     }
 
     function popupAgeText(updatedAt) {
@@ -3179,6 +3193,20 @@
             elements.dayToast.hidden = true;
             dayToastTimer = 0;
         }, DAY_TOAST_DURATION_MS);
+    }
+
+    function showNoticeToast(message) {
+        window.clearTimeout(noticeToastTimer);
+        noticeToastElement.textContent = message;
+        noticeToastElement.hidden = false;
+        noticeToastElement.classList.remove("is-visible");
+        void noticeToastElement.offsetWidth;
+        noticeToastElement.classList.add("is-visible");
+        noticeToastTimer = window.setTimeout(function () {
+            noticeToastElement.classList.remove("is-visible");
+            noticeToastElement.hidden = true;
+            noticeToastTimer = 0;
+        }, NOTICE_TOAST_DURATION_MS);
     }
 
     function formatSavedAge(ageMs) {
@@ -9418,6 +9446,7 @@
             throw new Error("Invalid status payload");
         }
 
+        handlePluginVersion(status.pluginVersion);
         feedLastUpdated.status = Date.now();
         latestStatusSnapshotStale = status.stale === true;
         setFeedState("status", true);
@@ -9438,6 +9467,30 @@
         applyRaidEvent(status.event);
         renderCinemaHud();
         tryBootCinemaFromHash();
+    }
+
+    function handlePluginVersion(pluginVersion) {
+        if (typeof pluginVersion !== "string" || !pluginVersion) {
+            return;
+        }
+
+        var storedVersion;
+        try {
+            storedVersion = window.localStorage.getItem(MOTD_VERSION_STORAGE_KEY);
+        } catch (error) {
+            return;
+        }
+
+        if (storedVersion === pluginVersion) {
+            return;
+        }
+        if (storedVersion === null) {
+            storageWrite(MOTD_VERSION_STORAGE_KEY, pluginVersion);
+            return;
+        }
+        if (storageWrite(MOTD_VERSION_STORAGE_KEY, pluginVersion)) {
+            showNoticeToast("Map updated — v" + pluginVersion);
+        }
     }
 
     function handlePlayersPayload(payload) {

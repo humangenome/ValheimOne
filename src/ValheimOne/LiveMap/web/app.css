@@ -3918,7 +3918,8 @@ body.is-pinging #map .leaflet-overlay-pane path {
     font-weight: 550;
 }
 
-.day-toast {
+.day-toast,
+.notice-toast {
     position: fixed;
     z-index: 1600;
     bottom: 26px;
@@ -3945,12 +3946,22 @@ body.is-pinging #map .leaflet-overlay-pane path {
     pointer-events: none;
 }
 
-.day-toast[hidden] {
+.day-toast[hidden],
+.notice-toast[hidden] {
     display: none;
 }
 
 .day-toast.is-visible {
     animation: day-toast 4s ease both;
+}
+
+.notice-toast {
+    bottom: 76px;
+    max-width: calc(100vw - 32px);
+}
+
+.notice-toast.is-visible {
+    animation: day-toast 6s ease both;
 }
 
 @keyframes day-toast {

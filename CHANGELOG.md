@@ -6,6 +6,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Added
 
+- LiveMap now warns once when browser storage cannot save settings and shows a themed one-time update toast after plugin-version changes.
 - LiveMap layer settings now include per-category POI color palettes and a persistent POI-only marker opacity slider, with matching icon, cluster, density-dot, layer-row, and legend colors.
 - LiveMap dungeon entrance popups and hover cards now show when vikings are inside.
 - LiveMap moving ships now cast a dashed gold 30-meter bow-line along their current heading in both icon and density-dot views.

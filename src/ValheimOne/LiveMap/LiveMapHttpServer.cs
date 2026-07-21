@@ -683,6 +683,7 @@ internal sealed class LiveMapHttpServer
         json.Append('{');
         json.Append("\"serverName\":").Append(JsonWriter.Quote(snapshot.ServerName));
         json.Append(",\"worldName\":").Append(JsonWriter.Quote(snapshot.WorldName));
+        json.Append(",\"pluginVersion\":").Append(JsonWriter.Quote(ValheimOnePlugin.PluginVersion));
         json.Append(",\"day\":").Append(snapshot.Day.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"timeOfDay\":").Append(JsonWriter.Number(snapshot.TimeOfDay));
         json.Append(",\"windDirDeg\":").Append(JsonWriter.Number(Math.Round(snapshot.WindDirDeg, 1)));
