@@ -7,6 +7,7 @@ OUTPUT="$LIVEMAP_DIR/Web/EmbeddedAssets.g.cs"
 
 ASSET_NAMES=(
     "index.html"
+    "icons.js"
     "app.js"
     "app.css"
     "leaflet.js"
@@ -25,6 +26,7 @@ ASSET_NAMES=(
 
 ASSET_PATHS=(
     "$LIVEMAP_DIR/web/index.html"
+    "$LIVEMAP_DIR/web/icons.js"
     "$LIVEMAP_DIR/web/app.js"
     "$LIVEMAP_DIR/web/app.css"
     "$LIVEMAP_DIR/web/vendor/leaflet.js"

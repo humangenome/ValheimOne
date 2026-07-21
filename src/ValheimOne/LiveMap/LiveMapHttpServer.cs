@@ -526,6 +526,10 @@ internal sealed class LiveMapHttpServer
                 assetName = "app.js";
                 contentType = "application/javascript; charset=utf-8";
                 break;
+            case "icons.js":
+                assetName = "icons.js";
+                contentType = "application/javascript; charset=utf-8";
+                break;
             case "app.css":
                 assetName = "app.css";
                 contentType = "text/css; charset=utf-8";

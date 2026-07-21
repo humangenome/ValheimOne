@@ -189,6 +189,34 @@
         tombstone: { label: "Tombstones", glyph: "☠" }
     };
 
+    function iconMarkup(iconKey, fallbackGlyph) {
+        if (window.VO_ICONS && typeof window.VO_ICONS[iconKey] === "string") {
+            return window.VO_ICONS[iconKey];
+        }
+        return fallbackGlyph;
+    }
+
+    function poiIconKey(record) {
+        if (typeof window.VO_ICON_FOR_POI === "function") {
+            var resolved = window.VO_ICON_FOR_POI(record);
+            if (typeof resolved === "string" && resolved) {
+                return resolved;
+            }
+        }
+        return record.group;
+    }
+
+    function layerIconKey(key) {
+        if (key === "pins") {
+            return "pin";
+        }
+        if (Object.prototype.hasOwnProperty.call(POI_GROUPS, key) ||
+            Object.prototype.hasOwnProperty.call(ENTITY_GROUPS, key)) {
+            return key;
+        }
+        return "";
+    }
+
     var LAYER_DEFAULTS = {
         players: true,
         pins: true,
@@ -4426,7 +4454,7 @@
         });
 
         swatch.className = "layer-swatch layer-swatch-" + swatchClass;
-        swatch.textContent = glyph;
+        swatch.innerHTML = iconMarkup(layerIconKey(key), glyph);
         swatch.setAttribute("aria-hidden", "true");
         text.className = "layer-label";
         text.textContent = labelText;
@@ -4876,7 +4904,7 @@
         var label = document.createElement("span");
         item.className = "legend-item";
         swatch.className = "legend-swatch layer-swatch layer-swatch-" + swatchClass;
-        swatch.textContent = glyph;
+        swatch.innerHTML = iconMarkup(layerIconKey(swatchClass), glyph);
         swatch.setAttribute("aria-hidden", "true");
         label.textContent = labelText;
         item.appendChild(swatch);
@@ -6846,6 +6874,7 @@
             latLng: worldToLatLng(Number(poi.x), Number(poi.z)),
             memberCount: memberCount,
             minedPct: minedPct,
+            name: typeof poi.name === "string" ? poi.name : "",
             placed: poi.placed !== false,
             state: state,
             title: resource ? resourcePoiTitle(group) : prettifyPoiName(poi.name),
@@ -6871,11 +6900,15 @@
 
     function createPoiMarker(record) {
         var dimmed = resourcePoiIsDimmed(record);
+        var markerMarkup = iconMarkup(
+            poiIconKey(record),
+            POI_GROUPS[record.group].glyph
+        );
         var icon = L.divIcon({
             className: "poi-div-icon poi-" + record.group +
                 (dimmed ? " is-resource-unavailable" : ""),
             html: '<span class="poi-marker-shell" aria-hidden="true">' +
-                POI_GROUPS[record.group].glyph + "</span>",
+                markerMarkup + "</span>",
             iconAnchor: [10, 10],
             iconSize: [20, 20]
         });
@@ -6911,13 +6944,23 @@
         var center = L.latLng(bucket.latitude / bucket.weight, bucket.longitude / bucket.weight);
         var count = bucket.count;
         var unavailable = bucket.activeWeight === 0;
+        var clusterIconKey = bucket.records.length > 0
+            ? poiIconKey(bucket.records[0])
+            : group;
+        if (bucket.records.some(function (record) {
+            return poiIconKey(record) !== clusterIconKey;
+        })) {
+            clusterIconKey = group;
+        }
+        var clusterMarkup = iconMarkup(clusterIconKey, POI_GROUPS[group].glyph);
         var icon = L.divIcon({
             className: "poi-div-icon poi-cluster-icon poi-" + group +
                 (unavailable ? " is-resource-unavailable" : ""),
-            html: '<span class="poi-cluster-shell" aria-hidden="true"><span>' +
-                POI_GROUPS[group].glyph + '</span><strong>' + count + "</strong></span>",
-            iconAnchor: [16, 12],
-            iconSize: [32, 24]
+            html: '<span class="poi-cluster-shell" aria-hidden="true">' +
+                '<span class="poi-cluster-mark">' + clusterMarkup +
+                '</span><strong>' + count + "</strong></span>",
+            iconAnchor: [18, 12],
+            iconSize: [36, 24]
         });
         var marker = L.marker(center, {
             icon: icon,
@@ -7410,10 +7453,14 @@
         clearEntityLayers(true);
         var reopenMarker = null;
         entities.forEach(function (entity) {
+            var markerMarkup = iconMarkup(
+                entity.group,
+                ENTITY_GROUPS[entity.group].glyph
+            );
             var icon = L.divIcon({
                 className: "entity-div-icon entity-" + entity.group,
                 html: '<span class="entity-marker-shell" aria-hidden="true">' +
-                    ENTITY_GROUPS[entity.group].glyph + "</span>",
+                    markerMarkup + "</span>",
                 iconAnchor: [11, 11],
                 iconSize: [22, 22]
             });
@@ -7785,7 +7832,8 @@
                 var icon = L.divIcon({
                     className: "pin-div-icon" + (isChecked ? " is-checked" : ""),
                     html: '<span class="pin-marker-shell"><span class="pin-marker-glyph">' +
-                        (isChecked ? "✓" : "•") + "</span></span>",
+                        iconMarkup(isChecked ? "pin_checked" : "pin", isChecked ? "✓" : "•") +
+                        "</span></span>",
                     iconAnchor: [10, 19],
                     iconSize: [20, 20]
                 });

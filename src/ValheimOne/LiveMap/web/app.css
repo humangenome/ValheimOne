@@ -838,6 +838,12 @@ input {
     line-height: 1;
 }
 
+.layer-swatch > svg {
+    display: block;
+    width: 14px;
+    height: 14px;
+}
+
 .layer-swatch-players {
     color: var(--accent);
     font-size: 9px;
@@ -1959,6 +1965,12 @@ body.is-pinging #map .leaflet-overlay-pane path {
     transform-origin: center;
 }
 
+.poi-marker-shell > svg {
+    display: block;
+    width: 15px;
+    height: 15px;
+}
+
 .poi-div-icon.is-resource-unavailable .poi-marker-shell,
 .poi-div-icon.is-resource-unavailable .poi-cluster-shell {
     filter: grayscale(0.2) saturate(0.48);
@@ -2030,11 +2042,11 @@ body.is-pinging #map .leaflet-overlay-pane path {
 
 .poi-cluster-shell {
     display: flex;
-    width: 32px;
+    width: 36px;
     height: 24px;
     align-items: center;
     justify-content: center;
-    gap: 3px;
+    gap: 2px;
     border: 1px solid rgba(217, 177, 104, 0.5);
     border-radius: 999px;
     background: rgba(22, 16, 11, 0.94);
@@ -2050,10 +2062,30 @@ body.is-pinging #map .leaflet-overlay-pane path {
     font-weight: 750;
 }
 
+.poi-cluster-mark {
+    display: grid;
+    width: 14px;
+    height: 14px;
+    place-items: center;
+}
+
+.poi-cluster-mark > svg {
+    display: block;
+    width: 14px;
+    height: 14px;
+}
+
 .poi-cluster-shell > strong {
+    display: grid;
+    min-width: 13px;
+    height: 13px;
+    padding: 0 2px;
+    border-radius: 999px;
+    background: rgba(217, 177, 104, 0.12);
     font-size: 10px;
     font-variant-numeric: tabular-nums;
     font-weight: 800;
+    place-items: center;
 }
 
 .poi-spawn .poi-cluster-shell {
@@ -2127,6 +2159,12 @@ body.is-pinging #map .leaflet-overlay-pane path {
     transform-origin: center;
 }
 
+.entity-marker-shell > svg {
+    display: block;
+    width: 16px;
+    height: 16px;
+}
+
 #map.is-density-dots .poi-marker-shell,
 #map.is-density-dots .entity-marker-shell {
     width: 8px;
@@ -2137,6 +2175,11 @@ body.is-pinging #map .leaflet-overlay-pane path {
     box-shadow: 0 0 0 1px var(--text-faint), 0 2px 5px var(--background);
     color: transparent;
     font-size: 0;
+}
+
+#map.is-density-dots .poi-marker-shell > svg,
+#map.is-density-dots .entity-marker-shell > svg {
+    display: none;
 }
 
 #map.is-density-dots .poi-div-icon:not(.poi-cluster-icon),
@@ -2217,6 +2260,11 @@ body.is-pinging #map .leaflet-overlay-pane path {
     font-size: 18px;
 }
 
+.entity-portal .entity-marker-shell > svg {
+    width: 17px;
+    height: 17px;
+}
+
 .entity-tombstone .entity-marker-shell {
     width: 19px;
     height: 19px;
@@ -2224,6 +2272,11 @@ body.is-pinging #map .leaflet-overlay-pane path {
     border-radius: 6px;
     color: #d8c8ad;
     font-size: 11px;
+}
+
+.entity-tombstone .entity-marker-shell > svg {
+    width: 14px;
+    height: 14px;
 }
 
 .entity-tombstone:not(.is-newest-death) .entity-marker-shell {
@@ -2249,11 +2302,20 @@ body.is-pinging #map .leaflet-overlay-pane path {
 }
 
 .pin-marker-glyph {
-    display: block;
+    display: grid;
+    width: 14px;
+    height: 14px;
     font-size: 11px;
     font-weight: 850;
     line-height: 1;
+    place-items: center;
     transform: rotate(45deg);
+}
+
+.pin-marker-glyph > svg {
+    display: block;
+    width: 13px;
+    height: 13px;
 }
 
 .pin-div-icon.is-checked .pin-marker-shell {
