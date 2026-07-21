@@ -250,8 +250,6 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _httpServer = new LiveMapHttpServer(
             port,
             config.BindIp,
-            config.AccessToken,
-            config.ShareToken,
             config.AdminSeesAll,
             config.PublicView,
             config.RespectInGameVisibility,

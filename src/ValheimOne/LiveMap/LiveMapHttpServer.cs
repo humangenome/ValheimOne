@@ -30,9 +30,6 @@ internal sealed class LiveMapHttpServer
 
     private readonly int _port;
     private readonly string _bindIp;
-    private readonly string _accessToken;
-    private readonly string _shareToken;
-    private readonly bool _adminSeesAll;
     private readonly bool _publicView;
     private readonly bool _respectInGameVisibility;
     private readonly bool _publicShowPlayerNames;
@@ -55,6 +52,8 @@ internal sealed class LiveMapHttpServer
     private readonly ConsoleBridge? _consoleBridge;
     private readonly LogRingBuffer? _logRingBuffer;
     private readonly ModLogger _log;
+    private string AccessToken => NormalizeToken(_config.AccessToken);
+    private string ShareToken => NormalizeToken(_config.ShareToken);
     private readonly object _fogPngLock = new object();
     private readonly object _exploredPctLock = new object();
     private HttpListener? _listener;
@@ -63,6 +62,7 @@ internal sealed class LiveMapHttpServer
     private long _fogPngRevision = -1;
     private long _exploredPctRevision = -1;
     private double _exploredPctValue;
+    private bool _accessTokenWarningLogged;
     private bool _consoleTokenWarningLogged;
     private int _eventStreamCount;
     private volatile bool _stopping;
@@ -70,8 +70,6 @@ internal sealed class LiveMapHttpServer
     public LiveMapHttpServer(
         int port,
         string bindIp,
-        string accessToken,
-        string shareToken,
         bool adminSeesAll,
         bool publicView,
         bool respectInGameVisibility,
@@ -98,9 +96,6 @@ internal sealed class LiveMapHttpServer
     {
         _port = port;
         _bindIp = bindIp.Trim();
-        _accessToken = accessToken;
-        _shareToken = shareToken;
-        _adminSeesAll = adminSeesAll;
         _publicView = publicView;
         _respectInGameVisibility = respectInGameVisibility;
         _publicShowPlayerNames = publicShowPlayerNames;
@@ -132,9 +127,18 @@ internal sealed class LiveMapHttpServer
             return;
         }
 
+        string accessToken = AccessToken;
+        if (!_accessTokenWarningLogged && string.IsNullOrEmpty(accessToken))
+        {
+            _accessTokenWarningLogged = true;
+            _log.Warning(
+                "[LiveMap] AccessToken is empty — admin map view disabled until " +
+                "LiveMap.AccessToken is set; save your panel config to auto-generate one");
+        }
+
         if (!_consoleTokenWarningLogged &&
             _config.ConsoleEnabled &&
-            string.IsNullOrEmpty(_config.AccessToken))
+            string.IsNullOrEmpty(accessToken))
         {
             _consoleTokenWarningLogged = true;
             _log.Warning(
@@ -441,26 +445,25 @@ internal sealed class LiveMapHttpServer
 
     private bool TryResolveView(HttpListenerRequest request, out ViewLevel viewLevel)
     {
-        if (string.IsNullOrEmpty(_accessToken))
-        {
-            viewLevel = ViewLevel.Admin;
-            return true;
-        }
-
         string queryToken = request.QueryString["token"] ?? string.Empty;
         string headerToken = request.Headers["X-LiveMap-Token"] ?? string.Empty;
-        bool isAdmin = FixedTimeEquals(_accessToken, queryToken);
-        isAdmin |= FixedTimeEquals(_accessToken, headerToken);
-        if (isAdmin)
+        string accessToken = AccessToken;
+        if (!string.IsNullOrEmpty(accessToken))
         {
-            viewLevel = ViewLevel.Admin;
-            return true;
+            bool isAdmin = FixedTimeEquals(accessToken, queryToken);
+            isAdmin |= FixedTimeEquals(accessToken, headerToken);
+            if (isAdmin)
+            {
+                viewLevel = ViewLevel.Admin;
+                return true;
+            }
         }
 
-        if (!string.IsNullOrEmpty(_shareToken))
+        string shareToken = ShareToken;
+        if (!string.IsNullOrEmpty(shareToken))
         {
-            bool isShared = FixedTimeEquals(_shareToken, queryToken);
-            isShared |= FixedTimeEquals(_shareToken, headerToken);
+            bool isShared = FixedTimeEquals(shareToken, queryToken);
+            isShared |= FixedTimeEquals(shareToken, headerToken);
             if (isShared)
             {
                 viewLevel = ViewLevel.Shared;
@@ -474,7 +477,7 @@ internal sealed class LiveMapHttpServer
 
     private bool HasConsoleToken(HttpListenerRequest request)
     {
-        string accessToken = _config.AccessToken;
+        string accessToken = AccessToken;
         if (string.IsNullOrEmpty(accessToken))
         {
             return false;
@@ -498,8 +501,8 @@ internal sealed class LiveMapHttpServer
     {
         string html = Encoding.UTF8.GetString(EmbeddedAssets.Get("index.html"));
         string token = viewLevel == ViewLevel.Admin
-            ? _accessToken
-            : viewLevel == ViewLevel.Shared ? _shareToken : string.Empty;
+            ? AccessToken
+            : viewLevel == ViewLevel.Shared ? ShareToken : string.Empty;
         string tokenQuery = string.IsNullOrEmpty(token)
             ? string.Empty
             : "?token=" + Uri.EscapeDataString(token);
@@ -629,7 +632,7 @@ internal sealed class LiveMapHttpServer
 
         bool consoleAvailable = viewLevel == ViewLevel.Admin &&
                                 _config.ConsoleEnabled &&
-                                !string.IsNullOrEmpty(_config.AccessToken) &&
+                                !string.IsNullOrEmpty(AccessToken) &&
                                 _consoleBridge != null;
         bool hasSharedMapAccess = viewLevel != ViewLevel.Public;
         bool entitiesAvailable = hasSharedMapAccess && _config.EntityLayer;
@@ -2045,7 +2048,8 @@ internal sealed class LiveMapHttpServer
     {
         if (viewLevel == ViewLevel.Admin)
         {
-            return !string.IsNullOrEmpty(_accessToken) || _adminSeesAll;
+            // The admin tier now always requires a non-empty access token.
+            return !string.IsNullOrEmpty(AccessToken);
         }
 
         return !_respectInGameVisibility;
@@ -2614,6 +2618,11 @@ internal sealed class LiveMapHttpServer
         }
 
         return difference == 0;
+    }
+
+    private static string NormalizeToken(string value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
     }
 
     private static string FormatHost(string host)

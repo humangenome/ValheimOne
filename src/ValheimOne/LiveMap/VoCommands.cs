@@ -540,6 +540,11 @@ internal static class VoCommands
         }
         else
         {
+            if (string.IsNullOrWhiteSpace(config.AccessToken))
+            {
+                warnings.Add("AccessToken is empty; admin map view is disabled (save panel config to generate a token)");
+            }
+
             if (config.ConsoleEnabled && string.IsNullOrWhiteSpace(config.AccessToken))
             {
                 warnings.Add("ConsoleEnabled is true but AccessToken is empty; web console endpoints are disabled");

@@ -2,6 +2,13 @@
 
 All notable changes to ValheimOne will be documented in this file. This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and intends to use [Semantic Versioning](https://semver.org/spec/v2.0.0.html) after its first release.
 
+## [0.8.1] - 2026-07-20
+
+### Security
+
+- An empty `LiveMap.AccessToken` no longer grants the admin map view to tokenless requests; admin and console tiers are disabled until a token is set, and startup plus `vo doctor` now warn when the token is missing.
+- `LiveMap.AccessToken` and `LiveMap.ShareToken` changes now apply live on config hot-reload, with no server restart needed for token provisioning or rotation.
+
 ## [0.8.0] - 2026-07-20
 
 ### Added
