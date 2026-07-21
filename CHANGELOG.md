@@ -6,6 +6,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Added
 
+- The live map now paints instantly: a single small whole-world base image loads under the tile layer on first open, so the world appears at once and sharpens as tiles stream in, with the underlay refreshing on render-revision changes.
 - The live map gains default-off Wards and Beds layers for admin and shared views: wards show their owner, active state, and a translucent gold protected-radius circle (radius read from the actual game prefab), inactive wards render dimmed without a circle, and beds mark spawn points with owner and claimed state; both ride the existing chunked entity scan with matching new icon runes.
 - The live map now labels the world's regions: biome blobs are detected once on the render worker from the world generator (flood-filled on a coarse grid, largest ~60 kept) and served through a new `GET /api/regions` endpoint to every view tier, with a default-on "Region names" overlay drawing parchment-gold small-caps labels (Meadows, Black Forest, Swamp, and so on) that appear at overview zooms and step aside when you zoom in.
 - Greydwarf nests, skeleton bone piles, and draugr piles are now found by the resource ZDO scanner (they are placed objects, not worldgen locations), Ashlands charred stone spawners get their own location-backed group, and any location group with more than 400 entries is now served on demand instead of inline, keeping the base `/api/pois` payload lean even with the full structures long tail indexed.

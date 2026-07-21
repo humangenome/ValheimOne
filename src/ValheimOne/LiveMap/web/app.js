@@ -293,6 +293,10 @@
     var latestPlayerCount = 0;
     var map = null;
     var tileLayer = null;
+    var baseOverlay = null;
+    var baseOverlayDisplayedRevision = null;
+    var baseOverlayRequestedRevision = null;
+    var baseOverlayLoadSequence = 0;
     var mapMetrics = null;
     var worldBounds = null;
     var hashViewApplied = false;
@@ -527,6 +531,7 @@
         var nextRevision = statusMap && typeof statusMap.renderRevision === "string" &&
             statusMap.renderRevision ? statusMap.renderRevision : "0";
         if (nextRevision === renderRevision) {
+            refreshBaseOverlay();
             return;
         }
 
@@ -534,9 +539,50 @@
         if (tileLayer) {
             tileLayer.setUrl(versionedMapUrl("/tiles/{z}/{x}-{y}.png"));
         }
+        refreshBaseOverlay();
         if (minimapImage) {
             minimapImage.src = versionedMapUrl("/base.png");
         }
+    }
+
+    function refreshBaseOverlay() {
+        if (!map || !worldBounds ||
+            renderRevision === baseOverlayDisplayedRevision ||
+            renderRevision === baseOverlayRequestedRevision) {
+            return;
+        }
+
+        var revision = renderRevision;
+        var url = versionedMapUrl("/base.png");
+        var loadSequence = ++baseOverlayLoadSequence;
+        var image = new window.Image();
+        baseOverlayRequestedRevision = revision;
+        image.onload = function () {
+            if (loadSequence !== baseOverlayLoadSequence ||
+                revision !== renderRevision || !map || !worldBounds) {
+                return;
+            }
+
+            if (baseOverlay) {
+                baseOverlay.setUrl(url);
+            } else {
+                baseOverlay = L.imageOverlay(image, worldBounds, {
+                    className: "world-base-layer",
+                    interactive: false,
+                    opacity: 1,
+                    pane: "basePane"
+                }).addTo(map);
+            }
+            baseOverlayDisplayedRevision = revision;
+            baseOverlayRequestedRevision = revision;
+        };
+        image.onerror = function () {
+            if (loadSequence === baseOverlayLoadSequence &&
+                baseOverlayRequestedRevision === revision) {
+                baseOverlayRequestedRevision = null;
+            }
+        };
+        image.src = url;
     }
 
     async function fetchJson(path) {
@@ -2842,6 +2888,9 @@
             zoomSnap: 0.25
         });
 
+        map.createPane("basePane");
+        map.getPane("basePane").style.zIndex = "190";
+        map.getPane("basePane").style.pointerEvents = "none";
         map.createPane("fogPane");
         map.getPane("fogPane").style.zIndex = "350";
         map.getPane("fogPane").style.pointerEvents = "none";
@@ -2863,6 +2912,8 @@
         if (fogAvailable) {
             showFogCover();
         }
+
+        refreshBaseOverlay();
 
         var tileTemplate = versionedMapUrl("/tiles/{z}/{x}-{y}.png");
         tileLayer = L.tileLayer(tileTemplate, {
