@@ -15,38 +15,43 @@ internal sealed class ResourcePoiTracker
 
     private static readonly ResourcePrefabDefinition[] Prefabs =
     {
-        new ResourcePrefabDefinition("ore_copper", "rock4_copper", false),
-        new ResourcePrefabDefinition("ore_tin", "MineRock_Tin", false),
-        new ResourcePrefabDefinition("ore_iron", "mudpile2", false),
-        new ResourcePrefabDefinition("ore_iron", "mudpile_beacon", false),
-        new ResourcePrefabDefinition("ore_silver", "silvervein", false),
-        new ResourcePrefabDefinition("ore_silver", "MineRock_Silver", false),
-        new ResourcePrefabDefinition("ore_obsidian", "MineRock_Obsidian", false),
-        new ResourcePrefabDefinition("ore_meteorite", "MineRock_Meteorite", false),
-        new ResourcePrefabDefinition("ore_leviathan", "Leviathan", false),
-        new ResourcePrefabDefinition("forage_berries", "RaspberryBush", true),
-        new ResourcePrefabDefinition("forage_berries", "BlueberryBush", true),
-        new ResourcePrefabDefinition("forage_berries", "CloudberryBush", true),
-        new ResourcePrefabDefinition("forage_thistle", "Pickable_Thistle", true),
-        new ResourcePrefabDefinition("forage_mushroom", "Pickable_Mushroom", true),
-        new ResourcePrefabDefinition("forage_mushroom", "Pickable_Mushroom_yellow", true),
-        new ResourcePrefabDefinition("forage_mushroom", "Pickable_Mushroom_blue", true),
-        new ResourcePrefabDefinition("forage_mushroom", "Pickable_Mushroom_JotunPuffs", true),
-        new ResourcePrefabDefinition("forage_mushroom", "Pickable_Mushroom_Magecap", true),
-        new ResourcePrefabDefinition("forage_seeds", "Pickable_SeedCarrot", true),
-        new ResourcePrefabDefinition("forage_seeds", "Pickable_SeedTurnip", true),
-        new ResourcePrefabDefinition("forage_seeds", "Pickable_SeedOnion", true),
-        new ResourcePrefabDefinition("forage_crops", "Pickable_Barley", true),
-        new ResourcePrefabDefinition("forage_crops", "Pickable_Flax", true),
-        new ResourcePrefabDefinition("forage_dragonegg", "Pickable_DragonEgg", true),
-        new ResourcePrefabDefinition("forage_blackcore", "Pickable_BlackCoreStand", true),
+        new ResourcePrefabDefinition("ore_copper", "rock4_copper", ResourceNodeKind.MineRock5),
+        new ResourcePrefabDefinition("ore_tin", "MineRock_Tin", ResourceNodeKind.SingleHealth),
+        new ResourcePrefabDefinition("ore_iron", "mudpile2", ResourceNodeKind.SingleHealth),
+        new ResourcePrefabDefinition("ore_iron", "mudpile_beacon", ResourceNodeKind.SingleHealth),
+        new ResourcePrefabDefinition("ore_silver", "silvervein", ResourceNodeKind.MineRock5),
+        new ResourcePrefabDefinition("ore_silver", "MineRock_Silver", ResourceNodeKind.MineRock5),
+        new ResourcePrefabDefinition("ore_obsidian", "MineRock_Obsidian", ResourceNodeKind.SingleHealth),
+        new ResourcePrefabDefinition("ore_meteorite", "MineRock_Meteorite", ResourceNodeKind.SingleHealth),
+        new ResourcePrefabDefinition("ore_leviathan", "Leviathan", ResourceNodeKind.Leviathan),
+        new ResourcePrefabDefinition("forage_berries", "RaspberryBush", ResourceNodeKind.Pickable),
+        new ResourcePrefabDefinition("forage_berries", "BlueberryBush", ResourceNodeKind.Pickable),
+        new ResourcePrefabDefinition("forage_berries", "CloudberryBush", ResourceNodeKind.Pickable),
+        new ResourcePrefabDefinition("forage_thistle", "Pickable_Thistle", ResourceNodeKind.Pickable),
+        new ResourcePrefabDefinition("forage_mushroom", "Pickable_Mushroom", ResourceNodeKind.Pickable),
+        new ResourcePrefabDefinition("forage_mushroom", "Pickable_Mushroom_yellow", ResourceNodeKind.Pickable),
+        new ResourcePrefabDefinition("forage_mushroom", "Pickable_Mushroom_blue", ResourceNodeKind.Pickable),
+        new ResourcePrefabDefinition("forage_mushroom", "Pickable_Mushroom_JotunPuffs", ResourceNodeKind.Pickable),
+        new ResourcePrefabDefinition("forage_mushroom", "Pickable_Mushroom_Magecap", ResourceNodeKind.Pickable),
+        new ResourcePrefabDefinition("forage_seeds", "Pickable_SeedCarrot", ResourceNodeKind.Pickable),
+        new ResourcePrefabDefinition("forage_seeds", "Pickable_SeedTurnip", ResourceNodeKind.Pickable),
+        new ResourcePrefabDefinition("forage_seeds", "Pickable_SeedOnion", ResourceNodeKind.Pickable),
+        new ResourcePrefabDefinition("forage_crops", "Pickable_Barley", ResourceNodeKind.Pickable),
+        new ResourcePrefabDefinition("forage_crops", "Pickable_Flax", ResourceNodeKind.Pickable),
+        new ResourcePrefabDefinition("forage_dragonegg", "Pickable_DragonEgg", ResourceNodeKind.Pickable),
+        new ResourcePrefabDefinition("forage_blackcore", "Pickable_BlackCoreStand", ResourceNodeKind.Pickable),
     };
+
+    private static readonly int MineRockHealthHash =
+        StringExtensionMethods.GetStableHashCode("Health0");
 
     private readonly LiveMapConfig _config;
     private readonly ModLogger _log;
     private readonly List<ZDO> _scanResults = new List<ZDO>();
     private readonly Dictionary<string, List<ResourcePoiEntry>> _pendingGroups =
         CreatePendingGroups();
+    private readonly Dictionary<string, ResourceHealthDefinition> _healthDefinitions =
+        new Dictionary<string, ResourceHealthDefinition>(StringComparer.Ordinal);
     private volatile ResourcePoiMapSnapshot _snapshot = ResourcePoiMapSnapshot.Empty;
     private float _nextRefresh;
     private long _lastRequestUnixMs;
@@ -149,6 +154,7 @@ internal sealed class ResourcePoiTracker
                 return;
             }
 
+            ResourceHealthDefinition healthDefinition = GetHealthDefinition(prefab);
             for (int index = 0; index < _scanResults.Count; index++)
             {
                 if (!prefab.Cluster && pending.Count >= MaximumOreEntriesPerGroup)
@@ -159,7 +165,7 @@ internal sealed class ResourcePoiTracker
                 ZDO? zdo = _scanResults[index];
                 if (zdo != null)
                 {
-                    pending.Add(ReadResourcePoi(prefab, zdo));
+                    pending.Add(ReadResourcePoi(prefab, zdo, healthDefinition));
                 }
             }
         }
@@ -192,17 +198,209 @@ internal sealed class ResourcePoiTracker
         ResetScan();
     }
 
+    private ResourceHealthDefinition GetHealthDefinition(ResourcePrefabDefinition prefab)
+    {
+        if (prefab.Kind != ResourceNodeKind.MineRock5 &&
+            prefab.Kind != ResourceNodeKind.SingleHealth)
+        {
+            return ResourceHealthDefinition.Unknown;
+        }
+
+        if (_healthDefinitions.TryGetValue(
+                prefab.Name,
+                out ResourceHealthDefinition? definition))
+        {
+            return definition;
+        }
+
+        HealthStorageKind storage = HealthStorageKind.Unknown;
+        float maximumHealth = 0f;
+        ZNetScene? scene = ZNetScene.instance;
+        GameObject? gamePrefab = scene?.GetPrefab(prefab.Name);
+        if (gamePrefab != null)
+        {
+            if (prefab.Kind == ResourceNodeKind.MineRock5)
+            {
+                MineRock5? mineRock5 = gamePrefab.GetComponent<MineRock5>();
+                if (mineRock5 != null)
+                {
+                    storage = HealthStorageKind.MineRock5;
+                    maximumHealth = GetEffectiveMineHealth(mineRock5.m_health);
+                }
+            }
+            else
+            {
+                Destructible? destructible = gamePrefab.GetComponent<Destructible>();
+                if (destructible != null)
+                {
+                    storage = HealthStorageKind.Destructible;
+                    maximumHealth = GetEffectiveMineHealth(destructible.m_health);
+                }
+                else
+                {
+                    MineRock? mineRock = gamePrefab.GetComponent<MineRock>();
+                    if (mineRock != null)
+                    {
+                        storage = HealthStorageKind.MineRock;
+                        maximumHealth = GetEffectiveMineHealth(mineRock.m_health);
+                    }
+                }
+            }
+        }
+
+        definition = new ResourceHealthDefinition(storage, maximumHealth);
+        _healthDefinitions.Add(prefab.Name, definition);
+        return definition;
+    }
+
+    private static float GetEffectiveMineHealth(float baseHealth)
+    {
+        Game? game = Game.instance;
+        return game == null
+            ? baseHealth
+            : baseHealth +
+              (Game.m_worldLevel * baseHealth * game.m_worldLevelMineHPMultiplier);
+    }
+
     private static ResourcePoiEntry ReadResourcePoi(
         ResourcePrefabDefinition prefab,
-        ZDO zdo)
+        ZDO zdo,
+        ResourceHealthDefinition healthDefinition)
     {
         Vector3 position = zdo.GetPosition();
+        string state = string.Empty;
+        int minedPct = 0;
+        int available = -1;
+        switch (prefab.Kind)
+        {
+            case ResourceNodeKind.MineRock5:
+                ReadMineRock5State(zdo, healthDefinition.MaximumHealth, out state, out minedPct);
+                break;
+            case ResourceNodeKind.SingleHealth:
+                ReadSingleHealthState(zdo, healthDefinition, out state, out minedPct);
+                break;
+            case ResourceNodeKind.Pickable:
+                available = zdo.GetBool(ZDOVars.s_picked) ? 0 : 1;
+                break;
+            case ResourceNodeKind.Leviathan:
+                if (zdo.GetBool(ZDOVars.s_dead))
+                {
+                    state = "submerged";
+                }
+
+                break;
+        }
+
         return new ResourcePoiEntry(
             prefab.Name,
             prefab.Group,
             position.x,
             position.z,
-            1);
+            1,
+            state,
+            minedPct,
+            available);
+    }
+
+    private static void ReadMineRock5State(
+        ZDO zdo,
+        float maximumAreaHealth,
+        out string state,
+        out int minedPct)
+    {
+        state = string.Empty;
+        minedPct = 0;
+        if (!zdo.GetString(ZDOVars.s_health, out string healthData) ||
+            string.IsNullOrEmpty(healthData))
+        {
+            return;
+        }
+
+        // MineRock5 only writes the package after a successful damaging hit.
+        state = "partial";
+        if (maximumAreaHealth <= 0f)
+        {
+            return;
+        }
+
+        try
+        {
+            var package = new ZPackage(Convert.FromBase64String(healthData));
+            int areaCount = package.ReadInt();
+            if (areaCount <= 0 || areaCount > 10000)
+            {
+                return;
+            }
+
+            double missingHealth = 0d;
+            for (int index = 0; index < areaCount; index++)
+            {
+                float areaHealth = package.ReadSingle();
+                if (float.IsNaN(areaHealth) || areaHealth >= maximumAreaHealth)
+                {
+                    continue;
+                }
+
+                missingHealth += Math.Min(
+                    maximumAreaHealth,
+                    Math.Max(0d, maximumAreaHealth - areaHealth));
+            }
+
+            if (missingHealth > 0d)
+            {
+                minedPct = Math.Max(
+                    1,
+                    Math.Min(
+                        100,
+                        (int)Math.Round(
+                            missingHealth / (maximumAreaHealth * areaCount) * 100d,
+                            MidpointRounding.AwayFromZero)));
+            }
+        }
+        catch (Exception)
+        {
+            // The persisted entry still proves the node was hit; omit an unsafe percentage.
+        }
+    }
+
+    private static void ReadSingleHealthState(
+        ZDO zdo,
+        ResourceHealthDefinition definition,
+        out string state,
+        out int minedPct)
+    {
+        state = string.Empty;
+        minedPct = 0;
+        float currentHealth = 0f;
+        bool hasHealth = definition.Storage switch
+        {
+            HealthStorageKind.Destructible =>
+                zdo.GetFloat(ZDOVars.s_health, out currentHealth),
+            HealthStorageKind.MineRock =>
+                zdo.GetFloat(MineRockHealthHash, out currentHealth),
+            _ => false,
+        };
+        if (!hasHealth)
+        {
+            return;
+        }
+
+        // Both components create their health entry on the first successful damaging hit.
+        state = "partial";
+        if (definition.MaximumHealth <= 0f || float.IsNaN(currentHealth) ||
+            currentHealth >= definition.MaximumHealth)
+        {
+            return;
+        }
+
+        minedPct = Math.Max(
+            1,
+            Math.Min(
+                100,
+                (int)Math.Round(
+                    (definition.MaximumHealth - Math.Max(0f, currentHealth)) /
+                    definition.MaximumHealth * 100f,
+                    MidpointRounding.AwayFromZero)));
     }
 
     private ResourcePoiMapSnapshot BuildSnapshot(long scanUnixMs)
@@ -251,6 +449,7 @@ internal sealed class ResourcePoiTracker
             cell.X += entry.X;
             cell.Z += entry.Z;
             cell.Count++;
+            cell.Available += entry.Available >= 0 ? entry.Available : 1;
         }
 
         var clustered = new ResourcePoiEntry[cells.Count];
@@ -262,7 +461,10 @@ internal sealed class ResourcePoiTracker
                 cell.Group,
                 cell.X / cell.Count,
                 cell.Z / cell.Count,
-                cell.Count);
+                cell.Count,
+                cell.Available == 0 ? "respawning" : string.Empty,
+                0,
+                cell.Available);
         }
 
         return clustered;
@@ -299,18 +501,20 @@ internal sealed class ResourcePoiTracker
 
     private sealed class ResourcePrefabDefinition
     {
-        public ResourcePrefabDefinition(string group, string name, bool cluster)
+        public ResourcePrefabDefinition(string group, string name, ResourceNodeKind kind)
         {
             Group = group;
             Name = name;
-            Cluster = cluster;
+            Kind = kind;
         }
 
         public string Group { get; }
 
         public string Name { get; }
 
-        public bool Cluster { get; }
+        public ResourceNodeKind Kind { get; }
+
+        public bool Cluster => Kind == ResourceNodeKind.Pickable;
     }
 
     private sealed class ForageCell
@@ -330,6 +534,40 @@ internal sealed class ResourcePoiTracker
         public float Z { get; set; }
 
         public int Count { get; set; }
+
+        public int Available { get; set; }
+    }
+
+    private sealed class ResourceHealthDefinition
+    {
+        public static readonly ResourceHealthDefinition Unknown =
+            new ResourceHealthDefinition(HealthStorageKind.Unknown, 0f);
+
+        public ResourceHealthDefinition(HealthStorageKind storage, float maximumHealth)
+        {
+            Storage = storage;
+            MaximumHealth = maximumHealth;
+        }
+
+        public HealthStorageKind Storage { get; }
+
+        public float MaximumHealth { get; }
+    }
+
+    private enum ResourceNodeKind
+    {
+        MineRock5,
+        SingleHealth,
+        Leviathan,
+        Pickable,
+    }
+
+    private enum HealthStorageKind
+    {
+        Unknown,
+        MineRock5,
+        Destructible,
+        MineRock,
     }
 }
 
@@ -413,13 +651,24 @@ internal sealed class ResourcePoiGroupSnapshot
 
 internal sealed class ResourcePoiEntry
 {
-    public ResourcePoiEntry(string name, string group, float x, float z, int count)
+    public ResourcePoiEntry(
+        string name,
+        string group,
+        float x,
+        float z,
+        int count,
+        string state,
+        int minedPct,
+        int available)
     {
         Name = name;
         Group = group;
         X = x;
         Z = z;
         Count = count;
+        State = state;
+        MinedPct = minedPct;
+        Available = available;
     }
 
     public string Name { get; }
@@ -431,4 +680,10 @@ internal sealed class ResourcePoiEntry
     public float Z { get; }
 
     public int Count { get; }
+
+    public string State { get; }
+
+    public int MinedPct { get; }
+
+    public int Available { get; }
 }

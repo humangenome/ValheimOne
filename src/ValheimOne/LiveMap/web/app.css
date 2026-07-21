@@ -1959,6 +1959,11 @@ body.is-pinging #map .leaflet-overlay-pane path {
     transform-origin: center;
 }
 
+.poi-div-icon.is-resource-unavailable .poi-marker-shell,
+.poi-div-icon.is-resource-unavailable .poi-cluster-shell {
+    filter: grayscale(0.2) saturate(0.48);
+}
+
 .poi-spawn .poi-marker-shell {
     border-color: rgba(126, 177, 214, 0.72);
     color: var(--frost);

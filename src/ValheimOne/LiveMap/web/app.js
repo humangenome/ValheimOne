@@ -1833,14 +1833,21 @@
         }
     }
 
-    function popupStalenessText(feed) {
-        var updatedAt = feedLastUpdated[feed] || Date.now();
+    function popupAgeText(updatedAt) {
         var seconds = Math.max(0, Math.floor((Date.now() - updatedAt) / 1000));
         if (seconds < 60) {
-            return "as of " + seconds + "s ago";
+            return seconds + "s ago";
         }
 
-        return "as of " + Math.floor(seconds / 60) + "m ago";
+        return Math.floor(seconds / 60) + "m ago";
+    }
+
+    function popupStalenessText(feed) {
+        return "as of " + popupAgeText(feedLastUpdated[feed] || Date.now());
+    }
+
+    function popupSurveyStalenessText(scanUnixMs) {
+        return "as of last survey " + popupAgeText(scanUnixMs);
     }
 
     function popupShell(options) {
@@ -1939,8 +1946,13 @@
 
         var footer = document.createElement("div");
         footer.className = "vo-popup-footer";
-        footer.setAttribute("data-feed", options.feed);
-        footer.textContent = popupStalenessText(options.feed);
+        if (Number.isFinite(options.surveyUnixMs) && options.surveyUnixMs > 0) {
+            footer.setAttribute("data-survey-unix-ms", String(options.surveyUnixMs));
+            footer.textContent = popupSurveyStalenessText(options.surveyUnixMs);
+        } else {
+            footer.setAttribute("data-feed", options.feed);
+            footer.textContent = popupStalenessText(options.feed);
+        }
         shell.appendChild(footer);
         return shell;
     }
@@ -1965,9 +1977,12 @@
             return;
         }
 
-        var footers = map._popup.getElement().querySelectorAll(".vo-popup-footer[data-feed]");
+        var footers = map._popup.getElement().querySelectorAll(".vo-popup-footer");
         Array.prototype.forEach.call(footers, function (footer) {
-            footer.textContent = popupStalenessText(footer.getAttribute("data-feed"));
+            var scanUnixMs = Number(footer.getAttribute("data-survey-unix-ms"));
+            footer.textContent = Number.isFinite(scanUnixMs) && scanUnixMs > 0
+                ? popupSurveyStalenessText(scanUnixMs)
+                : popupStalenessText(footer.getAttribute("data-feed"));
         });
     }
 
@@ -6464,9 +6479,78 @@
         return "POINT OF INTEREST";
     }
 
+    function resourcePoiTitle(group) {
+        if (group === "ore_copper") {
+            return "Copper deposit";
+        }
+        if (group === "ore_tin") {
+            return "Tin deposit";
+        }
+        if (group === "ore_iron") {
+            return "Muddy scrap pile";
+        }
+        if (group === "ore_silver") {
+            return "Silver vein";
+        }
+        if (group === "ore_obsidian") {
+            return "Obsidian deposit";
+        }
+        if (group === "ore_meteorite") {
+            return "Meteorite";
+        }
+        if (group === "ore_leviathan") {
+            return "Leviathan";
+        }
+        return POI_GROUPS[group].label;
+    }
+
+    function resourcePoiStateText(record) {
+        if (record.group.indexOf("forage_") === 0) {
+            if (record.state === "respawning" || record.available === 0) {
+                return "Picked — respawning";
+            }
+            if (record.available !== null) {
+                return record.available + " of " + record.memberCount + " available";
+            }
+            return "";
+        }
+        if (record.group === "ore_leviathan") {
+            return record.state === "submerged" ? "Submerged" : "";
+        }
+        if (record.minedPct > 0) {
+            return record.minedPct + "% mined";
+        }
+        if (record.state === "partial") {
+            return "Partially mined";
+        }
+        return "Intact";
+    }
+
+    function resourcePoiSurveyUnixMs(group) {
+        var state = resourcePoiStates.get(group);
+        if (state && Number.isFinite(state.scanUnixMs) && state.scanUnixMs > 0) {
+            return state.scanUnixMs;
+        }
+
+        var metadata = poiGroupMeta.get(group);
+        return metadata && Number.isFinite(metadata.scanUnixMs)
+            ? metadata.scanUnixMs
+            : 0;
+    }
+
+    function resourcePoiIsDimmed(record) {
+        return record.state === "respawning" || record.state === "submerged" ||
+            record.available === 0 || record.minedPct >= 100;
+    }
+
     function buildPoiPopup(record) {
         var rows = [];
-        if (record.memberCount > 1) {
+        var resource = isResourcePoiGroup(record.group);
+        var stateText = resource ? resourcePoiStateText(record) : "";
+        if (stateText) {
+            rows.push({ label: "State", value: stateText });
+        }
+        if (record.memberCount > 1 && record.group.indexOf("forage_") !== 0) {
             rows.push({ label: "Cluster", value: "×" + record.memberCount });
         }
         rows.push(positionPopupRow(record.x, record.z));
@@ -6475,6 +6559,7 @@
             glyph: POI_GROUPS[record.group].glyph,
             kicker: poiPopupKicker(record.group),
             rows: rows,
+            surveyUnixMs: resource ? resourcePoiSurveyUnixMs(record.group) : 0,
             title: record.title
         });
     }
@@ -6729,13 +6814,41 @@
         if (!Number.isFinite(memberCount) || memberCount < 1) {
             memberCount = 1;
         }
+        var state = typeof poi.state === "string" ? poi.state.trim().toLowerCase() : "";
+        if (["intact", "partial", "respawning", "submerged"].indexOf(state) === -1) {
+            state = "";
+        }
+        var minedPct = Math.floor(Number(poi.minedPct));
+        if (!Number.isFinite(minedPct) || minedPct < 1 ||
+            group.indexOf("ore_") !== 0) {
+            minedPct = 0;
+        } else {
+            minedPct = Math.min(100, minedPct);
+        }
+        var available = Math.floor(Number(poi.available));
+        if (!Number.isFinite(available) || available < 0 ||
+            group.indexOf("forage_") !== 0) {
+            available = null;
+        } else {
+            available = Math.min(memberCount, available);
+        }
+        if (!state && group.indexOf("ore_") === 0 && group !== "ore_leviathan") {
+            state = "intact";
+        }
+        if (!state && available === 0) {
+            state = "respawning";
+        }
+        var resource = isResourcePoiGroup(group);
         return {
+            available: available,
             explored: poi.explored !== false,
             group: group,
             latLng: worldToLatLng(Number(poi.x), Number(poi.z)),
             memberCount: memberCount,
+            minedPct: minedPct,
             placed: poi.placed !== false,
-            title: prettifyPoiName(poi.name),
+            state: state,
+            title: resource ? resourcePoiTitle(group) : prettifyPoiName(poi.name),
             x: Number(poi.x),
             z: Number(poi.z)
         };
@@ -6757,21 +6870,30 @@
     }
 
     function createPoiMarker(record) {
+        var dimmed = resourcePoiIsDimmed(record);
         var icon = L.divIcon({
-            className: "poi-div-icon poi-" + record.group,
+            className: "poi-div-icon poi-" + record.group +
+                (dimmed ? " is-resource-unavailable" : ""),
             html: '<span class="poi-marker-shell" aria-hidden="true">' +
                 POI_GROUPS[record.group].glyph + "</span>",
             iconAnchor: [10, 10],
             iconSize: [20, 20]
         });
+        var stateText = isResourcePoiGroup(record.group)
+            ? resourcePoiStateText(record)
+            : "";
+        var hoverText = record.title + (stateText ? " — " + stateText : "") +
+            (record.memberCount > 1 && record.group.indexOf("forage_") !== 0
+                ? " ×" + record.memberCount
+                : "");
         var marker = L.marker(record.latLng, {
             icon: icon,
-            opacity: (record.placed ? 1 : 0.55) * (record.explored ? 1 : 0.45),
-            title: record.title + (record.memberCount > 1 ? " ×" + record.memberCount : "")
+            opacity: (record.placed ? 1 : 0.55) * (record.explored ? 1 : 0.45) *
+                (dimmed ? 0.52 : 1),
+            title: hoverText
         });
         var tooltipContent = document.createElement("span");
-        tooltipContent.textContent = record.title +
-            (record.memberCount > 1 ? " ×" + record.memberCount : "");
+        tooltipContent.textContent = hoverText;
         marker.bindTooltip(tooltipContent, {
             className: "map-tooltip poi-tooltip",
             direction: "top",
@@ -6788,8 +6910,10 @@
     function createPoiClusterMarker(group, bucket) {
         var center = L.latLng(bucket.latitude / bucket.weight, bucket.longitude / bucket.weight);
         var count = bucket.count;
+        var unavailable = bucket.activeWeight === 0;
         var icon = L.divIcon({
-            className: "poi-div-icon poi-cluster-icon poi-" + group,
+            className: "poi-div-icon poi-cluster-icon poi-" + group +
+                (unavailable ? " is-resource-unavailable" : ""),
             html: '<span class="poi-cluster-shell" aria-hidden="true"><span>' +
                 POI_GROUPS[group].glyph + '</span><strong>' + count + "</strong></span>",
             iconAnchor: [16, 12],
@@ -6797,7 +6921,8 @@
         });
         var marker = L.marker(center, {
             icon: icon,
-            opacity: 0.45 + (0.55 * bucket.exploredWeight / bucket.weight),
+            opacity: (0.45 + (0.55 * bucket.exploredWeight / bucket.weight)) *
+                (0.52 + (0.48 * bucket.activeWeight / bucket.weight)),
             title: count + " " + POI_GROUPS[group].label
         });
         var tooltipContent = document.createElement("span");
@@ -6837,6 +6962,7 @@
             var weight = record.memberCount || 1;
             if (!buckets[cell]) {
                 buckets[cell] = {
+                    activeWeight: 0,
                     count: 0,
                     exploredWeight: 0,
                     latitude: 0,
@@ -6848,6 +6974,9 @@
             buckets[cell].count += weight;
             if (record.explored) {
                 buckets[cell].exploredWeight += weight;
+            }
+            if (!resourcePoiIsDimmed(record)) {
+                buckets[cell].activeWeight += weight;
             }
             buckets[cell].latitude += record.latLng.lat * weight;
             buckets[cell].longitude += record.latLng.lng * weight;

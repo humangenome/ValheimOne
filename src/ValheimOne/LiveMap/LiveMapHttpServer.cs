@@ -1784,10 +1784,27 @@ internal sealed class LiveMapHttpServer
             json.Append(",\"z\":").Append(JsonWriter.NumberOneDecimal(poi.Z));
             json.Append(",\"explored\":").Append(
                 FogTracker.IsExplored(fogSnapshot, poi.X, poi.Z) ? "true" : "false");
-            if (poi.Count > 1)
+            if (poi.Count > 1 || poi.Available >= 0)
             {
                 json.Append(",\"count\":").Append(
                     poi.Count.ToString(CultureInfo.InvariantCulture));
+            }
+
+            if (!string.IsNullOrEmpty(poi.State))
+            {
+                json.Append(",\"state\":").Append(JsonWriter.Quote(poi.State));
+            }
+
+            if (poi.MinedPct > 0)
+            {
+                json.Append(",\"minedPct\":").Append(
+                    poi.MinedPct.ToString(CultureInfo.InvariantCulture));
+            }
+
+            if (poi.Available >= 0)
+            {
+                json.Append(",\"available\":").Append(
+                    poi.Available.ToString(CultureInfo.InvariantCulture));
             }
 
             json.Append('}');
