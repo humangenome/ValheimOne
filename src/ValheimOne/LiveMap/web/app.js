@@ -334,6 +334,9 @@
     var measurePoints = [];
     var measureVertexMarkers = [];
     var measureDoubleClickZoomWasEnabled = false;
+    var mapContextMenu = null;
+    var mapContextMenuTimer = 0;
+    var mapContextMenuGeneration = 0;
     var pingButton = null;
     var pingControlElement = null;
     var pingArmed = false;
@@ -3355,6 +3358,7 @@
         createFullscreenControl();
         createSearchControl();
         createCoordinateControl();
+        bindMapContextMenu();
         createMinimapControl();
         applyDensityPreferences();
         map.on("dragstart", function () {
@@ -3773,11 +3777,11 @@
         }
     }
 
-    function startMeasurement() {
+    function startMeasurement(initialPoint) {
         disarmMapPing();
         measureModeEnabled = true;
         measureActive = true;
-        measurePoints = [];
+        measurePoints = initialPoint ? [L.latLng(initialPoint)] : [];
         if (map._popup) {
             map.closePopup();
         }
@@ -3791,7 +3795,7 @@
         measureButton.title = "Clear measurement";
         measureButton.setAttribute("aria-label", "Clear measurement");
         measureButton.setAttribute("aria-pressed", "true");
-        updateMeasureHud();
+        redrawMeasurement();
     }
 
     function createMeasureControl() {
@@ -3830,7 +3834,9 @@
         new MeasureControl().addTo(map);
 
         map.on("click", function (event) {
-            if (!measureActive || (event.originalEvent && event.originalEvent.detail > 1)) {
+            if (!measureActive || (event.originalEvent && event.originalEvent.detail > 1) ||
+                (event.originalEvent && typeof event.originalEvent.button === "number" &&
+                    event.originalEvent.button !== 0)) {
                 return;
             }
             measurePoints.push(event.latlng);
@@ -3972,7 +3978,9 @@
 
         new PingControl().addTo(map);
         map.on("click", function (event) {
-            if (!pingArmed) {
+            if (!pingArmed ||
+                (event.originalEvent && typeof event.originalEvent.button === "number" &&
+                    event.originalEvent.button !== 0)) {
                 return;
             }
             var world = latLngToWorld(event.latlng);
@@ -4126,6 +4134,145 @@
                 coordinateChip.hidden = true;
             });
         }
+    }
+
+    function dismissMapContextMenu() {
+        window.clearTimeout(mapContextMenuTimer);
+        mapContextMenuTimer = 0;
+        mapContextMenuGeneration += 1;
+        if (mapContextMenu) {
+            mapContextMenu.hidden = true;
+        }
+    }
+
+    function ensureMapContextMenu() {
+        if (mapContextMenu) {
+            return mapContextMenu;
+        }
+
+        mapContextMenu = document.createElement("div");
+        mapContextMenu.className = "vo-context-menu";
+        mapContextMenu.setAttribute("role", "menu");
+        mapContextMenu.setAttribute("aria-label", "Map actions");
+        mapContextMenu.hidden = true;
+        document.body.appendChild(mapContextMenu);
+        return mapContextMenu;
+    }
+
+    function createMapContextItem(label, action) {
+        var item = document.createElement("button");
+        item.type = "button";
+        item.className = "vo-context-item";
+        item.setAttribute("role", "menuitem");
+        item.textContent = label;
+        item.addEventListener("click", function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            action(item);
+        });
+        return item;
+    }
+
+    function positionMapContextMenu(menu, clientX, clientY) {
+        var margin = 8;
+        var viewportWidth = document.documentElement.clientWidth;
+        var viewportHeight = document.documentElement.clientHeight;
+        menu.style.left = "0px";
+        menu.style.top = "0px";
+        menu.style.visibility = "hidden";
+        menu.hidden = false;
+        var bounds = menu.getBoundingClientRect();
+        var maximumLeft = Math.max(margin, viewportWidth - bounds.width - margin);
+        var maximumTop = Math.max(margin, viewportHeight - bounds.height - margin);
+        menu.style.left = Math.max(margin, Math.min(clientX, maximumLeft)) + "px";
+        menu.style.top = Math.max(margin, Math.min(clientY, maximumTop)) + "px";
+        menu.style.visibility = "visible";
+    }
+
+    function showMapContextMenu(event) {
+        var latLng = map.containerPointToLatLng(map.mouseEventToContainerPoint(event));
+        var world = latLngToWorld(latLng);
+        if (!world || !Number.isFinite(world.x) || !Number.isFinite(world.z)) {
+            dismissMapContextMenu();
+            return;
+        }
+
+        dismissMapContextMenu();
+        var menu = ensureMapContextMenu();
+        var generation = mapContextMenuGeneration;
+        while (menu.firstChild) {
+            menu.removeChild(menu.firstChild);
+        }
+
+        menu.appendChild(createMapContextItem("Copy coordinates", function (item) {
+            var coordinates = Math.round(world.x) + ", " + Math.round(world.z);
+            copyText(coordinates).then(function () {
+                if (generation !== mapContextMenuGeneration || menu.hidden) {
+                    return;
+                }
+                item.textContent = "Copied";
+                item.classList.add("is-copied");
+                mapContextMenuTimer = window.setTimeout(dismissMapContextMenu, 650);
+            }).catch(dismissMapContextMenu);
+        }));
+        menu.appendChild(createMapContextItem("Measure from here", function () {
+            dismissMapContextMenu();
+            if (measureModeEnabled) {
+                clearMeasurement();
+            }
+            startMeasurement(latLng);
+        }));
+        menu.appendChild(createMapContextItem("Center here", function () {
+            dismissMapContextMenu();
+            map.panTo(latLng);
+        }));
+        if (currentView === "admin") {
+            menu.appendChild(createMapContextItem("Ping in-game here", function () {
+                dismissMapContextMenu();
+                disarmMapPing();
+                if (!pingRequestPending && currentView === "admin") {
+                    sendMapPing(world);
+                }
+            }));
+        }
+
+        positionMapContextMenu(menu, event.clientX, event.clientY);
+    }
+
+    function bindMapContextMenu() {
+        if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) {
+            return;
+        }
+
+        map.getContainer().addEventListener("contextmenu", function (event) {
+            if (event._simulated ||
+                (event.sourceCapabilities && event.sourceCapabilities.firesTouchEvents)) {
+                return;
+            }
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            showMapContextMenu(event);
+        }, true);
+        document.addEventListener("mousedown", function (event) {
+            if (mapContextMenu && !mapContextMenu.hidden &&
+                !mapContextMenu.contains(event.target)) {
+                dismissMapContextMenu();
+            }
+        }, true);
+        document.addEventListener("click", function (event) {
+            if (mapContextMenu && !mapContextMenu.hidden &&
+                !mapContextMenu.contains(event.target)) {
+                dismissMapContextMenu();
+            }
+        }, true);
+        document.addEventListener("keydown", function (event) {
+            if (event.key === "Escape" && mapContextMenu && !mapContextMenu.hidden) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                dismissMapContextMenu();
+            }
+        }, true);
+        map.on("dragstart zoomstart", dismissMapContextMenu);
     }
 
     function createFullscreenControl() {
@@ -8791,6 +8938,7 @@
         }
 
         currentView = nextView;
+        dismissMapContextMenu();
         if (currentView === "public" && cinemaState) {
             exitCinema();
         }
