@@ -157,7 +157,7 @@ internal static class MapShading
         return MapColor.Lerp(landColor, water, 0.5f + (0.5f * shore));
     }
 
-    private static MapColor ApplyForestStipple(
+    internal static MapColor ApplyForestStipple(
         MapColor color,
         float multiplier,
         float worldX,
@@ -185,7 +185,7 @@ internal static class MapShading
         return MapColor.Lerp(color, darkened, coverage);
     }
 
-    private static MapColor ApplyMistlandsStipple(
+    internal static MapColor ApplyMistlandsStipple(
         MapColor color,
         float activationProbability,
         float worldX,
@@ -229,12 +229,12 @@ internal static class MapShading
     // Coarse pixels hash cells the size of their own footprint; below 3 m/px the
     // result blends into deterministic, jittered soft dots anchored on a 6 m
     // world grid. Explicit floors keep negative coordinates aligned correctly.
-    private static bool IsCoarseStipplePixel(float worldX, float worldZ, float metersPerPixel)
+    internal static bool IsCoarseStipplePixel(float worldX, float worldZ, float metersPerPixel)
     {
         return (CellHash(worldX, worldZ, metersPerPixel) & 3u) != 0u;
     }
 
-    private static float FineStippleCoverage(
+    internal static float FineStippleCoverage(
         float worldX,
         float worldZ,
         float activationProbability,
@@ -285,12 +285,12 @@ internal static class MapShading
         return ((normalized * 2f) - 1f) * TreeJitterMeters;
     }
 
-    private static float StippleNoise(float worldX, float worldZ, float cellMeters)
+    internal static float StippleNoise(float worldX, float worldZ, float cellMeters)
     {
         return HashNoise(CellHash(worldX, worldZ, cellMeters));
     }
 
-    private static float HashNoise(uint hash)
+    internal static float HashNoise(uint hash)
     {
         return (hash & 0xFFFFu) / 65535f;
     }
@@ -302,24 +302,24 @@ internal static class MapShading
         return CellHash(cellX, cellZ);
     }
 
-    private static uint CellHash(int cellX, int cellZ)
+    internal static uint CellHash(int cellX, int cellZ)
     {
         uint hash = (uint)unchecked((cellX * 73856093) ^ (cellZ * 19349663));
         return hash * 2654435761u;
     }
 
-    private static float SmoothStep(float edgeLow, float edgeHigh, float value)
+    internal static float SmoothStep(float edgeLow, float edgeHigh, float value)
     {
         float t = Clamp01((value - edgeLow) / (edgeHigh - edgeLow));
         return t * t * (3f - (2f * t));
     }
 
-    private static float SmoothCurve(float t)
+    internal static float SmoothCurve(float t)
     {
         return t * t * (3f - (2f * t));
     }
 
-    private static float Clamp01(float value)
+    internal static float Clamp01(float value)
     {
         return Math.Max(0f, Math.Min(1f, value));
     }

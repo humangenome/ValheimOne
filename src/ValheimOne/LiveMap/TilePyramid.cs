@@ -15,6 +15,43 @@ internal static class TilePyramid
         Func<bool> shouldStop)
     {
         string tilesDirectory = Path.Combine(rootDirectory, "tiles");
+        return WriteToDirectory(
+            tilesDirectory,
+            baseRgba,
+            textureSize,
+            maximumZoom,
+            shouldStop);
+    }
+
+    public static int Write(
+        string rootDirectory,
+        MapStyle style,
+        byte[] baseRgba,
+        int textureSize,
+        int maximumZoom,
+        Func<bool> shouldStop)
+    {
+        if (style == MapStyle.Default)
+        {
+            return Write(rootDirectory, baseRgba, textureSize, maximumZoom, shouldStop);
+        }
+
+        string tilesDirectory = MapStyles.TilesDirectory(rootDirectory, style);
+        return WriteToDirectory(
+            tilesDirectory,
+            baseRgba,
+            textureSize,
+            maximumZoom,
+            shouldStop);
+    }
+
+    private static int WriteToDirectory(
+        string tilesDirectory,
+        byte[] baseRgba,
+        int textureSize,
+        int maximumZoom,
+        Func<bool> shouldStop)
+    {
         Directory.CreateDirectory(tilesDirectory);
 
         int tileCount = 0;

@@ -21,6 +21,7 @@ internal sealed class DetailTileRenderer
     private const long DetailTileCacheEvictionTargetBytes = DetailTileCacheMaximumBytes * 9L / 10L;
 
     private readonly WorldGenerator _generator;
+    private readonly int _seed;
     private readonly string _cacheDirectory;
     private readonly int _textureSize;
     private readonly Func<bool> _isBaseReady;
@@ -39,6 +40,7 @@ internal sealed class DetailTileRenderer
 
     public DetailTileRenderer(
         WorldGenerator generator,
+        int seed,
         string cacheDirectory,
         int textureSize,
         int baseZoom,
@@ -47,6 +49,7 @@ internal sealed class DetailTileRenderer
         ModLogger log)
     {
         _generator = generator;
+        _seed = seed;
         _cacheDirectory = cacheDirectory;
         _textureSize = textureSize;
         BaseZoom = baseZoom;
@@ -104,9 +107,9 @@ internal sealed class DetailTileRenderer
 
     // Called from HTTP worker threads. Returns the path of a rendered tile, waiting
     // for the shared worker when the tile is not cached yet.
-    public bool TryGetTile(int zoom, int x, int y, out string path)
+    public bool TryGetTile(MapStyle style, int zoom, int x, int y, out string path)
     {
-        path = TilePath(zoom, x, y);
+        path = TilePath(style, zoom, x, y);
         if (zoom <= BaseZoom || zoom > MaximumZoom)
         {
             return zoom <= BaseZoom && File.Exists(path);
@@ -120,8 +123,8 @@ internal sealed class DetailTileRenderer
 
         if (IsAllOcean(zoom, x, y))
         {
-            path = OceanTilePath();
-            return File.Exists(path) || TryWriteOceanTile(path);
+            path = OceanTilePath(style);
+            return File.Exists(path) || TryWriteOceanTile(path, style);
         }
 
         if (_stopping || !_isBaseReady())
@@ -129,7 +132,7 @@ internal sealed class DetailTileRenderer
             return false;
         }
 
-        var key = new TileKey(zoom, x, y);
+        var key = new TileKey(style, zoom, x, y);
         ManualResetEventSlim waiter;
         lock (_sync)
         {
@@ -204,17 +207,18 @@ internal sealed class DetailTileRenderer
             try
             {
                 EnsureDetailCacheSizeInitialized();
-                string path = TilePath(key.Zoom, key.X, key.Y);
+                string path = TilePath(key.Style, key.Zoom, key.X, key.Y);
                 if (!File.Exists(path))
                 {
                     var stopwatch = Stopwatch.StartNew();
-                    RenderTile(key.Zoom, key.X, key.Y, path);
+                    RenderTile(key.Style, key.Zoom, key.X, key.Y, path);
                     stopwatch.Stop();
                     TrackNewDetailTile(path);
                     if (isDemand)
                     {
                         _log.Debug(
-                            $"[LiveMap] detail tile {key.Zoom}/{key.X}-{key.Y} rendered in " +
+                            $"[LiveMap] {MapStyles.Token(key.Style)} detail tile " +
+                            $"{key.Zoom}/{key.X}-{key.Y} rendered in " +
                             $"{stopwatch.ElapsedMilliseconds}ms");
                     }
                 }
@@ -226,7 +230,8 @@ internal sealed class DetailTileRenderer
             catch (Exception exception)
             {
                 _log.Warning(
-                    $"[LiveMap] detail tile {key.Zoom}/{key.X}-{key.Y} failed: " +
+                    $"[LiveMap] {MapStyles.Token(key.Style)} detail tile " +
+                    $"{key.Zoom}/{key.X}-{key.Y} failed: " +
                     $"{exception.GetType().Name}: {exception.Message}");
             }
             finally
@@ -259,12 +264,12 @@ internal sealed class DetailTileRenderer
             for (int x = 0; x < tilesAcross; x++)
             {
                 if (IsAllOcean(zoom, x, y) ||
-                    File.Exists(TilePath(zoom, x, y)))
+                    File.Exists(TilePath(MapStyle.Default, zoom, x, y)))
                 {
                     continue;
                 }
 
-                _prerenderQueue.Enqueue(new TileKey(zoom, x, y));
+                _prerenderQueue.Enqueue(new TileKey(MapStyle.Default, zoom, x, y));
                 queued++;
             }
         }
@@ -275,7 +280,7 @@ internal sealed class DetailTileRenderer
         }
     }
 
-    private void RenderTile(int zoom, int x, int y, string path)
+    private void RenderTile(MapStyle style, int zoom, int x, int y, string path)
     {
         const int tileSize = TilePyramid.TileSize;
         const int sampleSize = tileSize + 2;
@@ -317,31 +322,51 @@ internal sealed class DetailTileRenderer
         }
 
         var pixels = new byte[tileSize * tileSize * 4];
-        for (int py = 0; py < tileSize; py++)
+        if (style == MapStyle.Default)
         {
-            ThrowIfStopping();
-            float worldZ = originZ - ((py + 0.5f) * pixelSpan);
-            for (int px = 0; px < tileSize; px++)
+            for (int py = 0; py < tileSize; py++)
             {
-                float worldX = originX + ((px + 0.5f) * pixelSpan);
-                int sampleIndex = ((py + 1) * sampleSize) + px + 1;
-                Heightmap.Biome biome = biomes[sampleIndex];
-                float height = heights[sampleIndex];
-                MapColor color = MapShading.Compose(
-                    biome,
-                    height,
-                    lavaMasks[sampleIndex],
-                    worldX,
-                    worldZ,
-                    pixelSpan);
-                int offset = ((py * tileSize) + px) * 4;
-                color.WriteRgba(pixels, offset);
-
-                if (height >= MapShading.WaterLevel)
+                ThrowIfStopping();
+                float worldZ = originZ - ((py + 0.5f) * pixelSpan);
+                for (int px = 0; px < tileSize; px++)
                 {
-                    ApplyReliefPixel(pixels, offset, heights, sampleSize, px + 1, py + 1, pixelSpan);
+                    float worldX = originX + ((px + 0.5f) * pixelSpan);
+                    int sampleIndex = ((py + 1) * sampleSize) + px + 1;
+                    Heightmap.Biome biome = biomes[sampleIndex];
+                    float height = heights[sampleIndex];
+                    MapColor color = MapShading.Compose(
+                        biome,
+                        height,
+                        lavaMasks[sampleIndex],
+                        worldX,
+                        worldZ,
+                        pixelSpan);
+                    int offset = ((py * tileSize) + px) * 4;
+                    color.WriteRgba(pixels, offset);
+
+                    if (height >= MapShading.WaterLevel)
+                    {
+                        ApplyReliefPixel(pixels, offset, heights, sampleSize, px + 1, py + 1, pixelSpan);
+                    }
                 }
             }
+        }
+        else
+        {
+            MapStyleCompositor.ComposeInto(
+                style,
+                heights,
+                biomes,
+                lavaMasks,
+                sampleSize,
+                sampleSize,
+                1,
+                originX,
+                originZ,
+                pixelSpan,
+                _seed,
+                pixels,
+                () => _stopping);
         }
 
         string? directory = Path.GetDirectoryName(path);
@@ -461,6 +486,30 @@ internal sealed class DetailTileRenderer
             yield break;
         }
 
+        foreach (string path in EnumerateDetailTilePaths(tilesDirectory))
+        {
+            yield return path;
+        }
+
+        for (int index = 0; index < MapStyles.NonDefaultStyles.Length; index++)
+        {
+            string styleDirectory = MapStyles.TilesDirectory(
+                _cacheDirectory,
+                MapStyles.NonDefaultStyles[index]);
+            if (!Directory.Exists(styleDirectory))
+            {
+                continue;
+            }
+
+            foreach (string path in EnumerateDetailTilePaths(styleDirectory))
+            {
+                yield return path;
+            }
+        }
+    }
+
+    private IEnumerable<string> EnumerateDetailTilePaths(string tilesDirectory)
+    {
         foreach (string zoomDirectory in Directory.EnumerateDirectories(tilesDirectory))
         {
             string zoomName = Path.GetFileName(zoomDirectory);
@@ -545,7 +594,7 @@ internal sealed class DetailTileRenderer
 
     private static readonly object OceanTileLock = new object();
 
-    private bool TryWriteOceanTile(string path)
+    private bool TryWriteOceanTile(string path, MapStyle style)
     {
         lock (OceanTileLock)
         {
@@ -554,23 +603,25 @@ internal sealed class DetailTileRenderer
                 return true;
             }
 
-            return TryWriteOceanTileLocked(path);
+            return TryWriteOceanTileLocked(path, style);
         }
     }
 
-    private bool TryWriteOceanTileLocked(string path)
+    private bool TryWriteOceanTileLocked(string path, MapStyle style)
     {
         try
         {
             const int tileSize = TilePyramid.TileSize;
             var pixels = new byte[tileSize * tileSize * 4];
-            MapColor ocean = MapShading.Compose(
-                Heightmap.Biome.Ocean,
-                -100f,
-                0f,
-                WorldMapRenderer.WorldRadius + (2f * OceanMargin),
-                0f,
-                WorldMapRenderer.PixelSize);
+            MapColor ocean = style == MapStyle.Default
+                ? MapShading.Compose(
+                    Heightmap.Biome.Ocean,
+                    -100f,
+                    0f,
+                    WorldMapRenderer.WorldRadius + (2f * OceanMargin),
+                    0f,
+                    WorldMapRenderer.PixelSize)
+                : MapStyleCompositor.ComposeFarOcean(style);
             for (int index = 0; index < tileSize * tileSize; index++)
             {
                 ocean.WriteRgba(pixels, index * 4);
@@ -593,18 +644,14 @@ internal sealed class DetailTileRenderer
         }
     }
 
-    private string TilePath(int zoom, int x, int y)
+    private string TilePath(MapStyle style, int zoom, int x, int y)
     {
-        return Path.Combine(
-            _cacheDirectory,
-            "tiles",
-            zoom.ToString(CultureInfo.InvariantCulture),
-            $"{x.ToString(CultureInfo.InvariantCulture)}-{y.ToString(CultureInfo.InvariantCulture)}.png");
+        return MapStyles.TilePath(_cacheDirectory, style, zoom, x, y);
     }
 
-    private string OceanTilePath()
+    private string OceanTilePath(MapStyle style)
     {
-        return Path.Combine(_cacheDirectory, "tiles", "ocean.png");
+        return MapStyles.OceanTilePath(_cacheDirectory, style);
     }
 
     private void ThrowIfStopping()
@@ -622,12 +669,15 @@ internal sealed class DetailTileRenderer
 
     private readonly struct TileKey : IEquatable<TileKey>
     {
-        public TileKey(int zoom, int x, int y)
+        public TileKey(MapStyle style, int zoom, int x, int y)
         {
+            Style = style;
             Zoom = zoom;
             X = x;
             Y = y;
         }
+
+        public MapStyle Style { get; }
 
         public int Zoom { get; }
 
@@ -637,7 +687,7 @@ internal sealed class DetailTileRenderer
 
         public bool Equals(TileKey other)
         {
-            return Zoom == other.Zoom && X == other.X && Y == other.Y;
+            return Style == other.Style && Zoom == other.Zoom && X == other.X && Y == other.Y;
         }
 
         public override bool Equals(object? obj)
@@ -647,7 +697,7 @@ internal sealed class DetailTileRenderer
 
         public override int GetHashCode()
         {
-            return unchecked((Zoom * 397) ^ (X * 31) ^ Y);
+            return unchecked((Zoom * 397) ^ (X * 31) ^ Y ^ ((int)Style * 7919));
         }
     }
 

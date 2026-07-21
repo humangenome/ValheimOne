@@ -62,6 +62,8 @@ internal sealed class LiveMapHttpServer
     private Thread? _listenerThread;
     private byte[]? _fogPng;
     private long _fogPngRevision = -1;
+    private byte[]? _chartFogPng;
+    private long _chartFogPngRevision = -1;
     private long _exploredPctRevision = -1;
     private double _exploredPctValue;
     private bool _accessTokenWarningLogged;
@@ -377,15 +379,15 @@ internal sealed class LiveMapHttpServer
             }
             else if (isGet && path.StartsWith("/tiles/", StringComparison.Ordinal))
             {
-                ServeTile(response, path.Substring("/tiles/".Length));
+                ServeTile(request, response, path.Substring("/tiles/".Length));
             }
             else if (isGet && path == "/base.png")
             {
-                ServeBaseImage(response);
+                ServeBaseImage(request, response);
             }
             else if (isGet && path == "/fog.png")
             {
-                ServeFogImage(response, viewLevel);
+                ServeFogImage(request, response, viewLevel);
             }
             else if (isPost && path == "/api/console/exec")
             {
@@ -657,6 +659,12 @@ internal sealed class LiveMapHttpServer
         string mapState = _renderer.StateName;
         string mapProgress = JsonWriter.Number(_renderer.Progress);
         string renderRevision = _renderer.RenderRevision;
+        string topoState = _renderer.GetStyleStateName(MapStyle.Topo);
+        string topoProgress = JsonWriter.Number(_renderer.GetStyleProgress(MapStyle.Topo));
+        string topoRevision = _renderer.GetStyleRevision(MapStyle.Topo);
+        string chartState = _renderer.GetStyleStateName(MapStyle.Chart);
+        string chartProgress = JsonWriter.Number(_renderer.GetStyleProgress(MapStyle.Chart));
+        string chartRevision = _renderer.GetStyleRevision(MapStyle.Chart);
         string fogMode = GetEffectiveFogMode(viewLevel);
         FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
         long fogRevision = fogMode == "off" ? 0 : fogSnapshot.Revision;
@@ -671,7 +679,7 @@ internal sealed class LiveMapHttpServer
         bool snapshotStale = snapshot.UnixMs != 0 &&
                              snapshotAgeMs > Math.Max(0.25f, _getEffectiveUpdateSeconds()) * 3000.0;
         long lastSavedUnixMs = WorldSavePatch.LastSavedUnixMs;
-        var json = new StringBuilder(416);
+        var json = new StringBuilder(640);
         json.Append('{');
         json.Append("\"serverName\":").Append(JsonWriter.Quote(snapshot.ServerName));
         json.Append(",\"worldName\":").Append(JsonWriter.Quote(snapshot.WorldName));
@@ -704,6 +712,16 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"worldRadius\":").Append(WorldMapRenderer.WorldRadius.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"baseZoom\":").Append(_renderer.BaseMaximumZoom.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"maxZoom\":").Append(_renderer.MaximumZoom.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"styles\":{");
+        json.Append("\"topo\":{");
+        json.Append("\"state\":").Append(JsonWriter.Quote(topoState));
+        json.Append(",\"progress\":").Append(topoProgress);
+        json.Append(",\"revision\":").Append(JsonWriter.Quote(topoRevision));
+        json.Append("},\"chart\":{");
+        json.Append("\"state\":").Append(JsonWriter.Quote(chartState));
+        json.Append(",\"progress\":").Append(chartProgress);
+        json.Append(",\"revision\":").Append(JsonWriter.Quote(chartRevision));
+        json.Append("}}");
         json.Append(",\"fog\":{");
         json.Append("\"mode\":").Append(JsonWriter.Quote(fogMode));
         json.Append(",\"revision\":").Append(fogRevision.ToString(CultureInfo.InvariantCulture));
@@ -733,6 +751,12 @@ internal sealed class LiveMapHttpServer
         key.Append(mapState).Append('|');
         key.Append(mapProgress).Append('|');
         key.Append(renderRevision).Append('|');
+        key.Append(topoState).Append('|');
+        key.Append(topoProgress).Append('|');
+        key.Append(topoRevision).Append('|');
+        key.Append(chartState).Append('|');
+        key.Append(chartProgress).Append('|');
+        key.Append(chartRevision).Append('|');
         key.Append(fogRevision.ToString(CultureInfo.InvariantCulture)).Append('|');
         long lastSavedMinute = lastSavedUnixMs > 0L ? lastSavedUnixMs / 60000L : 0L;
         key.Append(lastSavedMinute.ToString(CultureInfo.InvariantCulture)).Append('|');
@@ -2120,9 +2144,13 @@ internal sealed class LiveMapHttpServer
         WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
 
-    private void ServeTile(HttpListenerResponse response, string relativePath)
+    private void ServeTile(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        string relativePath)
     {
-        if (!_renderer.IsReady || !TryParseTile(relativePath, out int zoom, out int x, out int y))
+        if (!TryGetMapStyle(request, out MapStyle style) ||
+            !TryParseTile(relativePath, out int zoom, out int x, out int y))
         {
             WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
             return;
@@ -2135,11 +2163,24 @@ internal sealed class LiveMapHttpServer
             return;
         }
 
+        if (zoom <= _renderer.BaseMaximumZoom && !_renderer.IsStyleReady(style))
+        {
+            _renderer.RequestStyleRender(style);
+            WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
+        if (!_renderer.IsReady)
+        {
+            WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
         if (zoom > _renderer.BaseMaximumZoom)
         {
             // Detail zooms render lazily on the shared worker; this waits briefly
             // for a fresh tile and serves the cached file afterwards.
-            if (_renderer.TryGetDetailTile(zoom, x, y, out string detailPath))
+            if (_renderer.TryGetDetailTile(style, zoom, x, y, out string detailPath))
             {
                 ServePngFile(response, detailPath);
             }
@@ -2151,28 +2192,42 @@ internal sealed class LiveMapHttpServer
             return;
         }
 
-        string path = Path.Combine(
-            _renderer.CacheDirectory,
-            "tiles",
-            zoom.ToString(CultureInfo.InvariantCulture),
-            $"{x.ToString(CultureInfo.InvariantCulture)}-{y.ToString(CultureInfo.InvariantCulture)}.png");
-        ServePngFile(response, path);
+        ServePngFile(response, _renderer.GetTilePath(style, zoom, x, y));
     }
 
-    private void ServeBaseImage(HttpListenerResponse response)
+    private void ServeBaseImage(
+        HttpListenerRequest request,
+        HttpListenerResponse response)
     {
+        if (!TryGetMapStyle(request, out MapStyle style))
+        {
+            WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
+        if (!_renderer.IsStyleReady(style))
+        {
+            _renderer.RequestStyleRender(style);
+            WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
         if (!_renderer.IsReady)
         {
             WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
             return;
         }
 
-        ServePngFile(response, Path.Combine(_renderer.CacheDirectory, "base.png"));
+        ServePngFile(response, _renderer.GetBasePath(style));
     }
 
-    private void ServeFogImage(HttpListenerResponse response, ViewLevel viewLevel)
+    private void ServeFogImage(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        ViewLevel viewLevel)
     {
-        if (GetEffectiveFogMode(viewLevel) == "off")
+        if (!TryGetMapStyle(request, out MapStyle style) ||
+            GetEffectiveFogMode(viewLevel) == "off")
         {
             WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
             return;
@@ -2182,13 +2237,26 @@ internal sealed class LiveMapHttpServer
         byte[] png;
         lock (_fogPngLock)
         {
-            if (_fogPng == null || _fogPngRevision != snapshot.Revision)
+            if (style == MapStyle.Chart)
             {
-                _fogPng = BuildFogPng(snapshot.Mask);
-                _fogPngRevision = snapshot.Revision;
-            }
+                if (_chartFogPng == null || _chartFogPngRevision != snapshot.Revision)
+                {
+                    _chartFogPng = BuildChartFogPng(snapshot.Mask, _renderer.Seed);
+                    _chartFogPngRevision = snapshot.Revision;
+                }
 
-            png = _fogPng;
+                png = _chartFogPng;
+            }
+            else
+            {
+                if (_fogPng == null || _fogPngRevision != snapshot.Revision)
+                {
+                    _fogPng = BuildFogPng(snapshot.Mask);
+                    _fogPngRevision = snapshot.Revision;
+                }
+
+                png = _fogPng;
+            }
         }
 
         WriteBytes(
@@ -2308,6 +2376,54 @@ internal sealed class LiveMapHttpServer
         return PngEncoder.EncodeRgba(rgba, FogTracker.Size, FogTracker.Size);
     }
 
+    private static byte[] BuildChartFogPng(byte[] mask, int seed)
+    {
+        int expectedLength = FogTracker.Size * FogTracker.Size;
+        if (mask.Length != expectedLength)
+        {
+            throw new InvalidOperationException("Fog mask dimensions do not match its length.");
+        }
+
+        const int unrevealedAlpha = 210;
+        const int featherRadius = 2;
+        const float halfWorld = FogTracker.WorldSpan / 2f;
+        var rgba = new byte[expectedLength * 4];
+        for (int y = 0; y < FogTracker.Size; y++)
+        {
+            int minimumY = Math.Max(0, y - featherRadius);
+            int maximumY = Math.Min(FogTracker.Size - 1, y + featherRadius);
+            float worldZ = halfWorld - ((y + 0.5f) * FogTracker.MetersPerPixel);
+            for (int x = 0; x < FogTracker.Size; x++)
+            {
+                int minimumX = Math.Max(0, x - featherRadius);
+                int maximumX = Math.Min(FogTracker.Size - 1, x + featherRadius);
+                int alphaTotal = 0;
+                int samples = 0;
+                for (int sampleY = minimumY; sampleY <= maximumY; sampleY++)
+                {
+                    int row = sampleY * FogTracker.Size;
+                    for (int sampleX = minimumX; sampleX <= maximumX; sampleX++)
+                    {
+                        if (mask[row + sampleX] == 0)
+                        {
+                            alphaTotal += unrevealedAlpha;
+                        }
+
+                        samples++;
+                    }
+                }
+
+                float worldX = -halfWorld + ((x + 0.5f) * FogTracker.MetersPerPixel);
+                int offset = ((y * FogTracker.Size) + x) * 4;
+                MapStyleCompositor.ComposeChartFog(worldX, worldZ, seed)
+                    .WriteRgba(rgba, offset);
+                rgba[offset + 3] = (byte)((alphaTotal + (samples / 2)) / samples);
+            }
+        }
+
+        return PngEncoder.EncodeRgba(rgba, FogTracker.Size, FogTracker.Size);
+    }
+
     private static void ServePngFile(HttpListenerResponse response, string path)
     {
         if (!File.Exists(path))
@@ -2346,6 +2462,11 @@ internal sealed class LiveMapHttpServer
                int.TryParse(coordinates.Substring(0, separator), NumberStyles.None, CultureInfo.InvariantCulture, out x) &&
                int.TryParse(coordinates.Substring(separator + 1), NumberStyles.None, CultureInfo.InvariantCulture, out y) &&
                zoom >= 0 && x >= 0 && y >= 0;
+    }
+
+    private static bool TryGetMapStyle(HttpListenerRequest request, out MapStyle style)
+    {
+        return MapStyles.TryParse(request.QueryString["style"], out style);
     }
 
     private static bool TryReadRequiredString(
