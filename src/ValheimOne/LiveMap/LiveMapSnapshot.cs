@@ -12,6 +12,8 @@ internal sealed class LiveMapSnapshot
         0f,
         0f,
         0,
+        Array.Empty<string>(),
+        Array.Empty<string>(),
         Array.Empty<LiveMapPlayerSnapshot>());
 
     public LiveMapSnapshot(
@@ -22,6 +24,8 @@ internal sealed class LiveMapSnapshot
         float windDirDeg,
         float windIntensity,
         long unixMs,
+        string[] globalKeys,
+        string[] modifiers,
         LiveMapPlayerSnapshot[] players)
     {
         ServerName = serverName;
@@ -31,6 +35,8 @@ internal sealed class LiveMapSnapshot
         WindDirDeg = windDirDeg;
         WindIntensity = windIntensity;
         UnixMs = unixMs;
+        GlobalKeys = globalKeys;
+        Modifiers = modifiers;
         Players = players;
     }
 
@@ -47,6 +53,10 @@ internal sealed class LiveMapSnapshot
     public float WindIntensity { get; }
 
     public long UnixMs { get; }
+
+    public string[] GlobalKeys { get; }
+
+    public string[] Modifiers { get; }
 
     public LiveMapPlayerSnapshot[] Players { get; }
 }

@@ -288,6 +288,49 @@ input {
     white-space: nowrap;
 }
 
+.boss-progression-line {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+}
+
+.boss-progression {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 3px;
+}
+
+.boss-progress-chip {
+    display: grid;
+    width: 20px;
+    height: 20px;
+    flex: 0 0 20px;
+    place-items: center;
+    border: 1px solid rgba(138, 116, 88, 0.24);
+    border-radius: 6px;
+    background: rgba(18, 14, 10, 0.48);
+    color: #766b5b;
+    filter: grayscale(1) saturate(0.15);
+    opacity: 0.48;
+}
+
+.boss-progress-chip svg {
+    width: 14px;
+    height: 14px;
+}
+
+.boss-progress-chip.is-defeated {
+    border-color: rgba(217, 177, 104, 0.62);
+    background: rgba(217, 177, 104, 0.14);
+    box-shadow: inset 0 0 7px rgba(217, 177, 104, 0.12),
+        0 0 7px rgba(217, 177, 104, 0.12);
+    color: var(--accent);
+    filter: none;
+    opacity: 1;
+}
+
 .time-panel {
     display: flex;
     align-items: center;

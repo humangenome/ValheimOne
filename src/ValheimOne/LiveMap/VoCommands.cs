@@ -658,9 +658,12 @@ internal static class VoCommands
             return;
         }
 
-        List<string> keys = zoneSystem.GetGlobalKeys();
+        GetGlobalKeyState(
+            zoneSystem,
+            out string[] keys,
+            out string[] modifiers);
         var keyNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        for (int index = 0; index < keys.Count; index++)
+        for (int index = 0; index < keys.Length; index++)
         {
             string keyName = GetGlobalKeyName(keys[index]);
             if (keyName.Length > 0)
@@ -684,15 +687,14 @@ internal static class VoCommands
         }
 
         Write(args, $"Defeated: {defeated}/{Bosses.Length}");
-        List<string> modifiers = GetWorldModifierKeys(keys);
-        Write(args, $"Active world modifiers ({modifiers.Count}):");
-        if (modifiers.Count == 0)
+        Write(args, $"Active world modifiers ({modifiers.Length}):");
+        if (modifiers.Length == 0)
         {
             Write(args, "  none");
         }
         else
         {
-            for (int index = 0; index < modifiers.Count; index++)
+            for (int index = 0; index < modifiers.Length; index++)
             {
                 Write(args, "  " + modifiers[index]);
             }
@@ -875,6 +877,27 @@ internal static class VoCommands
             LogWarning("could not read peer host ID", exception);
             return "host unavailable";
         }
+    }
+
+    internal static void GetGlobalKeyState(
+        ZoneSystem zoneSystem,
+        out string[] globalKeys,
+        out string[] modifiers)
+    {
+        List<string> source = zoneSystem.GetGlobalKeys();
+        var keys = new List<string>(source.Count);
+        for (int index = 0; index < source.Count; index++)
+        {
+            string key = (source[index] ?? string.Empty).Trim();
+            if (key.Length > 0)
+            {
+                keys.Add(key);
+            }
+        }
+
+        keys.Sort(StringComparer.OrdinalIgnoreCase);
+        globalKeys = keys.ToArray();
+        modifiers = GetWorldModifierKeys(keys).ToArray();
     }
 
     private static List<string> GetWorldModifierKeys(List<string> keys)

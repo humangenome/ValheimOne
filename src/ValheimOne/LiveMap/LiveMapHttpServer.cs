@@ -679,6 +679,8 @@ internal sealed class LiveMapHttpServer
         bool snapshotStale = snapshot.UnixMs != 0 &&
                              snapshotAgeMs > Math.Max(0.25f, _getEffectiveUpdateSeconds()) * 3000.0;
         long lastSavedUnixMs = WorldSavePatch.LastSavedUnixMs;
+        string globalKeysChangeKey = JoinSortedStrings(snapshot.GlobalKeys);
+        string modifiersChangeKey = JoinSortedStrings(snapshot.Modifiers);
         var json = new StringBuilder(640);
         json.Append('{');
         json.Append("\"serverName\":").Append(JsonWriter.Quote(snapshot.ServerName));
@@ -688,6 +690,10 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"timeOfDay\":").Append(JsonWriter.Number(snapshot.TimeOfDay));
         json.Append(",\"windDirDeg\":").Append(JsonWriter.Number(Math.Round(snapshot.WindDirDeg, 1)));
         json.Append(",\"windIntensity\":").Append(JsonWriter.Number(Math.Round(snapshot.WindIntensity, 3)));
+        json.Append(",\"globalKeys\":");
+        AppendStringArray(json, snapshot.GlobalKeys);
+        json.Append(",\"modifiers\":");
+        AppendStringArray(json, snapshot.Modifiers);
         json.Append(",\"exploredPct\":").Append(JsonWriter.Number(Math.Round(exploredPct, 1)));
         json.Append(",\"players\":").Append(visiblePlayers.ToString(CultureInfo.InvariantCulture));
         int maxPlayers = ValheimOne.Modules.ServerHostModule.EffectiveMaxPlayers();
@@ -746,6 +752,8 @@ internal sealed class LiveMapHttpServer
         key.Append(JsonWriter.Number(roundedWindDir)).Append('|');
         double roundedWindIntensity = Math.Round(snapshot.WindIntensity / 0.05) * 0.05;
         key.Append(JsonWriter.Number(roundedWindIntensity)).Append('|');
+        key.Append(globalKeysChangeKey).Append('|');
+        key.Append(modifiersChangeKey).Append('|');
         key.Append(JsonWriter.Number(Math.Round(exploredPct, 1))).Append('|');
         key.Append(visiblePlayers.ToString(CultureInfo.InvariantCulture)).Append('|');
         key.Append(maxPlayers.ToString(CultureInfo.InvariantCulture)).Append('|');
@@ -779,6 +787,29 @@ internal sealed class LiveMapHttpServer
 
         changeKey = key.ToString();
         return json.ToString();
+    }
+
+    private static void AppendStringArray(StringBuilder json, string[] values)
+    {
+        json.Append('[');
+        for (int index = 0; index < values.Length; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            json.Append(JsonWriter.Quote(values[index]));
+        }
+
+        json.Append(']');
+    }
+
+    private static string JoinSortedStrings(string[] values)
+    {
+        string[] sorted = (string[])values.Clone();
+        Array.Sort(sorted, StringComparer.Ordinal);
+        return string.Join(",", sorted);
     }
 
     private void ServeEvents(

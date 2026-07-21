@@ -67,6 +67,16 @@
         structures: "var(--marker-muted)"
     };
 
+    var BOSS_PROGRESSION = [
+        { name: "Eikthyr", key: "defeated_eikthyr", iconKey: "boss_eikthyr" },
+        { name: "The Elder", key: "defeated_gdking", iconKey: "boss_elder" },
+        { name: "Bonemass", key: "defeated_bonemass", iconKey: "boss_bonemass" },
+        { name: "Moder", key: "defeated_dragon", iconKey: "boss_moder" },
+        { name: "Yagluth", key: "defeated_goblinking", iconKey: "boss_yagluth" },
+        { name: "The Queen", key: "defeated_queen", iconKey: "boss_queen" },
+        { name: "Fader", key: "defeated_fader", iconKey: "boss_fader" }
+    ];
+
     var POI_CATEGORIES = [
         {
             key: "bosses",
@@ -423,6 +433,7 @@
     var savedBadgeTimer = 0;
     var dayToastTimer = 0;
     var noticeToastTimer = 0;
+    var bossProgressionState = "";
     var storageWriteWarningShown = false;
     var noticeToastElement = document.getElementById("notice-toast");
     var latestWind = null;
@@ -495,6 +506,7 @@
     };
 
     var elements = {
+        bossProgression: document.getElementById("boss-progression"),
         bannedCount: document.getElementById("console-banned-count"),
         bannedList: document.getElementById("console-banned-list"),
         commandForm: document.getElementById("console-command-form"),
@@ -3179,6 +3191,51 @@
         elements.skyIndicator.classList.toggle("is-moon", !isDaytime);
         elements.skyIndicator.setAttribute("aria-label", isDaytime ? "Daytime" : "Nighttime");
         updateDayNightTint();
+    }
+
+    function renderBossProgression(globalKeys) {
+        var activeKeys = Object.create(null);
+        if (Array.isArray(globalKeys)) {
+            globalKeys.forEach(function (value) {
+                if (typeof value !== "string") {
+                    return;
+                }
+
+                var key = value.trim().split(/\s+/, 1)[0].toLowerCase();
+                if (key) {
+                    activeKeys[key] = true;
+                }
+            });
+        }
+
+        var state = BOSS_PROGRESSION.map(function (boss) {
+            return activeKeys[boss.key] ? "1" : "0";
+        }).join("");
+        if (state === bossProgressionState) {
+            return;
+        }
+
+        bossProgressionState = state;
+        elements.bossProgression.textContent = "";
+        var defeatedCount = 0;
+        BOSS_PROGRESSION.forEach(function (boss) {
+            var defeated = activeKeys[boss.key] === true;
+            if (defeated) {
+                defeatedCount++;
+            }
+
+            var chip = document.createElement("span");
+            chip.className = "boss-progress-chip" + (defeated ? " is-defeated" : "");
+            chip.innerHTML = iconMarkup(boss.iconKey, "◆");
+            chip.title = boss.name + " — " + (defeated ? "Defeated" : "Not yet defeated");
+            chip.setAttribute("role", "img");
+            chip.setAttribute("aria-label", chip.title);
+            elements.bossProgression.appendChild(chip);
+        });
+        elements.bossProgression.setAttribute(
+            "aria-label",
+            "Boss progression: " + defeatedCount + " of " + BOSS_PROGRESSION.length + " defeated"
+        );
     }
 
     function showDayToast(day) {
@@ -9453,6 +9510,7 @@
         elements.serverName.textContent = textOrDash(status.serverName);
         elements.worldName.textContent = textOrDash(status.worldName);
         renderWorldTime(status.day, status.timeOfDay);
+        renderBossProgression(status.globalKeys);
         updateWorldMetrics(status);
         updateLastSaved(status.lastSavedUnixMs);
         renderPlayerCount(status.players);

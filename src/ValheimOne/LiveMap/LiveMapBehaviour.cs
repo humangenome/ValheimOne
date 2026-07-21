@@ -408,6 +408,14 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             windIntensity = Math.Max(0f, Math.Min(1f, environmentManager.GetWindIntensity()));
         }
 
+        string[] globalKeys = Array.Empty<string>();
+        string[] modifiers = Array.Empty<string>();
+        ZoneSystem? zoneSystem = ZoneSystem.instance;
+        if (zoneSystem != null)
+        {
+            VoCommands.GetGlobalKeyState(zoneSystem, out globalKeys, out modifiers);
+        }
+
         var players = new List<LiveMapPlayerSnapshot>();
         var presentIds = new HashSet<long>();
         List<ZNetPeer> peers = GameAccess.GetPeers(network);
@@ -534,6 +542,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             windDirDeg,
             windIntensity,
             nowMs,
+            globalKeys,
+            modifiers,
             players.ToArray());
     }
 
