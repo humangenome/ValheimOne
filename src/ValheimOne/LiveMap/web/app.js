@@ -373,6 +373,7 @@
     var latestWind = null;
     var tintOverlay = null;
     var regionLayer = null;
+    var regionLabelRecords = [];
     var regionsRequested = false;
     var layerSettings = loadLayerSettings();
     var layersRows = null;
@@ -2973,11 +2974,58 @@
     }
 
     function updateRegionLayerVisibility() {
-        setLayerVisible(
-            regionLayer,
-            Boolean(map && mapMetrics && layerSettings.regions &&
-                map.getZoom() <= mapMetrics.baseZoom + 1)
-        );
+        var visible = Boolean(map && mapMetrics && layerSettings.regions &&
+            map.getZoom() <= mapMetrics.baseZoom + 1);
+        setLayerVisible(regionLayer, visible);
+        if (visible) {
+            renderRegionLabels();
+        }
+    }
+
+    function regionLabelRectsIntersect(first, second) {
+        var padding = 14;
+        return first.left < second.right + padding &&
+            first.right + padding > second.left &&
+            first.top < second.bottom + padding &&
+            first.bottom + padding > second.top;
+    }
+
+    function renderRegionLabels() {
+        if (!map || !regionLayer) {
+            return;
+        }
+
+        var keptRects = [];
+        var visibleBiomeCounts = Object.create(null);
+        regionLayer.clearLayers();
+        regionLabelRecords.forEach(function (record) {
+            var biomeKey = record.name.toLowerCase();
+            var biomeCount = visibleBiomeCounts[biomeKey] || 0;
+            if (biomeCount >= 4) {
+                return;
+            }
+
+            var anchor = map.latLngToContainerPoint(record.latLng);
+            var fontSize = record.isMajor ? 11 : 9;
+            var width = record.name.length * 7 * fontSize / 9;
+            var height = 16;
+            var rect = {
+                left: anchor.x - width / 2,
+                right: anchor.x + width / 2,
+                top: anchor.y - height / 2,
+                bottom: anchor.y + height / 2
+            };
+            var collides = keptRects.some(function (keptRect) {
+                return regionLabelRectsIntersect(rect, keptRect);
+            });
+            if (collides) {
+                return;
+            }
+
+            keptRects.push(rect);
+            visibleBiomeCounts[biomeKey] = biomeCount + 1;
+            record.marker.addTo(regionLayer);
+        });
     }
 
     async function loadRegions() {
@@ -2990,7 +3038,8 @@
             var payload = await fetchJson("/api/regions");
             var regions = payload && Array.isArray(payload.regions) ? payload.regions : [];
             regionLayer.clearLayers();
-            regions.forEach(function (region) {
+            regionLabelRecords = [];
+            regions.forEach(function (region, index) {
                 var name = region && typeof region.name === "string"
                     ? region.name.trim()
                     : "";
@@ -3022,7 +3071,17 @@
                     pane: "regionPane",
                     permanent: true
                 });
-                marker.addTo(regionLayer);
+                regionLabelRecords.push({
+                    area: Number.isFinite(area) ? area : 0,
+                    index: index,
+                    isMajor: Number.isFinite(area) && area >= 1500000,
+                    latLng: marker.getLatLng(),
+                    marker: marker,
+                    name: name
+                });
+            });
+            regionLabelRecords.sort(function (first, second) {
+                return second.area - first.area || first.index - second.index;
             });
             updateRegionLayerVisibility();
         } catch (error) {
