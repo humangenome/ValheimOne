@@ -1588,6 +1588,18 @@ internal sealed class LiveMapHttpServer
                         Math.Round(entity.DeathAgeSec.Value, 1)));
                 }
             }
+            else if (string.Equals(entity.Group, "ward", StringComparison.Ordinal))
+            {
+                json.Append(",\"owner\":").Append(JsonWriter.Quote(entity.Owner));
+                json.Append(",\"wardEnabled\":").Append(
+                    entity.WardEnabled == true ? "true" : "false");
+                json.Append(",\"wardRadius\":").Append(JsonWriter.Number(
+                    entity.WardRadius.GetValueOrDefault()));
+            }
+            else if (string.Equals(entity.Group, "bed", StringComparison.Ordinal))
+            {
+                json.Append(",\"owner\":").Append(JsonWriter.Quote(entity.Owner));
+            }
 
             json.Append('}');
         }

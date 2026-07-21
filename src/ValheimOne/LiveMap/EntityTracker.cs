@@ -16,7 +16,8 @@ internal sealed class EntityTracker
     private const float FocusRefreshIntervalSeconds = 2f;
     private const long RequestActiveMilliseconds = 2L * 60L * 1000L;
     private const long FocusRequestActiveMilliseconds = 30L * 1000L;
-    private const int MaximumEntities = 500;
+    private const int MaximumEntities = 800;
+    private const float WardRadiusFallback = 32f;
 
     private static readonly Lazy<FieldInfo> RandomEventField = new(
         () => AccessTools.Field(typeof(RandEventSystem), "m_randomEvent") ??
@@ -33,6 +34,10 @@ internal sealed class EntityTracker
         new PrefabDefinition("portal", "portal_stone"),
         new PrefabDefinition("portal", "portal"),
         new PrefabDefinition("tombstone", "Player_tombstone"),
+        new PrefabDefinition("ward", "guard_stone"),
+        new PrefabDefinition("bed", "bed"),
+        new PrefabDefinition("bed", "piece_bed02"),
+        new PrefabDefinition("bed", "ashwood_bed"),
     };
 
     private readonly LiveMapConfig _config;
@@ -55,10 +60,12 @@ internal sealed class EntityTracker
     private int _scanIndex;
     private int _revision;
     private string _focusedId = string.Empty;
+    private float _wardRadius = WardRadiusFallback;
     private bool _scanning;
     private bool _scanWarningLogged;
     private bool _eventWarningLogged;
     private bool _focusWarningLogged;
+    private bool _wardRadiusResolved;
 
     public EntityTracker(
         LiveMapConfig config,
@@ -147,6 +154,7 @@ internal sealed class EntityTracker
 
     private void StartScan(float now)
     {
+        ResolveWardRadius();
         _scanResults.Clear();
         _pendingEntities.Clear();
         _prefabIndex = 0;
@@ -204,9 +212,23 @@ internal sealed class EntityTracker
                     prefab.Group,
                     "tombstone",
                     StringComparison.Ordinal);
-                string owner = isTombstone
-                    ? zdo.GetString(ZDOVars.s_ownerName, string.Empty)
-                    : string.Empty;
+                bool isWard = string.Equals(
+                    prefab.Group,
+                    "ward",
+                    StringComparison.Ordinal);
+                bool isBed = string.Equals(
+                    prefab.Group,
+                    "bed",
+                    StringComparison.Ordinal);
+                string owner = isWard
+                    ? zdo.GetString(ZDOVars.s_creatorName, string.Empty)
+                    : isTombstone || isBed
+                        ? zdo.GetString(ZDOVars.s_ownerName, string.Empty)
+                        : string.Empty;
+                bool? wardEnabled = isWard
+                    ? zdo.GetBool(ZDOVars.s_enabled)
+                    : null;
+                float? wardRadius = isWard ? _wardRadius : null;
                 double? deathAgeSec = null;
                 if (isTombstone)
                 {
@@ -231,7 +253,9 @@ internal sealed class EntityTracker
                     rotationY,
                     tag,
                     owner,
-                    deathAgeSec));
+                    deathAgeSec,
+                    wardEnabled,
+                    wardRadius));
             }
         }
         catch (Exception exception)
@@ -277,6 +301,38 @@ internal sealed class EntityTracker
 
         ResetScan();
         return true;
+    }
+
+    private void ResolveWardRadius()
+    {
+        if (_wardRadiusResolved)
+        {
+            return;
+        }
+
+        _wardRadiusResolved = true;
+        try
+        {
+            GameObject? prefab = ZNetScene.instance?.GetPrefab("guard_stone");
+            PrivateArea? privateArea = prefab?.GetComponent<PrivateArea>();
+            float radius = privateArea?.m_radius ?? 0f;
+            if (radius > 0f && !float.IsNaN(radius) && !float.IsInfinity(radius))
+            {
+                _wardRadius = radius;
+                return;
+            }
+
+            _log.Warning(
+                $"[LiveMap] guard_stone PrivateArea radius unavailable; " +
+                $"using {WardRadiusFallback.ToString(CultureInfo.InvariantCulture)}m fallback.");
+        }
+        catch (Exception exception)
+        {
+            _log.Warning(
+                $"[LiveMap] guard_stone PrivateArea radius lookup failed; " +
+                $"using {WardRadiusFallback.ToString(CultureInfo.InvariantCulture)}m fallback " +
+                $"({exception.GetType().Name}: {exception.Message}).");
+        }
     }
 
     private void ServiceFocus(float now)
@@ -576,7 +632,9 @@ internal sealed class TrackedEntitySnapshot
         float rotYDeg,
         string tag,
         string owner,
-        double? deathAgeSec)
+        double? deathAgeSec,
+        bool? wardEnabled,
+        float? wardRadius)
     {
         Group = group;
         Prefab = prefab;
@@ -588,6 +646,8 @@ internal sealed class TrackedEntitySnapshot
         Tag = tag;
         Owner = owner;
         DeathAgeSec = deathAgeSec;
+        WardEnabled = wardEnabled;
+        WardRadius = wardRadius;
     }
 
     public string Group { get; }
@@ -609,6 +669,10 @@ internal sealed class TrackedEntitySnapshot
     public string Owner { get; }
 
     public double? DeathAgeSec { get; }
+
+    public bool? WardEnabled { get; }
+
+    public float? WardRadius { get; }
 }
 
 internal sealed class EntityFocusSnapshot

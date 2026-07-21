@@ -189,11 +189,13 @@
         });
     });
 
-    var ENTITY_GROUP_ORDER = ["ship", "cart", "portal", "tombstone"];
+    var ENTITY_GROUP_ORDER = ["ship", "cart", "portal", "ward", "bed", "tombstone"];
     var ENTITY_GROUPS = {
         ship: { label: "Ships", glyph: "⛵" },
         cart: { label: "Carts", glyph: "▣" },
         portal: { label: "Portals", glyph: "◊" },
+        ward: { label: "Wards", glyph: "ᛉ" },
+        bed: { label: "Beds", glyph: "▰" },
         tombstone: { label: "Tombstones", glyph: "☠" }
     };
 
@@ -273,6 +275,8 @@
         cart: true,
         portal: true,
         portalNetwork: false,
+        ward: false,
+        bed: false,
         tombstone: false,
         densityDots: false,
         iconSize: "m",
@@ -356,6 +360,7 @@
     var portalPairs = [];
     var portalNetworkLayer = null;
     var portalPopupLinkLayer = null;
+    var wardRadiusLayer = null;
     var openPopupPortalId = "";
     var raidCircle = null;
     var currentRaidEvent = null;
@@ -2848,6 +2853,9 @@
         map.createPane("trailPane");
         map.getPane("trailPane").style.zIndex = "380";
         map.getPane("trailPane").style.pointerEvents = "none";
+        map.createPane("wardRadiusPane");
+        map.getPane("wardRadiusPane").style.zIndex = "390";
+        map.getPane("wardRadiusPane").style.pointerEvents = "none";
 
         // With fog active, keep an ocean-colored cover over the pane until the
         // fog image has loaded so the unfogged world never flashes on first paint.
@@ -2917,6 +2925,7 @@
         trailLayer = L.layerGroup().addTo(map);
         portalNetworkLayer = L.layerGroup();
         portalPopupLinkLayer = L.layerGroup().addTo(map);
+        wardRadiusLayer = L.layerGroup();
         pingLayer = L.layerGroup().addTo(map);
         POI_GROUP_ORDER.forEach(function (group) {
             poiLayers.set(group, L.layerGroup());
@@ -5079,6 +5088,10 @@
             portalNetworkLayer,
             entityLayersAreAvailable() && layerSettings.portalNetwork
         );
+        setLayerVisible(
+            wardRadiusLayer,
+            entityLayersAreAvailable() && layerSettings.ward
+        );
         ENTITY_GROUP_ORDER.forEach(function (group) {
             setLayerVisible(
                 entityLayers.get(group),
@@ -6894,6 +6907,43 @@
         });
     }
 
+    function buildWardPopup(entity) {
+        return popupShell({
+            feed: "entities",
+            glyph: ENTITY_GROUPS.ward.glyph,
+            kicker: "WARD",
+            rows: [{
+                label: "Owner",
+                value: entity.owner || "Unknown"
+            }, {
+                label: "Status",
+                value: entity.wardEnabled ? "Active" : "Inactive"
+            }, {
+                label: "Radius",
+                value: entity.wardRadius === null
+                    ? "Unknown"
+                    : formatScaleDistance(entity.wardRadius)
+            }, positionPopupRow(entity.x, entity.z)],
+            title: "Protected area"
+        });
+    }
+
+    function buildBedPopup(entity) {
+        return popupShell({
+            feed: "entities",
+            glyph: ENTITY_GROUPS.bed.glyph,
+            kicker: "BED · SPAWN POINT",
+            rows: [{
+                label: "Owner",
+                value: entity.owner || "None"
+            }, {
+                label: "Status",
+                value: entity.owner ? "Claimed" : "Unclaimed"
+            }, positionPopupRow(entity.x, entity.z)],
+            title: "Spawn point"
+        });
+    }
+
     function buildEntityPopup(entity) {
         if (entity.group === "ship") {
             return buildShipPopup(entity);
@@ -6903,6 +6953,12 @@
         }
         if (entity.group === "portal") {
             return buildPortalPopup(entity);
+        }
+        if (entity.group === "ward") {
+            return buildWardPopup(entity);
+        }
+        if (entity.group === "bed") {
+            return buildBedPopup(entity);
         }
         return buildTombstonePopup(entity);
     }
@@ -7413,6 +7469,9 @@
         entityLayers.forEach(function (layer) {
             layer.clearLayers();
         });
+        if (wardRadiusLayer) {
+            wardRadiusLayer.clearLayers();
+        }
         entityMarkerRecords.clear();
         portalMarkerRecords.clear();
         if (!preserveState) {
@@ -7480,6 +7539,12 @@
             if (deathAgeSec !== null) {
                 deathAgeSec = Math.max(0, deathAgeSec);
             }
+            var wardRadius = group === "ward"
+                ? finiteNumberOrNull(entity.wardRadius)
+                : null;
+            if (wardRadius !== null && wardRadius <= 0) {
+                wardRadius = null;
+            }
             var deathAgeSampledAt = receivedAt;
             var previous = previousById.get(entityId);
             if (previous && previous.deathAgeSec === deathAgeSec) {
@@ -7498,6 +7563,8 @@
                 trailKey: (group === "ship" || group === "cart") && entityId
                     ? "entity:" + entityId
                     : "",
+                wardEnabled: group === "ward" ? entity.wardEnabled === true : null,
+                wardRadius: wardRadius,
                 x: Number(entity.x),
                 y: Number(entity.y),
                 z: Number(entity.z)
@@ -7561,6 +7628,49 @@
         return normalized;
     }
 
+    function entityMarkerTitle(entity) {
+        if (entity.group === "tombstone" && entity.owner) {
+            return entity.owner + " · Tombstone";
+        }
+        if (entity.group === "ward") {
+            return (entity.owner || "Unknown owner") + " · " +
+                (entity.wardEnabled ? "Active ward" : "Inactive ward");
+        }
+        if (entity.group === "bed") {
+            return entity.owner ? entity.owner + " · Spawn point" : "Unclaimed bed";
+        }
+        return entity.prefab;
+    }
+
+    function renderWardRadius(entity) {
+        if (!wardRadiusLayer || entity.group !== "ward" || entity.wardRadius === null) {
+            return;
+        }
+
+        var radius = worldDistanceToMap(entity.wardRadius);
+        if (!Number.isFinite(radius) || radius <= 0) {
+            return;
+        }
+
+        var color = window.getComputedStyle(document.documentElement)
+            .getPropertyValue("--accent").trim() || "#d9b168";
+        L.circle(worldToLatLng(entity.x, entity.z), {
+            bubblingMouseEvents: false,
+            className: "ward-radius " +
+                (entity.wardEnabled ? "is-active" : "is-inactive"),
+            color: color,
+            dashArray: entity.wardEnabled ? null : "3 5",
+            fill: entity.wardEnabled,
+            fillColor: color,
+            fillOpacity: entity.wardEnabled ? 0.14 : 0,
+            interactive: false,
+            opacity: entity.wardEnabled ? 0.58 : 0.24,
+            pane: "wardRadiusPane",
+            radius: radius,
+            weight: entity.wardEnabled ? 1.5 : 1
+        }).addTo(wardRadiusLayer);
+    }
+
     function renderEntityPayload(entities) {
         var popupSource = map && map._popup ? map._popup._source : null;
         var reopenEntityKey = popupSource &&
@@ -7571,6 +7681,7 @@
         clearEntityLayers(true);
         var reopenMarker = null;
         entities.forEach(function (entity) {
+            renderWardRadius(entity);
             var markerMarkup = iconMarkup(
                 entity.group,
                 ENTITY_GROUPS[entity.group].glyph
@@ -7585,16 +7696,16 @@
             if (entity.isNewestDeath) {
                 icon.options.className += " is-newest-death";
             }
+            if (entity.group === "ward" && !entity.wardEnabled) {
+                icon.options.className += " is-inactive";
+            }
+            var markerTitle = entityMarkerTitle(entity);
             var marker = L.marker(worldToLatLng(entity.x, entity.z), {
                 icon: icon,
-                title: entity.group === "tombstone" && entity.owner
-                    ? entity.owner + " · Tombstone"
-                    : entity.prefab
+                title: markerTitle
             });
             var tooltipContent = document.createElement("span");
-            tooltipContent.textContent = entity.group === "tombstone" && entity.owner
-                ? entity.owner + " · Tombstone"
-                : entity.prefab;
+            tooltipContent.textContent = markerTitle;
             marker.bindTooltip(tooltipContent, {
                 className: "map-tooltip entity-tooltip",
                 direction: "top",

@@ -948,6 +948,16 @@ input {
     font-size: 17px;
 }
 
+.layer-swatch-ward {
+    color: var(--accent);
+    font-size: 15px;
+}
+
+.layer-swatch-bed {
+    color: var(--moss);
+    font-size: 14px;
+}
+
 .layer-swatch-tombstone {
     color: #d8c8ad;
     font-size: 13px;
@@ -2246,6 +2256,14 @@ body.is-pinging #map .leaflet-overlay-pane path {
     background: var(--frost);
 }
 
+#map.is-density-dots .entity-ward .entity-marker-shell {
+    background: var(--accent);
+}
+
+#map.is-density-dots .entity-bed .entity-marker-shell {
+    background: var(--moss);
+}
+
 #map.is-density-dots .entity-tombstone .entity-marker-shell {
     background: #d8c8ad;
 }
@@ -2271,6 +2289,21 @@ body.is-pinging #map .leaflet-overlay-pane path {
     height: 17px;
 }
 
+.entity-ward .entity-marker-shell {
+    border-color: rgba(217, 177, 104, 0.82);
+    color: var(--accent);
+}
+
+.entity-ward.is-inactive .entity-marker-shell {
+    filter: grayscale(0.35) saturate(0.55);
+    opacity: 0.46;
+}
+
+.entity-bed .entity-marker-shell {
+    border-color: rgba(163, 194, 106, 0.72);
+    color: #bad787;
+}
+
 .entity-tombstone .entity-marker-shell {
     width: 19px;
     height: 19px;
@@ -2291,6 +2324,10 @@ body.is-pinging #map .leaflet-overlay-pane path {
 
 .entity-tombstone.is-newest-death .entity-marker-shell {
     animation: tombstone-pulse 2.4s ease-in-out infinite;
+}
+
+.ward-radius {
+    pointer-events: none;
 }
 
 .pin-marker-shell {
