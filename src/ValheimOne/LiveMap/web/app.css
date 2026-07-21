@@ -442,6 +442,169 @@ input {
     color: var(--frost);
 }
 
+.saga-panel {
+    flex: 0 0 auto;
+    border-bottom: 1px solid var(--border);
+    background:
+        linear-gradient(90deg, rgba(217, 177, 104, 0.035), transparent 45%),
+        rgba(15, 11, 7, 0.24);
+}
+
+.saga-panel[hidden] {
+    display: none;
+}
+
+.saga-toggle {
+    display: flex;
+    width: 100%;
+    min-height: 39px;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 18px;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+}
+
+.saga-toggle:hover,
+.saga-toggle:focus-visible {
+    outline: none;
+    background: rgba(217, 177, 104, 0.055);
+}
+
+.saga-heading-copy {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-display);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.saga-rune {
+    color: var(--accent);
+    font-family: serif;
+    font-size: 16px;
+    font-weight: 400;
+    line-height: 1;
+    text-shadow: 0 0 8px rgba(217, 177, 104, 0.28);
+}
+
+.saga-chevron {
+    color: var(--secondary);
+    font-size: 13px;
+    line-height: 1;
+}
+
+.saga-content {
+    display: flex;
+    max-height: min(250px, 36vh);
+    flex-direction: column;
+    padding: 6px 9px 9px;
+    overflow: hidden;
+    border-top: 1px solid var(--border);
+}
+
+.saga-content[hidden] {
+    display: none;
+}
+
+.saga-note {
+    margin: 0;
+    padding: 13px 8px 10px;
+    color: var(--secondary);
+    font-size: 11px;
+    font-style: italic;
+    text-align: center;
+}
+
+.saga-note[hidden] {
+    display: none;
+}
+
+.saga-list {
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    list-style: none;
+    scrollbar-color: var(--border-strong) transparent;
+    scrollbar-width: thin;
+}
+
+.saga-entry {
+    display: grid;
+    min-height: 42px;
+    grid-template-columns: 28px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    padding: 6px 7px;
+    border-radius: 6px;
+}
+
+.saga-entry + .saga-entry {
+    border-top: 1px solid rgba(190, 150, 90, 0.11);
+}
+
+.saga-entry-icon {
+    display: grid;
+    width: 27px;
+    height: 27px;
+    place-items: center;
+    border: 1px solid rgba(217, 177, 104, 0.23);
+    border-radius: 50%;
+    background: rgba(217, 177, 104, 0.055);
+    color: var(--accent);
+}
+
+.saga-entry-icon svg {
+    width: 17px;
+    height: 17px;
+}
+
+.saga-entry.is-death .saga-entry-icon,
+.saga-entry.is-raid-start .saga-entry-icon {
+    border-color: rgba(201, 106, 82, 0.36);
+    background: rgba(201, 106, 82, 0.09);
+    color: var(--raid);
+}
+
+.saga-entry.is-day .saga-entry-icon {
+    border-color: rgba(224, 168, 60, 0.35);
+    color: var(--sun);
+}
+
+.saga-entry.is-leave .saga-entry-icon,
+.saga-entry.is-raid-end .saga-entry-icon {
+    color: var(--secondary);
+}
+
+.saga-entry-copy {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.saga-entry-text {
+    overflow: hidden;
+    color: var(--text);
+    font-size: 11px;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.saga-entry-time {
+    color: var(--secondary);
+    font-size: 9px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2;
+}
+
 .players-panel {
     display: flex;
     min-height: 0;

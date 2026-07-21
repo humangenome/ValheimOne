@@ -17,6 +17,7 @@ internal sealed class LiveMapHttpServer
     private const int EventStreamTickMilliseconds = 1000;
     private const int EventStreamHeartbeatTicks = 15;
     private const int EventStreamLogBatchSize = 100;
+    private const int EventStreamActivityBatchSize = 100;
     private const int MaximumInlineLocationPoisPerGroup = 400;
     private const float MaximumPingWorldRadius = 10500f;
     private const int MaximumPingLabelLength = 32;
@@ -344,6 +345,10 @@ internal sealed class LiveMapHttpServer
             else if (isGet && path == "/api/players")
             {
                 ServePlayers(response, viewLevel);
+            }
+            else if (isGet && path == "/api/activity")
+            {
+                ServeActivity(request, response, viewLevel);
             }
             else if (isGet && path == "/api/trail")
             {
@@ -844,6 +849,9 @@ internal sealed class LiveMapHttpServer
             Stream output = response.OutputStream;
             long pingCursor = MapPingPatch.LatestCursor;
             var pendingPings = new List<MapPingSnapshot>(16);
+            bool sendActivity = viewLevel != ViewLevel.Public;
+            long activityCursor = _activityLog.LatestActivityCursor;
+            var pendingActivity = new List<ActivityFeedEntry>(EventStreamActivityBatchSize);
             WriteEventStreamText(output, "retry: 5000\n\n");
 
             LiveMapSnapshot snapshot = _getSnapshot();
@@ -895,6 +903,22 @@ internal sealed class LiveMapHttpServer
                 {
                     WriteEventStreamEvent(output, "ping", BuildPingJson(pendingPings[index]));
                     sentEvent = true;
+                }
+
+                if (sendActivity && _activityLog.ActivityFeedEnabled)
+                {
+                    string activityJson = BuildActivityJson(
+                        activityCursor,
+                        EventStreamActivityBatchSize,
+                        pendingActivity,
+                        out long nextActivityCursor,
+                        out int activityCount);
+                    if (activityCount > 0)
+                    {
+                        WriteEventStreamEvent(output, "activity", activityJson);
+                        activityCursor = nextActivityCursor;
+                        sentEvent = true;
+                    }
                 }
 
                 if (sendLogs)
@@ -1075,6 +1099,68 @@ internal sealed class LiveMapHttpServer
 
         json.Append("]}");
         WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private void ServeActivity(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        ViewLevel viewLevel)
+    {
+        if (viewLevel == ViewLevel.Public)
+        {
+            WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
+        long cursor = Math.Max(0L, ParseLong(request.QueryString["cursor"], 0L));
+        var entries = new List<ActivityFeedEntry>(EventStreamActivityBatchSize);
+        string json = BuildActivityJson(
+            cursor,
+            EventStreamActivityBatchSize,
+            entries,
+            out _,
+            out _);
+        WriteJson(response, HttpStatusCode.OK, json);
+    }
+
+    private string BuildActivityJson(
+        long cursor,
+        int maximum,
+        List<ActivityFeedEntry> entries,
+        out long latestCursor,
+        out int eventCount)
+    {
+        bool enabled = _activityLog.ActivityFeedEnabled;
+        entries.Clear();
+        latestCursor = enabled
+            ? _activityLog.CopyActivityAfter(cursor, maximum, entries)
+            : _activityLog.LatestActivityCursor;
+        eventCount = entries.Count;
+
+        var json = new StringBuilder(48 + (entries.Count * 128));
+        json.Append("{\"enabled\":").Append(enabled ? "true" : "false");
+        json.Append(",\"cursor\":");
+        json.Append(latestCursor.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"events\":[");
+        for (int index = 0; index < entries.Count; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            ActivityFeedEntry entry = entries[index];
+            json.Append('{');
+            json.Append("\"id\":").Append(entry.Id.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"unixMs\":").Append(
+                entry.UnixMs.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"type\":").Append(JsonWriter.Quote(entry.Type));
+            json.Append(",\"data\":").Append(entry.DataJson);
+            json.Append('}');
+        }
+
+        json.Append("]}");
+        return json.ToString();
     }
 
     private string BuildConsoleLogJson(

@@ -6,7 +6,9 @@
     var ENTITIES_POLL_INTERVAL_MS = 10000;
     var CONSOLE_LOG_POLL_INTERVAL_MS = 2000;
     var CONSOLE_STATS_POLL_INTERVAL_MS = 5000;
+    var ACTIVITY_POLL_INTERVAL_MS = 5000;
     var CONSOLE_LOG_LIMIT = 1000;
+    var SAGA_EVENT_LIMIT = 100;
     var COMMAND_HISTORY_LIMIT = 50;
     var MOVE_DURATION_MS = 400;
     var TILE_SIZE = 256;
@@ -452,6 +454,15 @@
     var searchResultItems = [];
     var searchResultIndex = -1;
     var currentView = null;
+    var sagaEvents = [];
+    var sagaCursor = 0;
+    var sagaEnabled = null;
+    var sagaLoaded = false;
+    var sagaLoadFailed = false;
+    var sagaRequestPending = false;
+    var sagaRequestSequence = 0;
+    var pendingSagaPayloads = [];
+    var sagaRelativeTimer = 0;
     var lastPoiRequestedView = null;
     var poiRequestSequence = 0;
     var poiLoadPending = false;
@@ -555,6 +566,12 @@
         saveButton: document.getElementById("console-save"),
         savedChip: document.getElementById("saved-chip"),
         saveStatus: document.getElementById("console-save-status"),
+        sagaChevron: document.getElementById("saga-chevron"),
+        sagaContent: document.getElementById("saga-content"),
+        sagaList: document.getElementById("saga-list"),
+        sagaNote: document.getElementById("saga-note"),
+        sagaPanel: document.getElementById("saga-panel"),
+        sagaToggle: document.getElementById("saga-toggle"),
         serverName: document.getElementById("server-name"),
         sidebarState: document.getElementById("sidebar-state"),
         skyIndicator: document.getElementById("sky-indicator"),
@@ -9312,6 +9329,306 @@
         startPolling(pollPins, PINS_POLL_INTERVAL_MS);
     }
 
+    function setSagaCollapsed(isCollapsed) {
+        elements.sagaPanel.classList.toggle("is-collapsed", isCollapsed);
+        elements.sagaContent.hidden = isCollapsed;
+        elements.sagaToggle.setAttribute("aria-expanded", String(!isCollapsed));
+        elements.sagaChevron.textContent = isCollapsed ? "⌄" : "⌃";
+        if (!isCollapsed) {
+            renderSagaRelativeTimes();
+        }
+    }
+
+    function sagaName(data) {
+        if (data && typeof data.name === "string" && data.name.trim()) {
+            return data.name.trim();
+        }
+        return "A viking";
+    }
+
+    function sagaPresentation(event) {
+        var data = event.data || {};
+        switch (event.type) {
+            case "player.join":
+                return {
+                    className: "is-join",
+                    fallbackGlyph: "✦",
+                    iconKey: "player",
+                    text: sagaName(data) + " arrived"
+                };
+            case "player.leave":
+                return {
+                    className: "is-leave",
+                    fallbackGlyph: "↠",
+                    iconKey: "ship",
+                    text: sagaName(data) + " departed"
+                };
+            case "player.death":
+                return {
+                    className: "is-death",
+                    fallbackGlyph: "☠",
+                    iconKey: "tombstone",
+                    text: sagaName(data) + " fell"
+                };
+            case "raid.start":
+                return {
+                    className: "is-raid-start",
+                    fallbackGlyph: "⚔",
+                    iconKey: "boss",
+                    text: "Raid: " + sagaName(data) + " started"
+                };
+            case "raid.end":
+                return {
+                    className: "is-raid-end",
+                    fallbackGlyph: "◇",
+                    iconKey: "boss",
+                    text: "Raid: " + sagaName(data) + " ended"
+                };
+            case "world.save":
+                return {
+                    className: "is-save",
+                    fallbackGlyph: "✓",
+                    iconKey: "saga_save",
+                    text: "World saved"
+                };
+            case "day.change":
+                var day = Number(data.day);
+                return {
+                    className: "is-day",
+                    fallbackGlyph: "☀",
+                    iconKey: "saga_day",
+                    text: Number.isFinite(day)
+                        ? "Day " + Math.floor(day) + " dawns"
+                        : "A new day dawns"
+                };
+            default:
+                return null;
+        }
+    }
+
+    function normalizeSagaEvent(event) {
+        if (!event || typeof event !== "object" ||
+            typeof event.type !== "string" || !event.type) {
+            return null;
+        }
+
+        var id = Number(event.id);
+        var unixMs = Number(event.unixMs);
+        if (!Number.isFinite(id) || id <= 0 ||
+            !Number.isFinite(unixMs) || unixMs <= 0 || unixMs > 8640000000000000) {
+            return null;
+        }
+
+        var normalized = {
+            data: event.data && typeof event.data === "object" ? event.data : {},
+            id: Math.floor(id),
+            type: event.type,
+            unixMs: Math.floor(unixMs)
+        };
+        return sagaPresentation(normalized) ? normalized : null;
+    }
+
+    function sagaRelativeTime(unixMs) {
+        var elapsedSeconds = Math.max(0, Math.floor((Date.now() - unixMs) / 1000));
+        if (elapsedSeconds < 10) {
+            return "just now";
+        }
+        if (elapsedSeconds < 60) {
+            return elapsedSeconds + "s ago";
+        }
+
+        var elapsedMinutes = Math.floor(elapsedSeconds / 60);
+        if (elapsedMinutes < 60) {
+            return elapsedMinutes + "m ago";
+        }
+
+        var elapsedHours = Math.floor(elapsedMinutes / 60);
+        if (elapsedHours < 24) {
+            return elapsedHours + "h ago";
+        }
+
+        var elapsedDays = Math.floor(elapsedHours / 24);
+        return elapsedDays + "d ago";
+    }
+
+    function renderSagaRelativeTimes() {
+        elements.sagaList.querySelectorAll("time[data-unix-ms]").forEach(function (time) {
+            time.textContent = sagaRelativeTime(Number(time.dataset.unixMs));
+        });
+    }
+
+    function renderSagaFeed() {
+        elements.sagaList.textContent = "";
+        var note = "";
+        if (sagaEnabled === false) {
+            note = "Activity log disabled";
+        } else if (!sagaLoaded) {
+            note = "Reading the runes…";
+        } else if (sagaLoadFailed && sagaEvents.length === 0) {
+            note = "Saga unavailable";
+        } else if (sagaEvents.length === 0) {
+            note = "No tales recorded yet";
+        }
+
+        elements.sagaNote.hidden = !note;
+        elements.sagaNote.textContent = note;
+        if (note && sagaEvents.length === 0) {
+            return;
+        }
+
+        sagaEvents.forEach(function (event) {
+            var presentation = sagaPresentation(event);
+            if (!presentation) {
+                return;
+            }
+
+            var item = document.createElement("li");
+            var icon = document.createElement("span");
+            var copy = document.createElement("span");
+            var text = document.createElement("span");
+            var time = document.createElement("time");
+            item.className = "saga-entry " + presentation.className;
+            item.dataset.eventId = String(event.id);
+            icon.className = "saga-entry-icon";
+            icon.setAttribute("aria-hidden", "true");
+            icon.innerHTML = iconMarkup(presentation.iconKey, presentation.fallbackGlyph);
+            copy.className = "saga-entry-copy";
+            text.className = "saga-entry-text";
+            text.textContent = presentation.text;
+            time.className = "saga-entry-time";
+            time.dataset.unixMs = String(event.unixMs);
+            time.dateTime = new Date(event.unixMs).toISOString();
+            time.textContent = sagaRelativeTime(event.unixMs);
+            copy.appendChild(text);
+            copy.appendChild(time);
+            item.appendChild(icon);
+            item.appendChild(copy);
+            elements.sagaList.appendChild(item);
+        });
+    }
+
+    function handleActivityPayload(payload, replace) {
+        if (!payload || typeof payload !== "object" || !Array.isArray(payload.events)) {
+            throw new Error("Invalid activity payload");
+        }
+
+        sagaLoaded = true;
+        sagaLoadFailed = false;
+        sagaEnabled = payload.enabled !== false;
+        var nextCursor = Number(payload.cursor);
+        nextCursor = Number.isFinite(nextCursor) ? Math.max(0, Math.floor(nextCursor)) : sagaCursor;
+        if (!sagaEnabled) {
+            sagaEvents = [];
+            sagaCursor = nextCursor;
+            renderSagaFeed();
+            return;
+        }
+
+        var merged = new Map();
+        if (!replace) {
+            sagaEvents.forEach(function (event) {
+                merged.set(event.id, event);
+            });
+        }
+        payload.events.forEach(function (event) {
+            var normalized = normalizeSagaEvent(event);
+            if (normalized) {
+                merged.set(normalized.id, normalized);
+            }
+        });
+        sagaEvents = Array.from(merged.values()).sort(function (left, right) {
+            return right.id - left.id;
+        }).slice(0, SAGA_EVENT_LIMIT);
+        sagaCursor = replace ? nextCursor : Math.max(sagaCursor, nextCursor);
+        renderSagaFeed();
+    }
+
+    function flushPendingSagaPayloads() {
+        var pending = pendingSagaPayloads;
+        pendingSagaPayloads = [];
+        pending.forEach(function (payload) {
+            handleActivityPayload(payload, false);
+        });
+    }
+
+    function handleActivityStreamPayload(payload) {
+        if (currentView === "public") {
+            return;
+        }
+        if (sagaRequestPending) {
+            pendingSagaPayloads.push(payload);
+            if (pendingSagaPayloads.length > 10) {
+                pendingSagaPayloads.shift();
+            }
+            return;
+        }
+        handleActivityPayload(payload, false);
+    }
+
+    async function loadSagaActivity(cursor, replace) {
+        if (sagaRequestPending || currentView === "public") {
+            return;
+        }
+
+        sagaRequestPending = true;
+        var sequence = ++sagaRequestSequence;
+        if (!sagaLoaded) {
+            renderSagaFeed();
+        }
+        try {
+            var payload = await fetchJson("/api/activity?cursor=" + encodeURIComponent(cursor));
+            if (sequence !== sagaRequestSequence || currentView === "public") {
+                return;
+            }
+            handleActivityPayload(payload, replace);
+            flushPendingSagaPayloads();
+        } catch (error) {
+            if (sequence !== sagaRequestSequence || currentView === "public") {
+                return;
+            }
+            sagaLoaded = true;
+            sagaLoadFailed = true;
+            renderSagaFeed();
+            flushPendingSagaPayloads();
+        } finally {
+            if (sequence === sagaRequestSequence) {
+                sagaRequestPending = false;
+            }
+        }
+    }
+
+    function ensureSagaActivity() {
+        if ((currentView === "admin" || currentView === "shared") && !sagaLoaded) {
+            loadSagaActivity(0, true);
+        }
+    }
+
+    async function pollSagaActivity() {
+        if (eventSourceOpen || currentView === "public" || sagaRequestPending) {
+            return;
+        }
+        if (!sagaLoaded) {
+            ensureSagaActivity();
+            return;
+        }
+
+        var replace = sagaEnabled === false;
+        await loadSagaActivity(replace ? 0 : sagaCursor, replace);
+    }
+
+    function clearSagaActivity() {
+        sagaRequestSequence++;
+        sagaRequestPending = false;
+        sagaEvents = [];
+        sagaCursor = 0;
+        sagaEnabled = null;
+        sagaLoaded = false;
+        sagaLoadFailed = false;
+        pendingSagaPayloads = [];
+        setSagaCollapsed(true);
+        renderSagaFeed();
+    }
+
     function updateView(view) {
         var nextView = view === "admin" || view === "shared" ? view : "public";
         elements.publicViewBadge.hidden = nextView === "admin";
@@ -9319,11 +9636,18 @@
             ? "Shared view"
             : "Public view";
         elements.watchButton.hidden = nextView === "public";
+        elements.sagaPanel.hidden = nextView === "public";
         if (nextView === currentView) {
+            ensureSagaActivity();
             return;
         }
 
         currentView = nextView;
+        if (currentView === "public") {
+            clearSagaActivity();
+        } else {
+            ensureSagaActivity();
+        }
         dismissMapContextMenu();
         if (currentView === "public" && cinemaState) {
             exitCinema();
@@ -9615,6 +9939,7 @@
     function resumePollingAfterEventStream() {
         pollStatus();
         pollPlayers();
+        pollSagaActivity();
         if (consoleIsActive()) {
             pollConsoleLog();
         }
@@ -9683,6 +10008,9 @@
             }
             eventSourceOpen = true;
             eventSourceRetryDelay = SSE_RETRY_INITIAL_MS;
+            if ((currentView === "admin" || currentView === "shared") && sagaLoaded) {
+                loadSagaActivity(0, true);
+            }
         });
         source.addEventListener("players", function (event) {
             readEventStreamPayload(source, event, handlePlayersPayload);
@@ -9692,6 +10020,9 @@
         });
         source.addEventListener("ping", function (event) {
             readEventStreamPayload(source, event, handlePingPayload);
+        });
+        source.addEventListener("activity", function (event) {
+            readEventStreamPayload(source, event, handleActivityStreamPayload);
         });
         source.addEventListener("log", function (event) {
             readEventStreamPayload(source, event, function (payload) {
@@ -9716,6 +10047,10 @@
     bindCinemaEvents();
     bindConsoleEvents();
     bindPopupDocumentEvents();
+    elements.sagaToggle.addEventListener("click", function () {
+        setSagaCollapsed(!elements.sagaPanel.classList.contains("is-collapsed"));
+    });
+    setSagaCollapsed(true);
     elements.sidebarState.addEventListener("change", function () {
         if (!elements.sidebarState.checked ||
             !window.matchMedia("(max-width: 759px)").matches) {
@@ -9729,8 +10064,10 @@
     renderPlayerCount(latestPlayerCount);
     renderConsolePlayers();
     savedBadgeTimer = window.setInterval(renderSavedBadge, SAVED_BADGE_REFRESH_MS);
+    sagaRelativeTimer = window.setInterval(renderSagaRelativeTimes, 30000);
     startPolling(pollStatus, POLL_INTERVAL_MS);
     startPolling(pollPlayers, POLL_INTERVAL_MS);
+    startPolling(pollSagaActivity, ACTIVITY_POLL_INTERVAL_MS);
     connectEventStream();
     window.addEventListener("beforeunload", function () {
         if (cinemaState) {
@@ -9740,6 +10077,7 @@
         window.clearTimeout(hashUpdateTimer);
         window.clearTimeout(entityFocusPollTimer);
         window.clearTimeout(renderStatusFailureTimer);
+        window.clearInterval(sagaRelativeTimer);
         stopAllLazyPoiPolling();
         window.clearInterval(popupRefreshTimer);
         window.clearInterval(raidProgressTimer);

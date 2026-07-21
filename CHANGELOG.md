@@ -6,6 +6,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Added
 
+- LiveMap admin and shared views now include a default-collapsed Saga panel backed by a restart-seeded activity ring, cursor-based `GET /api/activity` history, and live `activity` SSE batches for joins, leaves, deaths, raids, world saves, and new days.
 - LiveMap now shows compact live boss-progression chips for all seven Forsaken in every view tier.
 - LiveMap now warns once when browser storage cannot save settings and shows a themed one-time update toast after plugin-version changes.
 - LiveMap layer settings now include per-category POI color palettes and a persistent POI-only marker opacity slider, with matching icon, cluster, density-dot, layer-row, and legend colors.

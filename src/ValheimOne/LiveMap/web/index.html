@@ -137,6 +137,21 @@
             <span class="sky-indicator is-sun" id="sky-indicator" role="img" aria-label="Daytime">☀</span>
         </section>
 
+        <section id="saga-panel" class="saga-panel is-collapsed" aria-labelledby="saga-heading" hidden>
+            <button id="saga-toggle" class="saga-toggle" type="button"
+                    aria-controls="saga-content" aria-expanded="false">
+                <span class="saga-heading-copy">
+                    <span class="saga-rune" aria-hidden="true">ᛋ</span>
+                    <span id="saga-heading">Saga</span>
+                </span>
+                <span id="saga-chevron" class="saga-chevron" aria-hidden="true">⌄</span>
+            </button>
+            <div id="saga-content" class="saga-content" hidden>
+                <p id="saga-note" class="saga-note">No tales recorded yet</p>
+                <ol id="saga-list" class="saga-list" role="log" aria-live="polite"></ol>
+            </div>
+        </section>
+
         <section class="players-panel" aria-labelledby="players-heading">
             <div class="section-heading">
                 <h2 id="players-heading">Players</h2>

@@ -34,7 +34,7 @@ public sealed class ActivityLogModule : IFeatureModule
             Section,
             Classification,
             enabledByDefault: true,
-            "Enable the server-side JSONL activity log. Activity data is never synchronized to clients.");
+            "Enable the server-side JSONL activity log and authenticated LiveMap Saga feed.");
         ConfigEntryInt retentionDays = _feature.Int(
             "RetentionDays",
             30,
@@ -86,6 +86,18 @@ public sealed class ActivityLogModule : IFeatureModule
     internal ActivityLogHealthSnapshot GetHealth()
     {
         return _worker.GetHealth(IsEnabled && !_shutdown);
+    }
+
+    internal bool ActivityFeedEnabled => IsEnabled && !_shutdown;
+
+    internal long LatestActivityCursor => _worker.LatestActivityCursor;
+
+    internal long CopyActivityAfter(
+        long cursor,
+        int maximum,
+        List<ActivityFeedEntry> into)
+    {
+        return _worker.CopyActivityAfter(cursor, maximum, into);
     }
 
     internal long CopyConsoleHistoryAfter(
