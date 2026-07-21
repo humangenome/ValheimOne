@@ -9,6 +9,7 @@ internal sealed class LiveMapConfig
     private readonly ConfigEntryInt _port;
     private readonly ConfigEntryInt _textureSize;
     private readonly ConfigEntryFloat _playerUpdateSeconds;
+    private readonly ConfigEntryInt _ghostRetentionDays;
     private readonly ConfigEntryBool _adminSeesAll;
     private readonly ConfigEntryString _bindIp;
     private readonly ConfigEntryString _accessToken;
@@ -30,6 +31,7 @@ internal sealed class LiveMapConfig
         ConfigEntryInt port,
         ConfigEntryInt textureSize,
         ConfigEntryFloat playerUpdateSeconds,
+        ConfigEntryInt ghostRetentionDays,
         ConfigEntryBool adminSeesAll,
         ConfigEntryString bindIp,
         ConfigEntryString accessToken,
@@ -50,6 +52,7 @@ internal sealed class LiveMapConfig
         _port = port;
         _textureSize = textureSize;
         _playerUpdateSeconds = playerUpdateSeconds;
+        _ghostRetentionDays = ghostRetentionDays;
         _adminSeesAll = adminSeesAll;
         _bindIp = bindIp;
         _accessToken = accessToken;
@@ -73,6 +76,8 @@ internal sealed class LiveMapConfig
     public int TextureSize => _textureSize.Value;
 
     public float PlayerUpdateSeconds => _playerUpdateSeconds.Value;
+
+    public int GhostRetentionDays => Math.Max(1, Math.Min(365, _ghostRetentionDays.Value));
 
     public bool AdminSeesAll => _adminSeesAll.Value;
 

@@ -53,6 +53,38 @@ public sealed class ActivityLogModule : IFeatureModule
 
     public string DataDirectory => _worker.DataDirectory;
 
+    internal void ConfigureGhostRetention(Func<int> getRetentionDays)
+    {
+        _worker.ConfigureGhostRetention(getRetentionDays);
+    }
+
+    internal void RecordPlayerGhost(
+        string characterName,
+        float x,
+        float z,
+        long lastSeenUnixMs,
+        long lastSessionSeconds,
+        bool positionShared)
+    {
+        if (_shutdown)
+        {
+            return;
+        }
+
+        _worker.UpsertGhost(
+            characterName,
+            x,
+            z,
+            lastSeenUnixMs,
+            lastSessionSeconds,
+            positionShared);
+    }
+
+    internal void CopyGhosts(List<PlayerGhostEntry> into)
+    {
+        _worker.CopyGhosts(into);
+    }
+
     public void ApplyPatches(Harmony harmony)
     {
         _ = harmony;

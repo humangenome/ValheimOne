@@ -2006,6 +2006,9 @@ internal sealed class LiveMapHttpServer
 
         PoiCatalog catalog = _getPoiCatalog();
         ResourcePoiMapSnapshot resourceSnapshot = _getResourcePoiSnapshot();
+        List<PlayerGhostEntry>? visibleGhosts = viewLevel == ViewLevel.Public
+            ? null
+            : GetVisibleGhosts(viewLevel);
         IReadOnlyList<PoiSnapshot> pois = catalog.ServedPois;
         IReadOnlyList<PoiGroupDefinition> definitions = PoiGroups.All;
         FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
@@ -2031,7 +2034,11 @@ internal sealed class LiveMapHttpServer
             }
 
             int count = catalog.GetCount(definition.Key);
-            if (definition.Resource &&
+            if (string.Equals(definition.Key, "ghosts", StringComparison.Ordinal))
+            {
+                count = visibleGhosts?.Count ?? 0;
+            }
+            else if (definition.Resource &&
                 resourceSnapshot.TryGetGroup(
                     definition.Key,
                     out ResourcePoiGroupSnapshot? resourceGroup) &&
@@ -2040,7 +2047,11 @@ internal sealed class LiveMapHttpServer
                 count = resourceGroup.Count;
             }
 
-            bool inline = !definition.Resource &&
+            bool inline = !string.Equals(
+                              definition.Key,
+                              "ghosts",
+                              StringComparison.Ordinal) &&
+                          !definition.Resource &&
                           count <= MaximumInlineLocationPoisPerGroup;
             if (!inline)
             {
@@ -2116,11 +2127,84 @@ internal sealed class LiveMapHttpServer
 
         if (!definition.Resource)
         {
+            if (string.Equals(definition.Key, "ghosts", StringComparison.Ordinal))
+            {
+                ServeGhostPoiGroup(response, viewLevel);
+                return;
+            }
+
             ServeLocationPoiGroup(response, definition);
             return;
         }
 
         ServeResourcePoiGroup(response, definition);
+    }
+
+    private void ServeGhostPoiGroup(HttpListenerResponse response, ViewLevel viewLevel)
+    {
+        List<PlayerGhostEntry> ghosts = GetVisibleGhosts(viewLevel);
+        var json = new StringBuilder(128 + (ghosts.Count * 160));
+        json.Append("{\"group\":\"ghosts\",\"label\":\"Last seen\",\"count\":");
+        json.Append(ghosts.Count.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"resource\":false,\"scanning\":false,\"pois\":[");
+        for (int index = 0; index < ghosts.Count; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            PlayerGhostEntry ghost = ghosts[index];
+            json.Append('{');
+            json.Append("\"name\":").Append(JsonWriter.Quote(ghost.CharacterName));
+            json.Append(",\"x\":").Append(JsonWriter.NumberOneDecimal(ghost.X));
+            json.Append(",\"z\":").Append(JsonWriter.NumberOneDecimal(ghost.Z));
+            json.Append(",\"lastSeenUnixMs\":").Append(
+                ghost.LastSeenUnixMs.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"lastSessionSeconds\":").Append(
+                ghost.LastSessionSeconds.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"totalPlaySeconds\":").Append(
+                ghost.TotalPlaySeconds.ToString(CultureInfo.InvariantCulture));
+            json.Append('}');
+        }
+
+        json.Append("]}");
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private List<PlayerGhostEntry> GetVisibleGhosts(ViewLevel viewLevel)
+    {
+        var ghosts = new List<PlayerGhostEntry>();
+        if (viewLevel == ViewLevel.Public)
+        {
+            return ghosts;
+        }
+
+        _activityLog.CopyGhosts(ghosts);
+        LiveMapPlayerSnapshot[] onlinePlayers = _getSnapshot().Players;
+        var onlineNames = new HashSet<string>(StringComparer.Ordinal);
+        for (int index = 0; index < onlinePlayers.Length; index++)
+        {
+            string name = (onlinePlayers[index].Name ?? string.Empty).Trim();
+            if (name.Length > 0)
+            {
+                onlineNames.Add(name);
+            }
+        }
+
+        ghosts.RemoveAll(ghost =>
+            onlineNames.Contains(ghost.CharacterName) ||
+            (viewLevel == ViewLevel.Shared &&
+             _respectInGameVisibility &&
+             !ghost.PositionShared));
+        ghosts.Sort((left, right) =>
+        {
+            int newestFirst = right.LastSeenUnixMs.CompareTo(left.LastSeenUnixMs);
+            return newestFirst != 0
+                ? newestFirst
+                : string.CompareOrdinal(left.CharacterName, right.CharacterName);
+        });
+        return ghosts;
     }
 
     private void ServeLocationPoiGroup(

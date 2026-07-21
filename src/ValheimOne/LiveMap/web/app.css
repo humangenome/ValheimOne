@@ -1141,6 +1141,11 @@ input {
     font-size: 15px;
 }
 
+.layer-swatch-ghosts {
+    color: #a69e91;
+    opacity: 0.72;
+}
+
 .layer-swatch-portal-network {
     color: var(--accent);
     font-size: 16px;
@@ -2484,9 +2489,31 @@ body.is-pinging #map .leaflet-overlay-pane path {
 
 .poi-div-icon,
 .pin-div-icon,
-.entity-div-icon {
+.entity-div-icon,
+.ghost-div-icon {
     border: 0;
     background: transparent;
+}
+
+.ghost-marker-shell {
+    display: grid;
+    width: 22px;
+    height: 22px;
+    place-items: center;
+    border: 1px dashed rgba(186, 177, 162, 0.5);
+    border-radius: 50% 50% 44% 44%;
+    background: rgba(29, 27, 25, 0.72);
+    box-shadow: 0 2px 7px rgba(0, 0, 0, 0.42);
+    color: #b8b0a3;
+    filter: grayscale(0.72) saturate(0.35);
+    transform: scale(var(--marker-scale, 1));
+    transform-origin: center;
+}
+
+.ghost-marker-shell > svg {
+    display: block;
+    width: 15px;
+    height: 15px;
 }
 
 .poi-marker-shell {
@@ -2712,7 +2739,8 @@ body.is-pinging #map .leaflet-overlay-pane path {
 }
 
 #map.is-density-dots .poi-marker-shell,
-#map.is-density-dots .entity-marker-shell {
+#map.is-density-dots .entity-marker-shell,
+#map.is-density-dots .ghost-marker-shell {
     width: 8px;
     height: 8px;
     border: 1px solid var(--background);
@@ -2724,12 +2752,14 @@ body.is-pinging #map .leaflet-overlay-pane path {
 }
 
 #map.is-density-dots .poi-marker-shell > svg,
-#map.is-density-dots .entity-marker-shell > svg {
+#map.is-density-dots .entity-marker-shell > svg,
+#map.is-density-dots .ghost-marker-shell > svg {
     display: none;
 }
 
 #map.is-density-dots .poi-div-icon:not(.poi-cluster-icon),
-#map.is-density-dots .entity-div-icon {
+#map.is-density-dots .entity-div-icon,
+#map.is-density-dots .ghost-div-icon {
     display: grid;
     place-items: center;
 }
@@ -2917,8 +2947,19 @@ body.is-pinging #map .leaflet-overlay-pane path {
 }
 
 .leaflet-tooltip.map-tooltip::before,
-.leaflet-tooltip.player-tooltip::before {
+.leaflet-tooltip.player-tooltip::before,
+.leaflet-tooltip.ghost-tooltip::before {
     display: none;
+}
+
+.leaflet-tooltip.ghost-tooltip {
+    border-color: rgba(174, 166, 151, 0.34);
+    background: rgba(24, 22, 20, 0.78);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+    color: #aaa295;
+    font-size: 10px;
+    font-weight: 500;
+    opacity: 0.78;
 }
 
 .leaflet-tooltip.poi-tooltip {

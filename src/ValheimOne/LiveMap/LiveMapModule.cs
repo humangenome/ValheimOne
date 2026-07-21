@@ -32,6 +32,10 @@ public sealed class LiveMapModule : IFeatureModule
             "PlayerUpdateSeconds",
             2f,
             "Seconds between server-side player snapshot updates.");
+        ConfigEntryInt ghostRetentionDays = _feature.Int(
+            "GhostRetentionDays",
+            14,
+            "Days to retain last-seen player positions and playtime, clamped to 1..365.");
         ConfigEntryBool adminSeesAll = _feature.Bool(
             "AdminSeesAll",
             false,
@@ -109,6 +113,7 @@ public sealed class LiveMapModule : IFeatureModule
             port,
             textureSize,
             playerUpdateSeconds,
+            ghostRetentionDays,
             adminSeesAll,
             bindIp,
             accessToken,
@@ -125,6 +130,7 @@ public sealed class LiveMapModule : IFeatureModule
             allowAllCommands,
             consoleLogLines,
             statusPublic);
+        activityLog.ConfigureGhostRetention(() => _config.GhostRetentionDays);
         registry.EffectiveValuesChanged += MapPingPatch.RefreshChatConfiguration;
         VoCommands.Initialize(registry, _config, activityLog, _log);
     }

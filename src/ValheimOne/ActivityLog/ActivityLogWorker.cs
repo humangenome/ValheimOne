@@ -21,6 +21,7 @@ internal sealed class ActivityLogWorker
     private readonly object _queueLock = new object();
     private readonly object _historyLock = new object();
     private readonly object _activityFeedLock = new object();
+    private readonly object _ghostLock = new object();
     private readonly Queue<ActivityEventRecord> _queue =
         new Queue<ActivityEventRecord>(QueueCapacity);
     private readonly List<ConsoleHistoryEntry> _history =
@@ -32,6 +33,10 @@ internal sealed class ActivityLogWorker
     private readonly Func<int> _getRetentionDays;
     private readonly ModLogger _log;
     private readonly string _historyPath;
+    private readonly string _ghostPath;
+    private readonly Dictionary<string, PlayerGhostEntry> _ghosts =
+        new Dictionary<string, PlayerGhostEntry>(StringComparer.Ordinal);
+    private Func<int> _getGhostRetentionDays = () => 14;
     private Thread? _thread;
     private StreamWriter? _activityWriter;
     private DateTime _activityDateUtc;
@@ -41,6 +46,7 @@ internal sealed class ActivityLogWorker
     private long _nextHistoryId;
     private long _nextActivityFeedId;
     private int _historyDirty;
+    private int _ghostDirty;
     private int _overflowWarningLogged;
     private int _stopping;
 
@@ -53,6 +59,7 @@ internal sealed class ActivityLogWorker
         _getRetentionDays = getRetentionDays;
         _log = log;
         _historyPath = Path.Combine(dataDirectory, "console-history.json");
+        _ghostPath = Path.Combine(dataDirectory, "ghosts.json");
         LoadConsoleHistory();
         LoadRecentActivity();
     }
@@ -66,6 +73,12 @@ internal sealed class ActivityLogWorker
             return;
         }
 
+        LoadGhosts();
+        if (Volatile.Read(ref _ghostDirty) != 0)
+        {
+            _queueSignal.Set();
+        }
+
         var thread = new Thread(Run)
         {
             IsBackground = true,
@@ -73,6 +86,97 @@ internal sealed class ActivityLogWorker
         };
         _thread = thread;
         thread.Start();
+    }
+
+    public void ConfigureGhostRetention(Func<int> getRetentionDays)
+    {
+        if (getRetentionDays == null)
+        {
+            throw new ArgumentNullException(nameof(getRetentionDays));
+        }
+
+        lock (_ghostLock)
+        {
+            _getGhostRetentionDays = getRetentionDays;
+        }
+    }
+
+    public void UpsertGhost(
+        string characterName,
+        float x,
+        float z,
+        long lastSeenUnixMs,
+        long lastSessionSeconds,
+        bool positionShared)
+    {
+        if (Volatile.Read(ref _stopping) != 0 ||
+            string.IsNullOrWhiteSpace(characterName) ||
+            float.IsNaN(x) || float.IsInfinity(x) ||
+            float.IsNaN(z) || float.IsInfinity(z) ||
+            lastSeenUnixMs <= 0L)
+        {
+            return;
+        }
+
+        string name = characterName.Trim();
+        long sessionSeconds = Math.Max(0L, lastSessionSeconds);
+        lock (_ghostLock)
+        {
+            bool pruned = PruneExpiredGhostsLocked(lastSeenUnixMs);
+            long totalPlaySeconds = sessionSeconds;
+            if (_ghosts.TryGetValue(name, out PlayerGhostEntry? existing))
+            {
+                if (existing.LastSeenUnixMs >= lastSeenUnixMs)
+                {
+                    if (pruned)
+                    {
+                        Volatile.Write(ref _ghostDirty, 1);
+                        _queueSignal.Set();
+                    }
+
+                    return;
+                }
+
+                totalPlaySeconds = SaturatingAdd(existing.TotalPlaySeconds, sessionSeconds);
+            }
+
+            _ghosts[name] = new PlayerGhostEntry(
+                name,
+                x,
+                z,
+                lastSeenUnixMs,
+                sessionSeconds,
+                totalPlaySeconds,
+                positionShared);
+            Volatile.Write(ref _ghostDirty, 1);
+        }
+
+        _queueSignal.Set();
+    }
+
+    public void CopyGhosts(List<PlayerGhostEntry> into)
+    {
+        into.Clear();
+        bool pruned;
+        lock (_ghostLock)
+        {
+            pruned = PruneExpiredGhostsLocked(
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            foreach (PlayerGhostEntry entry in _ghosts.Values)
+            {
+                into.Add(entry);
+            }
+
+            if (pruned)
+            {
+                Volatile.Write(ref _ghostDirty, 1);
+            }
+        }
+
+        if (pruned)
+        {
+            _queueSignal.Set();
+        }
     }
 
     public void EnqueueActivity(ActivityEventRecord record)
@@ -314,6 +418,19 @@ internal sealed class ActivityLogWorker
                 throw;
             }
         }
+
+        if (Interlocked.Exchange(ref _ghostDirty, 0) != 0)
+        {
+            try
+            {
+                PersistGhosts();
+            }
+            catch
+            {
+                Volatile.Write(ref _ghostDirty, 1);
+                throw;
+            }
+        }
     }
 
     private List<ActivityEventRecord> DrainPending()
@@ -474,6 +591,131 @@ internal sealed class ActivityLogWorker
         {
             File.Move(temporaryPath, _historyPath);
         }
+    }
+
+    private void PersistGhosts()
+    {
+        List<PlayerGhostEntry> snapshot;
+        lock (_ghostLock)
+        {
+            PruneExpiredGhostsLocked(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            snapshot = new List<PlayerGhostEntry>(_ghosts.Values);
+        }
+
+        snapshot.Sort((left, right) => string.CompareOrdinal(
+            left.CharacterName,
+            right.CharacterName));
+        var json = new StringBuilder(16 + (snapshot.Count * 176));
+        json.Append('[');
+        for (int index = 0; index < snapshot.Count; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            PlayerGhostEntry entry = snapshot[index];
+            json.Append('{');
+            json.Append("\"characterName\":").Append(JsonWriter.Quote(entry.CharacterName));
+            json.Append(",\"x\":").Append(JsonWriter.Number(entry.X));
+            json.Append(",\"z\":").Append(JsonWriter.Number(entry.Z));
+            json.Append(",\"lastSeenUnixMs\":").Append(
+                entry.LastSeenUnixMs.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"lastSessionSeconds\":").Append(
+                entry.LastSessionSeconds.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"totalPlaySeconds\":").Append(
+                entry.TotalPlaySeconds.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"positionShared\":").Append(
+                entry.PositionShared ? "true" : "false");
+            json.Append('}');
+        }
+
+        json.Append(']');
+        string temporaryPath = _ghostPath + ".tmp";
+        File.WriteAllText(
+            temporaryPath,
+            json.ToString(),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        if (File.Exists(_ghostPath))
+        {
+            File.Replace(temporaryPath, _ghostPath, null);
+        }
+        else
+        {
+            File.Move(temporaryPath, _ghostPath);
+        }
+    }
+
+    private void LoadGhosts()
+    {
+        if (!File.Exists(_ghostPath))
+        {
+            return;
+        }
+
+        try
+        {
+            string json = File.ReadAllText(_ghostPath, Encoding.UTF8);
+            List<PlayerGhostEntry> loaded = PlayerGhostJsonParser.Parse(json);
+            lock (_ghostLock)
+            {
+                _ghosts.Clear();
+                for (int index = 0; index < loaded.Count; index++)
+                {
+                    PlayerGhostEntry entry = loaded[index];
+                    if (!_ghosts.TryGetValue(
+                            entry.CharacterName,
+                            out PlayerGhostEntry? existing) ||
+                        entry.LastSeenUnixMs > existing.LastSeenUnixMs)
+                    {
+                        _ghosts[entry.CharacterName] = entry;
+                    }
+                }
+
+                if (PruneExpiredGhostsLocked(
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
+                {
+                    Volatile.Write(ref _ghostDirty, 1);
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            _log.Warning(
+                $"[ActivityLog] player ghosts could not be loaded " +
+                $"({exception.GetType().Name}); starting with an empty journal.");
+            lock (_ghostLock)
+            {
+                _ghosts.Clear();
+            }
+        }
+    }
+
+    private bool PruneExpiredGhostsLocked(long nowUnixMs)
+    {
+        int retentionDays = Math.Max(1, Math.Min(365, _getGhostRetentionDays()));
+        long retentionMs = retentionDays * 24L * 60L * 60L * 1000L;
+        long oldestRetainedUnixMs = nowUnixMs - retentionMs;
+        var expiredNames = new List<string>();
+        foreach (KeyValuePair<string, PlayerGhostEntry> pair in _ghosts)
+        {
+            if (pair.Value.LastSeenUnixMs < oldestRetainedUnixMs)
+            {
+                expiredNames.Add(pair.Key);
+            }
+        }
+
+        for (int index = 0; index < expiredNames.Count; index++)
+        {
+            _ghosts.Remove(expiredNames[index]);
+        }
+
+        return expiredNames.Count > 0;
+    }
+
+    private static long SaturatingAdd(long left, long right)
+    {
+        return left > long.MaxValue - right ? long.MaxValue : left + right;
     }
 
     private void LoadConsoleHistory()

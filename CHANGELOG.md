@@ -6,6 +6,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Added
 
+- LiveMap admin and shared views now include a default-off Last seen layer with privacy-aware offline player ghost markers, relative disconnect times, per-session and accumulated playtime, and restart-safe retained positions.
 - LiveMap can now mirror player Say and Shout chat as transient authenticated-view map bubbles and Saga lines through a privacy-sensitive `MirrorChat` opt-in that is disabled by default and never persists player speech.
 - LiveMap admin and shared views now include a default-collapsed Saga panel backed by a restart-seeded activity ring, cursor-based `GET /api/activity` history, and live `activity` SSE batches for joins, leaves, deaths, raids, world saves, and new days.
 - LiveMap now shows compact live boss-progression chips for all seven Forsaken in every view tier.

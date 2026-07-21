@@ -225,7 +225,8 @@
         structure_ruins: { label: "Ruins & Villages", glyph: "▥", category: "structures" },
         structure_mistlands: { label: "Mistlands Remains", glyph: "†", category: "structures" },
         structure_runestone: { label: "Runestones & Lore", glyph: "ᚱ", category: "structures" },
-        misc: { label: "Misc", glyph: "◇", category: "structures" }
+        misc: { label: "Misc", glyph: "◇", category: "structures" },
+        ghosts: { label: "Last seen", glyph: "♙", category: "live", dynamic: true }
     };
 
     var POI_GROUP_ORDER = [];
@@ -234,6 +235,7 @@
             POI_GROUP_ORDER.push(group);
         });
     });
+    POI_GROUP_ORDER.push("ghosts");
 
     var ENTITY_GROUP_ORDER = ["ship", "cart", "portal", "ward", "bed", "tombstone"];
     var ENTITY_GROUPS = {
@@ -277,6 +279,7 @@
         players: true,
         pins: true,
         trails: false,
+        ghosts: false,
         spawn: true,
         trader: true,
         boss: true,
@@ -5427,6 +5430,9 @@
         var liveBody = appendLayerSection("live", "Live", liveFeeds);
         appendLayerRow(liveBody, "players", "Players", "●", "players");
         appendLayerRow(liveBody, "trails", "Trails", "〰", "trails");
+        if (hasLiveAccess() && availablePoiGroups.has("ghosts")) {
+            appendLayerRow(liveBody, "ghosts", "Last seen", "♙", "ghosts");
+        }
         if (hasLiveAccess() && entityAvailability !== "unavailable") {
             ENTITY_GROUP_ORDER.forEach(function (group) {
                 appendLayerRow(
@@ -7717,6 +7723,31 @@
         return days + "d " + (hours % 24) + "h ago";
     }
 
+    function formatPlayDuration(totalSeconds) {
+        var minutes = Math.max(0, Math.floor(totalSeconds / 60));
+        var hours = Math.floor(minutes / 60);
+        return hours > 0
+            ? hours + "h " + (minutes % 60) + "m"
+            : minutes + "m";
+    }
+
+    function buildGhostPopup(ghost) {
+        var ageSec = Math.max(0, (Date.now() - ghost.lastSeenUnixMs) / 1000);
+        return popupShell({
+            feed: "pois",
+            glyph: "♙",
+            kicker: "LAST SEEN",
+            rows: [{
+                label: "Last seen",
+                value: formatRelativeAge(ageSec)
+            }, {
+                label: "Played",
+                value: formatPlayDuration(ghost.totalPlaySeconds)
+            }, positionPopupRow(ghost.x, ghost.z)],
+            title: ghost.title
+        });
+    }
+
     function lastDeathForPlayer(player) {
         if (!player.name) {
             return null;
@@ -8412,17 +8443,31 @@
             state = "respawning";
         }
         var resource = isResourcePoiGroup(group);
+        var lastSeenUnixMs = finiteNumberOrNull(poi.lastSeenUnixMs);
+        var lastSessionSeconds = finiteNumberOrNull(poi.lastSessionSeconds);
+        var totalPlaySeconds = finiteNumberOrNull(poi.totalPlaySeconds);
+        if (group === "ghosts" && (lastSeenUnixMs === null ||
+            lastSessionSeconds === null || totalPlaySeconds === null)) {
+            return null;
+        }
         return {
             available: available,
             explored: poi.explored !== false,
             group: group,
             latLng: worldToLatLng(Number(poi.x), Number(poi.z)),
+            lastSeenUnixMs: lastSeenUnixMs,
+            lastSessionSeconds: lastSessionSeconds,
             memberCount: memberCount,
             minedPct: minedPct,
             name: typeof poi.name === "string" ? poi.name : "",
             placed: poi.placed !== false,
             state: state,
-            title: resource ? resourcePoiTitle(group) : prettifyPoiName(poi.name),
+            title: group === "ghosts"
+                ? (typeof poi.name === "string" && poi.name.trim()
+                    ? poi.name.trim()
+                    : "Unknown viking")
+                : resource ? resourcePoiTitle(group) : prettifyPoiName(poi.name),
+            totalPlaySeconds: totalPlaySeconds,
             x: Number(poi.x),
             z: Number(poi.z)
         };
@@ -8444,6 +8489,10 @@
     }
 
     function createPoiMarker(record) {
+        if (record.group === "ghosts") {
+            return createGhostMarker(record);
+        }
+
         var dimmed = resourcePoiIsDimmed(record);
         var markerMarkup = iconMarkup(
             poiIconKey(record),
@@ -8494,6 +8543,36 @@
         bindMapPopup(marker, function () {
             return buildPoiPopup(record);
         }, { kind: "poi" });
+        record.marker = marker;
+        return marker;
+    }
+
+    function createGhostMarker(record) {
+        var icon = L.divIcon({
+            className: "ghost-div-icon",
+            html: '<span class="ghost-marker-shell" aria-hidden="true">' +
+                iconMarkup("ghosts", "♙") + "</span>",
+            iconAnchor: [11, 11],
+            iconSize: [22, 22]
+        });
+        var marker = L.marker(record.latLng, {
+            icon: icon,
+            opacity: 0.62,
+            pane: "poiPane",
+            title: record.title
+        });
+        var tooltip = document.createElement("span");
+        tooltip.textContent = record.title;
+        marker.bindTooltip(tooltip, {
+            className: "ghost-tooltip",
+            direction: "top",
+            offset: [0, -8],
+            opacity: 1,
+            permanent: true
+        });
+        bindMapPopup(marker, function () {
+            return buildGhostPopup(record);
+        }, { kind: "ghost" });
         record.marker = marker;
         return marker;
     }
@@ -8553,7 +8632,7 @@
         records.forEach(function (record) {
             record.marker = null;
         });
-        if (!useClusters) {
+        if (!useClusters || group === "ghosts") {
             records.forEach(function (record) {
                 createPoiMarker(record).addTo(layer);
             });
@@ -8628,6 +8707,12 @@
             metadata && metadata.inline === false);
     }
 
+    function lazyPoiRefreshesWhileVisible(group) {
+        return isResourcePoiGroup(group) ||
+            (Object.prototype.hasOwnProperty.call(POI_GROUPS, group) &&
+             POI_GROUPS[group].dynamic === true);
+    }
+
     function stopLazyPoiPolling(group) {
         var state = lazyPoiStates.get(group);
         if (!state) {
@@ -8666,6 +8751,7 @@
 
             var state = getLazyPoiState(group);
             var resource = isResourcePoiGroup(group);
+            var refreshes = lazyPoiRefreshesWhileVisible(group);
             if (state.requestPending || state.timer) {
                 return;
             }
@@ -8674,7 +8760,7 @@
                 scheduleLazyPoiPoll(group, 0);
                 return;
             }
-            if (resource) {
+            if (refreshes) {
                 scheduleLazyPoiPoll(
                     group,
                     Math.max(
@@ -8695,6 +8781,7 @@
 
         var state = getLazyPoiState(group);
         var resource = isResourcePoiGroup(group);
+        var refreshes = lazyPoiRefreshesWhileVisible(group);
         if (state.requestPending) {
             return;
         }
@@ -8742,6 +8829,8 @@
                 nextDelay = state.scanning
                     ? RESOURCE_POI_POLL_INTERVAL_MS
                     : RESOURCE_POI_REFRESH_INTERVAL_MS;
+            } else if (refreshes) {
+                nextDelay = RESOURCE_POI_REFRESH_INTERVAL_MS;
             }
             feedLastUpdated.pois = Date.now();
             setFeedState("pois", true);
@@ -8754,7 +8843,7 @@
             state.scanning = resource && !state.loaded;
         } finally {
             state.requestPending = false;
-            if (resource && lazyPoiStates.get(group) === state &&
+            if (refreshes && lazyPoiStates.get(group) === state &&
                 lazyPoiLoadingAllowed(group)) {
                 scheduleLazyPoiPoll(group, nextDelay);
             }
@@ -8763,7 +8852,7 @@
     }
 
     async function loadPoisForCurrentView() {
-        var accessKey = hasLiveAccess() ? "live" : "public";
+        var accessKey = currentView;
         if (!map || !currentView || lastPoiRequestedView === accessKey) {
             return;
         }
@@ -8777,7 +8866,7 @@
         try {
             var payload = await fetchJson("/api/pois");
             if (requestSequence !== poiRequestSequence ||
-                requestView !== (hasLiveAccess() ? "live" : "public")) {
+                requestView !== currentView) {
                 return;
             }
 
@@ -8846,7 +8935,7 @@
             syncLayerVisibility();
         } catch (error) {
             if (requestSequence === poiRequestSequence &&
-                requestView === (hasLiveAccess() ? "live" : "public")) {
+                requestView === currentView) {
                 poiLoadPending = false;
                 setFeedState("pois", false);
                 renderLayerRows();

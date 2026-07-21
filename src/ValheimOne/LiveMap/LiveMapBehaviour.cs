@@ -482,6 +482,15 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
                 }
             }
 
+            if (!string.IsNullOrWhiteSpace(peer.m_playerName))
+            {
+                motion.CharacterName = peer.m_playerName.Trim();
+            }
+
+            motion.PositionShared = peer.m_publicRefPos;
+            motion.CurrentX = position.x;
+            motion.CurrentZ = position.z;
+
             string biome = worldGenerator == null
                 ? string.Empty
                 : worldGenerator.GetBiome(position.x, position.z).ToString();
@@ -531,7 +540,22 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
 
         for (int index = 0; index < departedIds.Count; index++)
         {
-            _motion.Remove(departedIds[index]);
+            long departedId = departedIds[index];
+            if (_motion.TryGetValue(departedId, out PlayerMotionState? departed))
+            {
+                long sessionSeconds = Math.Max(
+                    0L,
+                    (nowMs - departed.SessionStartUnixMs) / 1000L);
+                _activityLog?.RecordPlayerGhost(
+                    departed.CharacterName,
+                    departed.CurrentX,
+                    departed.CurrentZ,
+                    nowMs,
+                    sessionSeconds,
+                    departed.PositionShared);
+            }
+
+            _motion.Remove(departedId);
         }
 
         _snapshot = new LiveMapSnapshot(
@@ -619,6 +643,12 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
 
     private sealed class PlayerMotionState
     {
+        public string CharacterName { get; set; } = string.Empty;
+
+        public float CurrentX { get; set; }
+
+        public float CurrentZ { get; set; }
+
         public float LastX { get; set; }
 
         public float LastZ { get; set; }
@@ -634,5 +664,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         public float SpeedMps { get; set; }
 
         public float HeadingDeg { get; set; }
+
+        public bool PositionShared { get; set; }
     }
 }
