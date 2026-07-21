@@ -122,11 +122,21 @@
         spawn: { label: "Spawn", glyph: "⌂", category: "bosses" },
         boss: { label: "Boss altars", glyph: "☠", category: "bosses" },
         trader: { label: "Traders", glyph: "◉", category: "bosses" },
-        dungeon_crypt: { label: "Burial Chambers", glyph: "∩", category: "dungeons" },
-        dungeon_sunkencrypt: { label: "Sunken Crypts", glyph: "≋", category: "dungeons" },
-        dungeon_trollcave: { label: "Troll Caves", glyph: "△", category: "dungeons" },
-        dungeon_frostcave: { label: "Frost Caves", glyph: "❄", category: "dungeons" },
-        dungeon_mine: { label: "Infested Mines", glyph: "⛏", category: "dungeons" },
+        dungeon_crypt: {
+            label: "Burial Chambers", glyph: "∩", category: "dungeons", dungeonEntrance: true
+        },
+        dungeon_sunkencrypt: {
+            label: "Sunken Crypts", glyph: "≋", category: "dungeons", dungeonEntrance: true
+        },
+        dungeon_trollcave: {
+            label: "Troll Caves", glyph: "△", category: "dungeons", dungeonEntrance: true
+        },
+        dungeon_frostcave: {
+            label: "Frost Caves", glyph: "❄", category: "dungeons", dungeonEntrance: true
+        },
+        dungeon_mine: {
+            label: "Infested Mines", glyph: "⛏", category: "dungeons", dungeonEntrance: true
+        },
         dungeon_ashlands: { label: "Ashlands Ruins", glyph: "♨", category: "dungeons" },
         spawner_greydwarf: {
             label: "Greydwarf Nests", glyph: "♣", category: "spawners", resource: true
@@ -7044,6 +7054,11 @@
             POI_GROUPS[group].resource === true;
     }
 
+    function isDungeonEntrancePoiGroup(group) {
+        return Object.prototype.hasOwnProperty.call(POI_GROUPS, group) &&
+            POI_GROUPS[group].dungeonEntrance === true;
+    }
+
     function prettifyPoiName(name) {
         var pretty = typeof name === "string" ? name.trim() : "";
         if (!pretty) {
@@ -7499,15 +7514,26 @@
             record.available === 0 || record.minedPct >= 100;
     }
 
+    function dungeonPoiPlayerCount(record) {
+        if (!firstPlayersPayloadReceived || !isDungeonEntrancePoiGroup(record.group)) {
+            return 0;
+        }
+        return nearbyPlayers(record.x, record.z, 15).length;
+    }
+
     function buildPoiPopup(record) {
         var rows = [];
         var resource = isResourcePoiGroup(record.group);
         var stateText = resource ? resourcePoiStateText(record) : "";
+        var dungeonPlayerCount = dungeonPoiPlayerCount(record);
         if (stateText) {
             rows.push({ label: "State", value: stateText });
         }
         if (record.memberCount > 1 && record.group.indexOf("forage_") !== 0) {
             rows.push({ label: "Cluster", value: "×" + record.memberCount });
+        }
+        if (dungeonPlayerCount > 0) {
+            rows.push({ label: "Vikings inside", value: String(dungeonPlayerCount) });
         }
         rows.push(positionPopupRow(record.x, record.z));
         return popupShell({
@@ -7985,6 +8011,11 @@
             (record.memberCount > 1 && record.group.indexOf("forage_") !== 0
                 ? " ×" + record.memberCount
                 : "");
+        var tooltipCardOptions = {
+            fallbackGlyph: POI_GROUPS[record.group].glyph,
+            iconKey: poiIconKey(record),
+            title: record.title
+        };
         var marker = L.marker(record.latLng, {
             icon: icon,
             opacity: (record.placed ? 1 : 0.55) * (record.explored ? 1 : 0.45) *
@@ -7993,15 +8024,18 @@
         });
         var tooltipContent = document.createElement("span");
         tooltipContent.textContent = hoverText;
-        bindMarkerTooltip(marker, tooltipContent, {
-            fallbackGlyph: POI_GROUPS[record.group].glyph,
-            iconKey: poiIconKey(record),
-            title: record.title
-        }, {
+        bindMarkerTooltip(marker, tooltipContent, tooltipCardOptions, {
             className: "map-tooltip poi-tooltip",
             direction: "top",
             offset: [0, -10],
             opacity: 1
+        });
+        marker.on("tooltipopen", function () {
+            var dungeonPlayerCount = dungeonPoiPlayerCount(record);
+            var freshHoverText = hoverText + (dungeonPlayerCount > 0
+                ? " · " + dungeonPlayerCount + " inside"
+                : "");
+            updateMarkerTooltip(marker, freshHoverText, tooltipCardOptions);
         });
         bindMapPopup(marker, function () {
             return buildPoiPopup(record);

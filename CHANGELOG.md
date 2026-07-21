@@ -6,6 +6,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Added
 
+- LiveMap dungeon entrance popups and hover cards now show when vikings are inside.
 - LiveMap moving ships now cast a dashed gold 30-meter bow-line along their current heading in both icon and density-dot views.
 - LiveMap now offers a themed desktop right-click map menu for copying coordinates, starting a measurement, centering the view, and sending direct in-game pings for admins.
 - LiveMap raid popups now show a live gold progress bar with the event's remaining time.
