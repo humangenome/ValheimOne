@@ -1,3 +1,4 @@
+using System;
 using HarmonyLib;
 using UnityEngine;
 using ValheimOne.ActivityLog;
@@ -13,10 +14,20 @@ public sealed class LiveMapModule : IFeatureModule
     private readonly LiveMapConfig _config;
     private readonly ActivityLogModule _activityLog;
     private readonly ModLogger _log;
+    private readonly FeatureRegistry _registry;
+    private readonly string _dataDirectory;
+    private readonly object _webPinStoreLock = new object();
+    private WebPinStore? _webPinStore;
+    private bool _shutdown;
 
-    public LiveMapModule(FeatureRegistry registry, ActivityLogModule activityLog)
+    public LiveMapModule(
+        FeatureRegistry registry,
+        ActivityLogModule activityLog,
+        string dataDirectory)
     {
+        _registry = registry;
         _activityLog = activityLog;
+        _dataDirectory = dataDirectory;
         _log = new ModLogger(BepInEx.Logging.Logger.CreateLogSource("ValheimOne.LiveMap"));
         _feature = registry.Register(Name, Section, Classification);
 
@@ -58,6 +69,15 @@ public sealed class LiveMapModule : IFeatureModule
             "PublicView",
             true,
             "Serve a read-only public map view to tokenless requests.");
+        ConfigEntryBool sharedPinEditing = _feature.Bool(
+            "SharedPinEditing",
+            true,
+            "Shared-view visitors may add web pins and edit/delete their own; " +
+            "admins always edit everything.");
+        ConfigEntryBool publicWebPins = _feature.Bool(
+            "PublicWebPins",
+            false,
+            "Expose web pins read-only to the public view.");
         ConfigEntryBool mirrorChat = _feature.Bool(
             "MirrorChat",
             false,
@@ -119,6 +139,8 @@ public sealed class LiveMapModule : IFeatureModule
             accessToken,
             shareToken,
             publicView,
+            sharedPinEditing,
+            publicWebPins,
             mirrorChat,
             respectInGameVisibility,
             publicShowPlayerNames,
@@ -132,6 +154,8 @@ public sealed class LiveMapModule : IFeatureModule
             statusPublic);
         activityLog.ConfigureGhostRetention(() => _config.GhostRetentionDays);
         registry.EffectiveValuesChanged += MapPingPatch.RefreshChatConfiguration;
+        registry.EffectiveValuesChanged += SynchronizeWebPinStore;
+        SynchronizeWebPinStore();
         VoCommands.Initialize(registry, _config, activityLog, _log);
     }
 
@@ -142,6 +166,17 @@ public sealed class LiveMapModule : IFeatureModule
     public bool IsEnabled => _feature.Enabled.Value;
 
     public FeatureClassification Classification => FeatureClassification.ServerAuthoritative;
+
+    internal WebPinStore? WebPinStore
+    {
+        get
+        {
+            lock (_webPinStoreLock)
+            {
+                return _webPinStore;
+            }
+        }
+    }
 
     public void ApplyPatches(Harmony harmony)
     {
@@ -167,6 +202,50 @@ public sealed class LiveMapModule : IFeatureModule
             _config,
             _activityLog,
             _log,
-            () => _feature.Enabled.Value);
+            () => _feature.Enabled.Value,
+            () => WebPinStore);
+    }
+
+    public void Shutdown()
+    {
+        WebPinStore? store;
+        lock (_webPinStoreLock)
+        {
+            if (_shutdown)
+            {
+                return;
+            }
+
+            _shutdown = true;
+            _registry.EffectiveValuesChanged -= SynchronizeWebPinStore;
+            store = _webPinStore;
+            _webPinStore = null;
+        }
+
+        store?.Dispose();
+    }
+
+    private void SynchronizeWebPinStore()
+    {
+        WebPinStore? storeToDispose = null;
+        lock (_webPinStoreLock)
+        {
+            if (_shutdown)
+            {
+                return;
+            }
+
+            if (_feature.Enabled.Value)
+            {
+                _webPinStore ??= new WebPinStore(_dataDirectory, _log);
+            }
+            else
+            {
+                storeToDispose = _webPinStore;
+                _webPinStore = null;
+            }
+        }
+
+        storeToDispose?.Dispose();
     }
 }

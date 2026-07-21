@@ -43,6 +43,7 @@
     var LEGACY_LAYER_STORAGE_KEY = "vo-livemap-layers";
     var LEGACY_MINIMAP_STORAGE_KEY = "vo-livemap-minimap";
     var MOTD_VERSION_STORAGE_KEY = "vo-livemap-motd-version";
+    var WEB_PIN_AUTHOR_STORAGE_KEY = "webPinAuthor";
     var TAB_SESSION_KEY = "vo-livemap-active-tab";
     var CONSOLE_CATEGORY_ORDER = ["server", "players", "moderation", "world", "diagnostics"];
     var CONSOLE_CATEGORY_LABELS = {
@@ -70,6 +71,28 @@
         forage: "var(--moss)",
         structures: "var(--marker-muted)"
     };
+    var WEB_PIN_ICONS = [
+        "pin",
+        "boss",
+        "bed",
+        "portal",
+        "ship",
+        "cart",
+        "tombstone",
+        "trader",
+        "spawn",
+        "ward",
+        "dungeon_crypt",
+        "dungeon_mine",
+        "ore_copper",
+        "ore_iron",
+        "ore_silver",
+        "forage_berries",
+        "forage_mushroom",
+        "structure_camp",
+        "structure_ruins",
+        "spawner_greydwarf"
+    ];
 
     var BOSS_PROGRESSION = [
         { name: "Eikthyr", key: "defeated_eikthyr", iconKey: "boss_eikthyr" },
@@ -278,6 +301,7 @@
     var LAYER_DEFAULTS = {
         players: true,
         pins: true,
+        webpins: true,
         trails: false,
         ghosts: false,
         spawn: true,
@@ -377,6 +401,10 @@
     var minimapFrame = 0;
     var minimapSetOpen = null;
     var measureButton = null;
+    var webPinButton = null;
+    var webPinPlacementArmed = false;
+    var webPinDialog = null;
+    var webPinDialogState = null;
     var measureHud = null;
     var measureLine = null;
     var measureLayer = null;
@@ -401,6 +429,15 @@
     var playerLayer = null;
     var pinLayer = null;
     var latestPins = [];
+    var webPinLayer = null;
+    var latestWebPins = [];
+    var webPinsRevision = null;
+    var webPinsAvailable = false;
+    var webPinsSharedEditing = false;
+    var webPinsProbed = false;
+    var webPinsFetchPending = false;
+    var webPinsFetchQueued = false;
+    var webPinsPollingStarted = false;
     var trailLayer = null;
     var shipHeadingLayer = null;
     var shipHeadingLines = new Map();
@@ -519,6 +556,7 @@
     var feedLastUpdated = {
         entities: 0,
         pins: 0,
+        webpins: 0,
         players: 0,
         pois: 0,
         fog: 0,
@@ -829,16 +867,32 @@
         updateRenderStatus(latestMapStatus);
     }
 
-    async function fetchJson(path) {
-        var response = await fetch(authorizedUrl(path), {
-            cache: "no-store",
-            credentials: "same-origin"
+    async function fetchJson(path, options) {
+        var requestOptions = {};
+        Object.keys(options || {}).forEach(function (key) {
+            requestOptions[key] = options[key];
         });
+        requestOptions.cache = "no-store";
+        requestOptions.credentials = "same-origin";
+        var response = await fetch(authorizedUrl(path), requestOptions);
+        var payload = null;
+        try {
+            payload = await response.json();
+        } catch (error) {
+            if (response.ok) {
+                throw new Error("Invalid server response");
+            }
+        }
         if (!response.ok) {
-            throw new Error("HTTP " + response.status);
+            var message = payload && typeof payload.error === "string"
+                ? payload.error
+                : "HTTP " + response.status;
+            var requestError = new Error(message);
+            requestError.status = response.status;
+            throw requestError;
         }
 
-        return response.json();
+        return payload;
     }
 
     function loadRequestedTab() {
@@ -2213,6 +2267,52 @@
         }
     }
 
+    function sanitizeWebPinAuthor(value) {
+        return String(value || "")
+            .trim()
+            .replace(/[\u0000-\u001f\u007f-\u009f<>]/g, "")
+            .trim()
+            .slice(0, 32);
+    }
+
+    function storedWebPinAuthor() {
+        try {
+            return sanitizeWebPinAuthor(
+                window.localStorage.getItem(WEB_PIN_AUTHOR_STORAGE_KEY) || ""
+            );
+        } catch (error) {
+            return "";
+        }
+    }
+
+    function webPinOperatorAuthor() {
+        var author = storedWebPinAuthor();
+        return author || (currentView === "admin" ? "Admin" : "");
+    }
+
+    function saveWebPinAuthor(value) {
+        var author = sanitizeWebPinAuthor(value);
+        if (author) {
+            storageWrite(WEB_PIN_AUTHOR_STORAGE_KEY, author);
+        }
+        return author;
+    }
+
+    function canCreateWebPin() {
+        return webPinsAvailable &&
+            (currentView === "admin" || webPinsSharedEditing);
+    }
+
+    function canEditWebPin(pin) {
+        if (currentView === "admin") {
+            return true;
+        }
+        var author = storedWebPinAuthor();
+        return currentView !== "public" && webPinsSharedEditing && Boolean(author) &&
+            typeof pin.author === "string" &&
+            pin.author.toLocaleLowerCase() === author.toLocaleLowerCase();
+    }
+
     function loadLayerSettings() {
         var settings = {};
         Object.keys(LAYER_DEFAULTS).forEach(function (key) {
@@ -2501,13 +2601,16 @@
         });
         shell.appendChild(rows);
 
+        var actions = null;
         if (options.actions && options.actions.length > 0) {
-            var actions = document.createElement("div");
+            actions = document.createElement("div");
             actions.className = "vo-popup-actions";
             options.actions.forEach(function (action) {
                 var button = document.createElement("button");
                 button.type = "button";
-                button.className = "vo-popup-action" + (action.active ? " is-active" : "");
+                button.className = "vo-popup-action" +
+                    (action.active ? " is-active" : "") +
+                    (action.danger ? " is-danger" : "");
                 button.textContent = action.label;
                 button.setAttribute("data-popup-action", action.action);
                 if (action.kind) {
@@ -2521,17 +2624,32 @@
                 }
                 actions.appendChild(button);
             });
-            shell.appendChild(actions);
+            if (!options.actionsInFooter) {
+                shell.appendChild(actions);
+            }
         }
 
         var footer = document.createElement("div");
         footer.className = "vo-popup-footer";
+        var footerStatus = options.actionsInFooter
+            ? document.createElement("span")
+            : footer;
+        if (options.actionsInFooter) {
+            footer.classList.add("has-actions");
+            footerStatus.className = "vo-popup-footer-status";
+            if (actions) {
+                footer.appendChild(actions);
+            }
+        }
         if (Number.isFinite(options.surveyUnixMs) && options.surveyUnixMs > 0) {
-            footer.setAttribute("data-survey-unix-ms", String(options.surveyUnixMs));
-            footer.textContent = popupSurveyStalenessText(options.surveyUnixMs);
+            footerStatus.setAttribute("data-survey-unix-ms", String(options.surveyUnixMs));
+            footerStatus.textContent = popupSurveyStalenessText(options.surveyUnixMs);
         } else {
-            footer.setAttribute("data-feed", options.feed);
-            footer.textContent = popupStalenessText(options.feed);
+            footerStatus.setAttribute("data-feed", options.feed);
+            footerStatus.textContent = popupStalenessText(options.feed);
+        }
+        if (options.actionsInFooter) {
+            footer.appendChild(footerStatus);
         }
         shell.appendChild(footer);
         return shell;
@@ -2559,10 +2677,11 @@
 
         var footers = map._popup.getElement().querySelectorAll(".vo-popup-footer");
         Array.prototype.forEach.call(footers, function (footer) {
-            var scanUnixMs = Number(footer.getAttribute("data-survey-unix-ms"));
-            footer.textContent = Number.isFinite(scanUnixMs) && scanUnixMs > 0
+            var status = footer.querySelector(".vo-popup-footer-status") || footer;
+            var scanUnixMs = Number(status.getAttribute("data-survey-unix-ms"));
+            status.textContent = Number.isFinite(scanUnixMs) && scanUnixMs > 0
                 ? popupSurveyStalenessText(scanUnixMs)
-                : popupStalenessText(footer.getAttribute("data-feed"));
+                : popupStalenessText(status.getAttribute("data-feed"));
         });
     }
 
@@ -2690,6 +2809,28 @@
                 jumpToTombstone(key);
             } else if (action === "jump-portal") {
                 jumpToPortal(key);
+            } else if (action === "webpin-toggle") {
+                updateWebPinChecked(key, actionButton);
+            } else if (action === "webpin-edit") {
+                var pin = webPinById(key);
+                if (pin && canEditWebPin(pin)) {
+                    openWebPinDialog({ pin: pin });
+                }
+            } else if (action === "webpin-delete") {
+                if (actionButton.dataset.confirming !== "true") {
+                    actionButton.dataset.confirming = "true";
+                    actionButton.textContent = "Confirm?";
+                    actionButton.classList.add("is-confirming");
+                    window.clearTimeout(actionButton._voConfirmTimer);
+                    actionButton._voConfirmTimer = window.setTimeout(function () {
+                        actionButton.dataset.confirming = "false";
+                        actionButton.textContent = "Delete";
+                        actionButton.classList.remove("is-confirming");
+                    }, 3000);
+                } else {
+                    window.clearTimeout(actionButton._voConfirmTimer);
+                    deleteWebPin(key, actionButton);
+                }
             }
         });
     }
@@ -3644,11 +3785,13 @@
         applyRaidEvent(currentRaidEvent);
         ensureEntityFeed();
         startPinsPolling();
+        startWebPinsPolling();
     }
 
     function initialiseDataLayers() {
         playerLayer = L.layerGroup();
         pinLayer = L.layerGroup();
+        webPinLayer = L.layerGroup();
         regionLayer = L.layerGroup();
         trailLayer = L.layerGroup().addTo(map);
         shipHeadingLayer = L.layerGroup();
@@ -3664,6 +3807,7 @@
         ENTITY_GROUP_ORDER.forEach(function (group) {
             entityLayers.set(group, L.layerGroup());
         });
+        renderWebPins();
         pendingMapPings.splice(0).forEach(renderMapPing);
         pendingChatBubbles.splice(0).forEach(renderChatBubble);
     }
@@ -3958,6 +4102,323 @@
         return total;
     }
 
+    function webPinIconLabel(icon) {
+        return icon.split("_").map(function (part) {
+            return part.charAt(0).toUpperCase() + part.slice(1);
+        }).join(" ");
+    }
+
+    function setWebPinDialogIcon(icon) {
+        if (!webPinDialogState || WEB_PIN_ICONS.indexOf(icon) === -1) {
+            return;
+        }
+        webPinDialogState.icon = icon;
+        webPinDialog.querySelectorAll("[data-webpin-icon]").forEach(function (button) {
+            var isSelected = button.dataset.webpinIcon === icon;
+            button.classList.toggle("is-selected", isSelected);
+            button.setAttribute("aria-pressed", String(isSelected));
+        });
+    }
+
+    function ensureWebPinDialog() {
+        if (webPinDialog) {
+            return webPinDialog;
+        }
+
+        var backdrop = document.createElement("div");
+        var dialog = document.createElement("section");
+        var form = document.createElement("form");
+        var header = document.createElement("header");
+        var kicker = document.createElement("span");
+        var title = document.createElement("h2");
+        var position = document.createElement("p");
+        var iconField = document.createElement("fieldset");
+        var iconLegend = document.createElement("legend");
+        var iconGrid = document.createElement("div");
+        var labelField = document.createElement("label");
+        var labelText = document.createElement("span");
+        var labelInput = document.createElement("input");
+        var authorField = document.createElement("label");
+        var authorText = document.createElement("span");
+        var authorInput = document.createElement("input");
+        var error = document.createElement("p");
+        var actions = document.createElement("div");
+        var cancel = document.createElement("button");
+        var submit = document.createElement("button");
+
+        backdrop.className = "webpin-dialog-backdrop";
+        backdrop.hidden = true;
+        dialog.className = "webpin-dialog";
+        dialog.setAttribute("role", "dialog");
+        dialog.setAttribute("aria-modal", "true");
+        dialog.setAttribute("aria-labelledby", "webpin-dialog-title");
+        form.className = "webpin-dialog-form";
+        header.className = "webpin-dialog-header";
+        kicker.className = "webpin-dialog-kicker";
+        kicker.textContent = "WEB PIN";
+        title.id = "webpin-dialog-title";
+        title.textContent = "Drop a pin";
+        position.className = "webpin-dialog-position";
+        iconField.className = "webpin-icon-field";
+        iconLegend.textContent = "Icon";
+        iconGrid.className = "webpin-icon-grid";
+        WEB_PIN_ICONS.forEach(function (icon) {
+            var button = document.createElement("button");
+            var mark = document.createElement("span");
+            var name = document.createElement("span");
+            button.type = "button";
+            button.className = "webpin-icon-choice";
+            button.dataset.webpinIcon = icon;
+            button.setAttribute("aria-pressed", "false");
+            button.title = webPinIconLabel(icon);
+            mark.className = "webpin-icon-choice-mark";
+            mark.innerHTML = iconMarkup(icon, "✦");
+            mark.setAttribute("aria-hidden", "true");
+            name.className = "webpin-icon-choice-name";
+            name.textContent = webPinIconLabel(icon);
+            button.appendChild(mark);
+            button.appendChild(name);
+            button.addEventListener("click", function () {
+                setWebPinDialogIcon(icon);
+            });
+            iconGrid.appendChild(button);
+        });
+        labelField.className = "webpin-dialog-field";
+        labelText.textContent = "Label";
+        labelInput.name = "label";
+        labelInput.type = "text";
+        labelInput.maxLength = 60;
+        labelInput.placeholder = "What is here?";
+        labelInput.autocomplete = "off";
+        authorField.className = "webpin-dialog-field webpin-author-field";
+        authorText.textContent = "Your name";
+        authorInput.name = "author";
+        authorInput.type = "text";
+        authorInput.maxLength = 32;
+        authorInput.placeholder = "Viking name";
+        authorInput.autocomplete = "nickname";
+        error.className = "webpin-dialog-error";
+        error.setAttribute("role", "alert");
+        error.hidden = true;
+        actions.className = "webpin-dialog-actions";
+        cancel.type = "button";
+        cancel.className = "webpin-dialog-cancel";
+        cancel.textContent = "Cancel";
+        submit.type = "submit";
+        submit.className = "webpin-dialog-submit";
+        submit.textContent = "Save";
+
+        header.appendChild(kicker);
+        header.appendChild(title);
+        iconField.appendChild(iconLegend);
+        iconField.appendChild(iconGrid);
+        labelField.appendChild(labelText);
+        labelField.appendChild(labelInput);
+        authorField.appendChild(authorText);
+        authorField.appendChild(authorInput);
+        actions.appendChild(cancel);
+        actions.appendChild(submit);
+        form.appendChild(header);
+        form.appendChild(position);
+        form.appendChild(iconField);
+        form.appendChild(labelField);
+        form.appendChild(authorField);
+        form.appendChild(error);
+        form.appendChild(actions);
+        dialog.appendChild(form);
+        backdrop.appendChild(dialog);
+        document.body.appendChild(backdrop);
+
+        cancel.addEventListener("click", closeWebPinDialog);
+        backdrop.addEventListener("click", function (event) {
+            if (event.target === backdrop) {
+                closeWebPinDialog();
+            }
+        });
+        form.addEventListener("submit", submitWebPinDialog);
+        document.addEventListener("keydown", function (event) {
+            if (event.key === "Escape" && webPinDialog && !webPinDialog.hidden) {
+                event.preventDefault();
+                closeWebPinDialog();
+            }
+        });
+        webPinDialog = backdrop;
+        return backdrop;
+    }
+
+    function closeWebPinDialog() {
+        if (!webPinDialog) {
+            return;
+        }
+        webPinDialog.hidden = true;
+        webPinDialogState = null;
+    }
+
+    function showWebPinDialogError(message) {
+        if (!webPinDialog) {
+            return;
+        }
+        var error = webPinDialog.querySelector(".webpin-dialog-error");
+        error.textContent = message;
+        error.hidden = false;
+    }
+
+    function openWebPinDialog(options) {
+        var pin = options && options.pin ? options.pin : null;
+        var world = options && options.world ? options.world : null;
+        if ((!pin && (!world || !canCreateWebPin())) || (pin && !canEditWebPin(pin))) {
+            return;
+        }
+
+        disarmWebPinPlacement();
+        disarmMapPing();
+        if (measureModeEnabled) {
+            clearMeasurement();
+        }
+        dismissMapContextMenu();
+        if (map && map._popup) {
+            map.closePopup();
+        }
+
+        var dialog = ensureWebPinDialog();
+        var x = pin ? pin.x : world.x;
+        var z = pin ? pin.z : world.z;
+        webPinDialogState = {
+            icon: pin && WEB_PIN_ICONS.indexOf(pin.icon) !== -1 ? pin.icon : "pin",
+            pin: pin,
+            world: { x: x, z: z }
+        };
+        dialog.classList.toggle("is-editing", Boolean(pin));
+        dialog.classList.toggle("is-admin", currentView === "admin");
+        dialog.querySelector("#webpin-dialog-title").textContent = pin
+            ? "Edit web pin"
+            : "Drop a web pin";
+        dialog.querySelector(".webpin-dialog-position").textContent =
+            "X " + Math.round(x) + " · Z " + Math.round(z);
+        dialog.querySelector('input[name="label"]').value = pin ? pin.label : "";
+        dialog.querySelector('input[name="author"]').value = webPinOperatorAuthor();
+        dialog.querySelector(".webpin-dialog-submit").disabled = false;
+        dialog.querySelector(".webpin-dialog-submit").textContent = "Save";
+        var error = dialog.querySelector(".webpin-dialog-error");
+        error.textContent = "";
+        error.hidden = true;
+        setWebPinDialogIcon(webPinDialogState.icon);
+        dialog.hidden = false;
+        window.setTimeout(function () {
+            var author = dialog.querySelector('input[name="author"]');
+            var label = dialog.querySelector('input[name="label"]');
+            (storedWebPinAuthor() ? label : author).focus();
+        }, 0);
+    }
+
+    function webPinWriteOptions(method, body, author) {
+        var options = {
+            headers: {
+                "Content-Type": "application/json",
+                "X-Operator": author
+            },
+            method: method
+        };
+        if (body !== null) {
+            options.body = JSON.stringify(body);
+        }
+        return options;
+    }
+
+    async function submitWebPinDialog(event) {
+        event.preventDefault();
+        if (!webPinDialogState || !webPinDialog) {
+            return;
+        }
+        var state = webPinDialogState;
+        var label = webPinDialog.querySelector('input[name="label"]').value.slice(0, 60);
+        var author = saveWebPinAuthor(
+            webPinDialog.querySelector('input[name="author"]').value
+        );
+        if (!author) {
+            showWebPinDialogError("Your name is required.");
+            webPinDialog.querySelector('input[name="author"]').focus();
+            return;
+        }
+
+        var submit = webPinDialog.querySelector(".webpin-dialog-submit");
+        submit.disabled = true;
+        submit.textContent = "Saving…";
+        webPinDialog.hidden = true;
+        try {
+            if (state.pin) {
+                await fetchJson(
+                    "/api/webpins/" + encodeURIComponent(state.pin.id),
+                    webPinWriteOptions("PATCH", {
+                        icon: state.icon,
+                        label: label
+                    }, author)
+                );
+            } else {
+                await fetchJson("/api/webpins", webPinWriteOptions("POST", {
+                    author: author,
+                    icon: state.icon,
+                    label: label,
+                    x: state.world.x,
+                    z: state.world.z
+                }, author));
+            }
+            webPinDialogState = null;
+            requestWebPinsFetch();
+        } catch (error) {
+            webPinDialogState = state;
+            webPinDialog.hidden = false;
+            showWebPinDialogError(
+                error && error.message ? error.message : "The pin could not be saved."
+            );
+        } finally {
+            submit.disabled = false;
+            submit.textContent = "Save";
+        }
+    }
+
+    function syncWebPinControl() {
+        if (!webPinButton) {
+            return;
+        }
+        webPinButton.hidden = !canCreateWebPin();
+        if (!canCreateWebPin()) {
+            disarmWebPinPlacement();
+        }
+    }
+
+    function disarmWebPinPlacement() {
+        webPinPlacementArmed = false;
+        document.body.classList.remove("is-dropping-webpin");
+        if (!webPinButton) {
+            return;
+        }
+        webPinButton.classList.remove("is-active");
+        webPinButton.title = "Drop a web pin";
+        webPinButton.setAttribute("aria-label", "Drop a web pin");
+        webPinButton.setAttribute("aria-pressed", "false");
+    }
+
+    function armWebPinPlacement() {
+        if (!map || !canCreateWebPin()) {
+            return;
+        }
+        disarmMapPing();
+        if (measureModeEnabled) {
+            clearMeasurement();
+        }
+        if (map._popup) {
+            map.closePopup();
+        }
+        dismissMapContextMenu();
+        webPinPlacementArmed = true;
+        document.body.classList.add("is-dropping-webpin");
+        webPinButton.classList.add("is-active");
+        webPinButton.title = "Click the map to drop a pin · Esc cancels";
+        webPinButton.setAttribute("aria-label", "Click the map to drop a pin; Escape cancels");
+        webPinButton.setAttribute("aria-pressed", "true");
+    }
+
     function updateMeasureHud() {
         if (!measureHud) {
             return;
@@ -4047,6 +4508,7 @@
 
     function startMeasurement(initialPoint) {
         disarmMapPing();
+        disarmWebPinPlacement();
         measureModeEnabled = true;
         measureActive = true;
         measurePoints = initialPoint ? [L.latLng(initialPoint)] : [];
@@ -4085,8 +4547,26 @@
                         startMeasurement();
                     }
                 });
+                webPinButton = L.DomUtil.create(
+                    "button",
+                    "map-tool-button webpin-drop-button",
+                    container
+                );
+                webPinButton.type = "button";
+                webPinButton.textContent = "✦";
+                webPinButton.title = "Drop a web pin";
+                webPinButton.setAttribute("aria-label", "Drop a web pin");
+                webPinButton.setAttribute("aria-pressed", "false");
+                webPinButton.addEventListener("click", function () {
+                    if (webPinPlacementArmed) {
+                        disarmWebPinPlacement();
+                    } else {
+                        armWebPinPlacement();
+                    }
+                });
                 L.DomEvent.disableClickPropagation(container);
                 L.DomEvent.disableScrollPropagation(container);
+                syncWebPinControl();
                 return container;
             }
         });
@@ -4110,6 +4590,18 @@
             measurePoints.push(event.latlng);
             redrawMeasurement();
         });
+        map.on("click", function (event) {
+            if (!webPinPlacementArmed ||
+                (event.originalEvent && typeof event.originalEvent.button === "number" &&
+                    event.originalEvent.button !== 0)) {
+                return;
+            }
+            var world = latLngToWorld(event.latlng);
+            disarmWebPinPlacement();
+            if (world) {
+                openWebPinDialog({ world: world });
+            }
+        });
         map.on("dblclick", function (event) {
             if (!measureActive) {
                 return;
@@ -4121,7 +4613,10 @@
         });
         document.addEventListener("keydown", function (event) {
             if (event.key === "Escape") {
-                if (measureActive) {
+                if (webPinPlacementArmed) {
+                    event.preventDefault();
+                    disarmWebPinPlacement();
+                } else if (measureActive) {
                     event.preventDefault();
                     finishMeasurement();
                 } else if (measureModeEnabled) {
@@ -4162,6 +4657,7 @@
         if (!map || currentView !== "admin" || pingRequestPending) {
             return;
         }
+        disarmWebPinPlacement();
         if (measureModeEnabled) {
             clearMeasurement();
         }
@@ -4669,6 +5165,12 @@
             dismissMapContextMenu();
             map.panTo(latLng);
         }));
+        if (canCreateWebPin()) {
+            menu.appendChild(createMapContextItem("Drop pin here", function () {
+                dismissMapContextMenu();
+                openWebPinDialog({ world: world });
+            }));
+        }
         if (currentView === "admin") {
             menu.appendChild(createMapContextItem("Ping in-game here", function () {
                 dismissMapContextMenu();
@@ -4805,6 +5307,21 @@
                 z: pin.z,
                 markerResolver: function () {
                     return findMarkerNearLayer(pinLayer, pin.latLng);
+                }
+            });
+        });
+        latestWebPins.forEach(function (pin) {
+            items.push({
+                glyph: "✦",
+                kind: "Web pin",
+                layerKey: "webpins",
+                latLng: pin.latLng || worldToLatLng(pin.x, pin.z),
+                name: pin.label || "Web pin",
+                searchText: (pin.label || "Web pin") + " " + pin.author,
+                x: pin.x,
+                z: pin.z,
+                markerResolver: function () {
+                    return findMarkerNearLayer(webPinLayer, pin.latLng);
                 }
             });
         });
@@ -5456,8 +5973,15 @@
             appendDisplayLayerRow(liveBody, "Raid area", "◯", "raid", "1");
         }
 
-        var placesBody = appendLayerSection("places", "Places", ["pins", "pois"]);
+        var placeFeeds = ["pins", "pois"];
+        if (webPinsAvailable) {
+            placeFeeds.splice(1, 0, "webpins");
+        }
+        var placesBody = appendLayerSection("places", "Places", placeFeeds);
         appendLayerRow(placesBody, "pins", "Pins", "⌖", "pins");
+        if (webPinsAvailable) {
+            appendLayerRow(placesBody, "webpins", "Web pins", "✦", "webpins");
+        }
         POI_CATEGORIES.forEach(function (category) {
             var groups = category.groups.filter(function (group) {
                 return availablePoiGroups.has(group);
@@ -5821,6 +6345,9 @@
         if (key === "pins") {
             return latestPins.length;
         }
+        if (key === "webpins") {
+            return latestWebPins.length;
+        }
         if (key === "trails") {
             return latestPlayers.length;
         }
@@ -5921,7 +6448,8 @@
         }
         var expected = {
             entities: ENTITIES_POLL_INTERVAL_MS,
-            pins: PINS_POLL_INTERVAL_MS
+            pins: PINS_POLL_INTERVAL_MS,
+            webpins: PINS_POLL_INTERVAL_MS
         }[feed];
         var age = Date.now() - updatedAt;
         return {
@@ -6292,6 +6820,9 @@
         if (layerSettings.pins) {
             appendLegendItem("⌖", "Pins", "pins");
         }
+        if (webPinsAvailable && layerSettings.webpins) {
+            appendLegendItem("✦", "Web pins", "webpins");
+        }
         if (layerSettings.trails) {
             appendLegendItem("〰", "Trails", "trails");
         }
@@ -6341,6 +6872,7 @@
 
         setLayerVisible(playerLayer, layerSettings.players);
         setLayerVisible(pinLayer, layerSettings.pins);
+        setLayerVisible(webPinLayer, webPinsAvailable && layerSettings.webpins);
         markerRecords.forEach(function (record) {
             updatePlayerMarkerMotion(record);
         });
@@ -8051,6 +8583,39 @@
         });
     }
 
+    function buildWebPinPopup(pin) {
+        var actions = [];
+        if (canEditWebPin(pin)) {
+            actions.push({
+                action: "webpin-toggle",
+                key: pin.id,
+                label: pin.checked ? "Restore" : "Check off"
+            });
+            actions.push({ action: "webpin-edit", key: pin.id, label: "Edit" });
+            actions.push({
+                action: "webpin-delete",
+                danger: true,
+                key: pin.id,
+                label: "Delete"
+            });
+        }
+        var popup = popupShell({
+            actions: actions,
+            actionsInFooter: actions.length > 0,
+            feed: "webpins",
+            glyph: "✦",
+            kicker: "WEB PIN",
+            rows: [
+                { label: "Status", value: pin.checked ? "✓ charted-off" : "Open" },
+                { label: "Charted by", value: pin.author },
+                positionPopupRow(pin.x, pin.z)
+            ],
+            title: pin.label || "Web pin"
+        });
+        popup.classList.toggle("webpin-checked", pin.checked);
+        return popup;
+    }
+
     function shipDisplayName(prefab) {
         var normalized = prefab.replace(/[^a-z0-9]/gi, "").toLowerCase();
         if (normalized.indexOf("ashlands") !== -1 || normalized.indexOf("drakkar") !== -1) {
@@ -9532,6 +10097,278 @@
         return tooltip;
     }
 
+    function webPinById(id) {
+        return latestWebPins.find(function (pin) {
+            return pin.id === id;
+        }) || null;
+    }
+
+    function normalizeWebPin(pin) {
+        if (!pin || typeof pin.id !== "string" || !pin.id ||
+            !Number.isFinite(Number(pin.x)) || !Number.isFinite(Number(pin.z))) {
+            return null;
+        }
+        var icon = typeof pin.icon === "string" ? pin.icon.trim() : "";
+        if (WEB_PIN_ICONS.indexOf(icon) === -1) {
+            icon = "pin";
+        }
+        return {
+            author: typeof pin.author === "string" ? pin.author.trim() : "",
+            checked: pin.checked === true,
+            createdUnixMs: Number(pin.createdUnixMs) || 0,
+            icon: icon,
+            id: pin.id,
+            label: typeof pin.label === "string" ? pin.label.trim() : "",
+            updatedUnixMs: Number(pin.updatedUnixMs) || 0,
+            x: Number(pin.x),
+            z: Number(pin.z)
+        };
+    }
+
+    function createWebPinTooltip(pin) {
+        var tooltip = document.createElement("span");
+        var name = document.createElement("span");
+        var author = document.createElement("span");
+        tooltip.className = "webpin-tooltip-content" +
+            (pin.checked ? " webpin-checked" : "");
+        name.className = "webpin-tooltip-name";
+        name.textContent = pin.label || "Web pin";
+        author.className = "webpin-tooltip-author";
+        author.textContent = "Charted by " + pin.author;
+        tooltip.appendChild(name);
+        tooltip.appendChild(document.createTextNode(" "));
+        tooltip.appendChild(author);
+        return tooltip;
+    }
+
+    function renderWebPins() {
+        if (!webPinLayer) {
+            return;
+        }
+
+        webPinLayer.clearLayers();
+        if (!webPinsAvailable) {
+            return;
+        }
+        latestWebPins.forEach(function (pin) {
+            var editable = canEditWebPin(pin);
+            var markerMarkup = iconMarkup(pin.icon, "✦");
+            var icon = L.divIcon({
+                className: "webpin-div-icon" +
+                    (pin.checked ? " is-checked webpin-checked" : ""),
+                html: '<span class="webpin-marker-shell" aria-hidden="true">' +
+                    '<span class="webpin-marker-glyph">' + markerMarkup + "</span></span>",
+                iconAnchor: [12, 12],
+                iconSize: [24, 24]
+            });
+            var latLng = worldToLatLng(pin.x, pin.z);
+            var marker = L.marker(latLng, {
+                draggable: editable,
+                icon: icon,
+                opacity: pin.checked ? 0.55 : 1,
+                title: pin.label || "Web pin"
+            });
+            bindMarkerTooltip(marker, createWebPinTooltip(pin), {
+                fallbackGlyph: "✦",
+                iconKey: pin.icon,
+                title: pin.label || "Web pin"
+            }, {
+                className: "map-tooltip webpin-tooltip" +
+                    (pin.checked ? " webpin-checked" : ""),
+                direction: "top",
+                offset: [0, -12],
+                opacity: 1
+            });
+            bindMapPopup(marker, function () {
+                return buildWebPinPopup(pin);
+            }, { kind: "webpin" });
+            if (editable) {
+                marker.on("dragstart", function () {
+                    marker._voWebPinOriginalLatLng = L.latLng(marker.getLatLng());
+                });
+                marker.on("dragend", async function () {
+                    var originalLatLng = marker._voWebPinOriginalLatLng || latLng;
+                    var world = latLngToWorld(marker.getLatLng());
+                    if (!world) {
+                        marker.setLatLng(originalLatLng);
+                        return;
+                    }
+                    if (marker.dragging) {
+                        marker.dragging.disable();
+                    }
+                    try {
+                        await fetchJson(
+                            "/api/webpins/" + encodeURIComponent(pin.id),
+                            webPinWriteOptions("PATCH", {
+                                x: world.x,
+                                z: world.z
+                            }, webPinOperatorAuthor())
+                        );
+                        requestWebPinsFetch();
+                    } catch (error) {
+                        marker.setLatLng(originalLatLng);
+                        showNoticeToast("Pin move failed: " +
+                            (error && error.message ? error.message : "request failed"));
+                    } finally {
+                        if (marker._map && marker.dragging && canEditWebPin(pin)) {
+                            marker.dragging.enable();
+                        }
+                    }
+                });
+            }
+            marker.addTo(webPinLayer);
+            pin.latLng = marker.getLatLng();
+            pin.marker = marker;
+        });
+    }
+
+    async function updateWebPinChecked(id, button) {
+        var pin = webPinById(id);
+        if (!pin || !canEditWebPin(pin)) {
+            return;
+        }
+        button.disabled = true;
+        try {
+            await fetchJson(
+                "/api/webpins/" + encodeURIComponent(pin.id),
+                webPinWriteOptions("PATCH", { checked: !pin.checked }, webPinOperatorAuthor())
+            );
+            requestWebPinsFetch();
+        } catch (error) {
+            button.disabled = false;
+            showNoticeToast("Pin update failed: " +
+                (error && error.message ? error.message : "request failed"));
+        }
+    }
+
+    async function deleteWebPin(id, button) {
+        var pin = webPinById(id);
+        if (!pin || !canEditWebPin(pin)) {
+            return;
+        }
+        button.disabled = true;
+        try {
+            await fetchJson(
+                "/api/webpins/" + encodeURIComponent(pin.id),
+                webPinWriteOptions("DELETE", null, webPinOperatorAuthor())
+            );
+            if (map && map._popup) {
+                map.closePopup();
+            }
+            requestWebPinsFetch();
+        } catch (error) {
+            button.disabled = false;
+            button.dataset.confirming = "false";
+            button.textContent = "Delete";
+            button.classList.remove("is-confirming");
+            showNoticeToast("Pin delete failed: " +
+                (error && error.message ? error.message : "request failed"));
+        }
+    }
+
+    async function fetchWebPins() {
+        if (webPinsFetchPending) {
+            webPinsFetchQueued = true;
+            return;
+        }
+
+        webPinsFetchPending = true;
+        var requestView = currentView;
+        var wasAvailable = webPinsAvailable;
+        try {
+            var payload = await fetchJson("/api/webpins");
+            if (requestView !== currentView) {
+                webPinsFetchQueued = true;
+                return;
+            }
+            if (!payload || !Array.isArray(payload.pins) ||
+                !Number.isFinite(Number(payload.revision))) {
+                throw new Error("Invalid web pin response");
+            }
+            var nextPins = [];
+            payload.pins.forEach(function (pin) {
+                var normalized = normalizeWebPin(pin);
+                if (normalized) {
+                    nextPins.push(normalized);
+                }
+            });
+            latestWebPins = nextPins;
+            webPinsRevision = Number(payload.revision);
+            webPinsSharedEditing = payload.sharedEditing === true;
+            webPinsAvailable = true;
+            feedLastUpdated.webpins = Date.now();
+            setFeedState("webpins", true);
+            renderWebPins();
+            syncWebPinControl();
+            syncLayerVisibility();
+            if (!wasAvailable) {
+                renderLayerRows();
+            } else {
+                updateLayerCounts();
+            }
+        } catch (error) {
+            if (requestView !== currentView) {
+                webPinsFetchQueued = true;
+                return;
+            }
+            if (error && (error.status === 401 || error.status === 403)) {
+                latestWebPins = [];
+                webPinsRevision = null;
+                webPinsAvailable = false;
+                webPinsSharedEditing = false;
+                setFeedState("webpins", true);
+                renderWebPins();
+                syncWebPinControl();
+                syncLayerVisibility();
+                if (wasAvailable) {
+                    renderLayerRows();
+                }
+            } else {
+                setFeedState("webpins", false);
+            }
+        } finally {
+            webPinsProbed = true;
+            webPinsFetchPending = false;
+            if (webPinsFetchQueued) {
+                webPinsFetchQueued = false;
+                fetchWebPins();
+            }
+        }
+    }
+
+    function requestWebPinsFetch() {
+        if (webPinsFetchPending) {
+            webPinsFetchQueued = true;
+            return;
+        }
+        fetchWebPins();
+    }
+
+    function handleWebPinRevisionPayload(payload) {
+        var revision = payload ? Number(payload.revision) : NaN;
+        if (!Number.isFinite(revision)) {
+            throw new Error("Invalid web pin event");
+        }
+        if (webPinsRevision === null || revision !== webPinsRevision) {
+            requestWebPinsFetch();
+        }
+    }
+
+    async function pollWebPins() {
+        if (!map || !webPinLayer || (eventSourceOpen && webPinsProbed)) {
+            return;
+        }
+        requestWebPinsFetch();
+    }
+
+    function startWebPinsPolling() {
+        if (webPinsPollingStarted) {
+            return;
+        }
+        webPinsPollingStarted = true;
+        startPolling(pollWebPins, PINS_POLL_INTERVAL_MS);
+    }
+
     async function pollPins() {
         if (!map || !pinLayer) {
             return;
@@ -9942,6 +10779,16 @@
         }
 
         currentView = nextView;
+        latestWebPins = [];
+        webPinsRevision = null;
+        webPinsAvailable = false;
+        webPinsSharedEditing = false;
+        webPinsProbed = false;
+        feedLastUpdated.webpins = 0;
+        setFeedState("webpins", true);
+        closeWebPinDialog();
+        renderWebPins();
+        syncWebPinControl();
         if (currentView === "public") {
             clearSagaActivity();
         } else {
@@ -9956,6 +10803,7 @@
             loadPoisForCurrentView();
             renderLayerRows();
             syncLayerVisibility();
+            requestWebPinsFetch();
             if (hasLiveAccess()) {
                 ensureEntityFeed();
             } else {
@@ -10250,6 +11098,7 @@
     function resumePollingAfterEventStream() {
         pollStatus();
         pollPlayers();
+        pollWebPins();
         pollSagaActivity();
         if (consoleIsActive()) {
             pollConsoleLog();
@@ -10328,6 +11177,9 @@
         });
         source.addEventListener("status", function (event) {
             readEventStreamPayload(source, event, handleStatusPayload);
+        });
+        source.addEventListener("webpins", function (event) {
+            readEventStreamPayload(source, event, handleWebPinRevisionPayload);
         });
         source.addEventListener("ping", function (event) {
             readEventStreamPayload(source, event, handlePingPayload);

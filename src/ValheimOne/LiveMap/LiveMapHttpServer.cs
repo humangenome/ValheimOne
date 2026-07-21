@@ -22,6 +22,9 @@ internal sealed class LiveMapHttpServer
     private const float MaximumPingWorldRadius = 10500f;
     private const int MaximumPingLabelLength = 32;
     private const long ResourceRefreshMilliseconds = 180L * 1000L;
+    private const int MaximumWebPinWritesPerSecond = 5;
+    private const long WebPinWriteWindowTicks = TimeSpan.TicksPerSecond;
+    private const long WebPinWritePruneTicks = 10L * TimeSpan.TicksPerSecond;
 
     private enum ViewLevel
     {
@@ -40,6 +43,7 @@ internal sealed class LiveMapHttpServer
     private readonly Func<ResourcePoiMapSnapshot> _getResourcePoiSnapshot;
     private readonly Action _noteResourcesRequested;
     private readonly Func<MapTableSnapshot> _getMapTableSnapshot;
+    private readonly Func<WebPinStore?> _getWebPinStore;
     private readonly Func<EntityMapSnapshot> _getEntitySnapshot;
     private readonly Func<EntityFocusSnapshot> _getEntityFocusSnapshot;
     private readonly Action _noteEntitiesRequested;
@@ -59,6 +63,9 @@ internal sealed class LiveMapHttpServer
     private string ShareToken => NormalizeToken(_config.ShareToken);
     private readonly object _fogPngLock = new object();
     private readonly object _exploredPctLock = new object();
+    private readonly object _webPinWriteRateLock = new object();
+    private readonly Dictionary<string, (long WindowStartTicks, int Count)> _webPinWriteRates =
+        new Dictionary<string, (long WindowStartTicks, int Count)>(StringComparer.Ordinal);
     private HttpListener? _listener;
     private Thread? _listenerThread;
     private byte[]? _fogPng;
@@ -67,6 +74,7 @@ internal sealed class LiveMapHttpServer
     private long _chartFogPngRevision = -1;
     private long _exploredPctRevision = -1;
     private double _exploredPctValue;
+    private long _webPinWriteLastPruneTicks;
     private bool _accessTokenWarningLogged;
     private bool _consoleTokenWarningLogged;
     private int _eventStreamCount;
@@ -84,6 +92,7 @@ internal sealed class LiveMapHttpServer
         Func<ResourcePoiMapSnapshot> getResourcePoiSnapshot,
         Action noteResourcesRequested,
         Func<MapTableSnapshot> getMapTableSnapshot,
+        Func<WebPinStore?> getWebPinStore,
         Func<EntityMapSnapshot> getEntitySnapshot,
         Func<EntityFocusSnapshot> getEntityFocusSnapshot,
         Action noteEntitiesRequested,
@@ -110,6 +119,7 @@ internal sealed class LiveMapHttpServer
         _getResourcePoiSnapshot = getResourcePoiSnapshot;
         _noteResourcesRequested = noteResourcesRequested;
         _getMapTableSnapshot = getMapTableSnapshot;
+        _getWebPinStore = getWebPinStore;
         _getEntitySnapshot = getEntitySnapshot;
         _getEntityFocusSnapshot = getEntityFocusSnapshot;
         _noteEntitiesRequested = noteEntitiesRequested;
@@ -326,6 +336,8 @@ internal sealed class LiveMapHttpServer
 
             bool isGet = string.Equals(request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase);
             bool isPost = string.Equals(request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase);
+            bool isPatch = string.Equals(request.HttpMethod, "PATCH", StringComparison.OrdinalIgnoreCase);
+            bool isDelete = string.Equals(request.HttpMethod, "DELETE", StringComparison.OrdinalIgnoreCase);
             if (isGet && path == "/")
             {
                 ServeIndex(response, viewLevel);
@@ -381,6 +393,22 @@ internal sealed class LiveMapHttpServer
             else if (isGet && path == "/api/pins")
             {
                 ServePins(response);
+            }
+            else if (isGet && path == "/api/webpins")
+            {
+                ServeWebPins(response, viewLevel);
+            }
+            else if (isPost && path == "/api/webpins")
+            {
+                ServeCreateWebPin(request, response, viewLevel);
+            }
+            else if (isPatch && TryGetWebPinId(path, out string updateWebPinId))
+            {
+                ServeUpdateWebPin(request, response, viewLevel, updateWebPinId);
+            }
+            else if (isDelete && TryGetWebPinId(path, out string deleteWebPinId))
+            {
+                ServeDeleteWebPin(request, response, viewLevel, deleteWebPinId);
             }
             else if (isGet && path.StartsWith("/tiles/", StringComparison.Ordinal))
             {
@@ -874,6 +902,17 @@ internal sealed class LiveMapHttpServer
             string statusJson = BuildStatusJson(snapshot, viewLevel, out string statusChangeKey);
             WriteEventStreamEvent(output, "status", statusJson);
 
+            bool sendWebPins = CanReadWebPins(viewLevel);
+            long webPinRevision = -1L;
+            if (sendWebPins)
+            {
+                webPinRevision = _getWebPinStore()?.Revision ?? 0L;
+                WriteEventStreamEvent(
+                    output,
+                    "webpins",
+                    BuildWebPinRevisionJson(webPinRevision));
+            }
+
             long logCursor = 0L;
             if (sendLogs)
             {
@@ -910,6 +949,23 @@ internal sealed class LiveMapHttpServer
                     statusChangeKey = nextStatusChangeKey;
                     sentEvent = true;
                 }
+
+                bool nextSendWebPins = CanReadWebPins(viewLevel);
+                if (nextSendWebPins)
+                {
+                    long nextWebPinRevision = _getWebPinStore()?.Revision ?? 0L;
+                    if (!sendWebPins || nextWebPinRevision != webPinRevision)
+                    {
+                        WriteEventStreamEvent(
+                            output,
+                            "webpins",
+                            BuildWebPinRevisionJson(nextWebPinRevision));
+                        webPinRevision = nextWebPinRevision;
+                        sentEvent = true;
+                    }
+                }
+
+                sendWebPins = nextSendWebPins;
 
                 pingCursor = MapPingPatch.CopyAfter(pingCursor, pendingPings);
                 for (int index = 0; index < pendingPings.Count; index++)
@@ -1839,6 +1895,11 @@ internal sealed class LiveMapHttpServer
         return json.ToString();
     }
 
+    private static string BuildWebPinRevisionJson(long revision)
+    {
+        return "{\"revision\":" + revision.ToString(CultureInfo.InvariantCulture) + "}";
+    }
+
     private static string BuildChatJson(MapChatSnapshot chat)
     {
         var json = new StringBuilder(384);
@@ -2386,6 +2447,410 @@ internal sealed class LiveMapHttpServer
         WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
 
+    private void ServeWebPins(HttpListenerResponse response, ViewLevel viewLevel)
+    {
+        if (!CanReadWebPins(viewLevel))
+        {
+            WriteJson(response, HttpStatusCode.Forbidden, "{\"error\":\"forbidden\"}");
+            return;
+        }
+
+        WebPinStore? store = _getWebPinStore();
+        if (store == null)
+        {
+            WriteJson(response, HttpStatusCode.ServiceUnavailable, "{\"error\":\"not ready\"}");
+            return;
+        }
+
+        WebPinEntry[] pins;
+        long revision;
+        do
+        {
+            revision = store.Revision;
+            pins = store.Snapshot();
+        }
+        while (revision != store.Revision);
+
+        var json = new StringBuilder(64 + (pins.Length * 224));
+        json.Append("{\"revision\":").Append(revision.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"sharedEditing\":").Append(
+            _config.SharedPinEditing ? "true" : "false");
+        json.Append(",\"pins\":[");
+        for (int index = 0; index < pins.Length; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            AppendWebPinJson(json, pins[index]);
+        }
+
+        json.Append("]}");
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private void ServeCreateWebPin(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        ViewLevel viewLevel)
+    {
+        if (!TryAuthorizeWebPinWrite(response, viewLevel) ||
+            !TryAcceptWebPinWrite(request, response))
+        {
+            return;
+        }
+
+        WebPinStore? store = _getWebPinStore();
+        if (store == null)
+        {
+            WriteWebPinError(response, HttpStatusCode.ServiceUnavailable, "not ready");
+            return;
+        }
+
+        if (!TryReadRequestBody(request, out string json, out bool tooLarge))
+        {
+            WriteWebPinError(
+                response,
+                tooLarge ? HttpStatusCode.RequestEntityTooLarge : HttpStatusCode.BadRequest,
+                tooLarge ? "payload too large" : "bad request");
+            return;
+        }
+
+        float x = float.NaN;
+        float z = float.NaN;
+        TryReadJsonNumberProperty(json, "x", out x);
+        TryReadJsonNumberProperty(json, "z", out z);
+
+        string icon = string.Empty;
+        if (TryFindJsonPropertyValue(json, "icon", out _) &&
+            !TryReadJsonStringProperty(json, "icon", out icon))
+        {
+            WriteWebPinError(response, HttpStatusCode.BadRequest, "invalid icon");
+            return;
+        }
+
+        string label = string.Empty;
+        if (TryFindJsonPropertyValue(json, "label", out _) &&
+            !TryReadJsonStringProperty(json, "label", out label))
+        {
+            WriteWebPinError(response, HttpStatusCode.BadRequest, "invalid label");
+            return;
+        }
+
+        string bodyAuthor = string.Empty;
+        if (TryFindJsonPropertyValue(json, "author", out _) &&
+            !TryReadJsonStringProperty(json, "author", out bodyAuthor))
+        {
+            WriteWebPinError(response, HttpStatusCode.BadRequest, "invalid author");
+            return;
+        }
+
+        string? operatorHeader = request.Headers["X-Operator"];
+        string author = WebPinStore.SanitizeAuthor(operatorHeader ?? bodyAuthor);
+        if (viewLevel == ViewLevel.Admin && author.Length == 0)
+        {
+            author = "Admin";
+        }
+
+        if (!store.TryCreate(x, z, icon, label, author, out WebPinEntry? pin, out string error))
+        {
+            WriteWebPinError(response, HttpStatusCode.BadRequest, error);
+            return;
+        }
+
+        var responseJson = new StringBuilder(256);
+        responseJson.Append("{\"ok\":true,\"pin\":");
+        AppendWebPinJson(responseJson, pin!);
+        responseJson.Append(",\"revision\":").Append(
+            store.Revision.ToString(CultureInfo.InvariantCulture));
+        responseJson.Append('}');
+        WriteJson(response, HttpStatusCode.OK, responseJson.ToString());
+    }
+
+    private void ServeUpdateWebPin(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        ViewLevel viewLevel,
+        string id)
+    {
+        if (!TryAuthorizeWebPinWrite(response, viewLevel) ||
+            !TryAcceptWebPinWrite(request, response))
+        {
+            return;
+        }
+
+        WebPinStore? store = _getWebPinStore();
+        if (store == null)
+        {
+            WriteWebPinError(response, HttpStatusCode.ServiceUnavailable, "not ready");
+            return;
+        }
+
+        if (!TryReadRequestBody(request, out string json, out bool tooLarge))
+        {
+            WriteWebPinError(
+                response,
+                tooLarge ? HttpStatusCode.RequestEntityTooLarge : HttpStatusCode.BadRequest,
+                tooLarge ? "payload too large" : "bad request");
+            return;
+        }
+
+        bool hasX = TryFindJsonPropertyValue(json, "x", out _);
+        bool hasZ = TryFindJsonPropertyValue(json, "z", out _);
+        float? x = null;
+        float? z = null;
+        float parsedX = 0f;
+        float parsedZ = 0f;
+        if (hasX != hasZ ||
+            (hasX && (!TryReadJsonNumberProperty(json, "x", out parsedX) ||
+                      !TryReadJsonNumberProperty(json, "z", out parsedZ))))
+        {
+            WriteWebPinError(response, HttpStatusCode.BadRequest, "invalid coordinates");
+            return;
+        }
+
+        if (hasX)
+        {
+            x = parsedX;
+            z = parsedZ;
+        }
+
+        string? icon = null;
+        if (TryFindJsonPropertyValue(json, "icon", out _))
+        {
+            if (!TryReadJsonStringProperty(json, "icon", out string parsedIcon))
+            {
+                WriteWebPinError(response, HttpStatusCode.BadRequest, "invalid icon");
+                return;
+            }
+
+            icon = parsedIcon;
+        }
+
+        string? label = null;
+        if (TryFindJsonPropertyValue(json, "label", out _))
+        {
+            if (!TryReadJsonStringProperty(json, "label", out string parsedLabel))
+            {
+                WriteWebPinError(response, HttpStatusCode.BadRequest, "invalid label");
+                return;
+            }
+
+            label = parsedLabel;
+        }
+
+        bool? isChecked = null;
+        if (TryFindJsonPropertyValue(json, "checked", out _))
+        {
+            if (!TryReadJsonBooleanProperty(json, "checked", out bool parsedChecked))
+            {
+                WriteWebPinError(response, HttpStatusCode.BadRequest, "invalid checked");
+                return;
+            }
+
+            isChecked = parsedChecked;
+        }
+
+        string requesterAuthor = WebPinStore.SanitizeAuthor(request.Headers["X-Operator"]);
+        bool isAdmin = viewLevel == ViewLevel.Admin;
+        if (!store.TryUpdate(
+                id,
+                x,
+                z,
+                icon,
+                label,
+                isChecked,
+                requesterAuthor,
+                isAdmin,
+                out WebPinEntry? pin,
+                out string error))
+        {
+            WriteWebPinStoreError(response, error);
+            return;
+        }
+
+        var responseJson = new StringBuilder(256);
+        responseJson.Append("{\"ok\":true,\"pin\":");
+        AppendWebPinJson(responseJson, pin!);
+        responseJson.Append(",\"revision\":").Append(
+            store.Revision.ToString(CultureInfo.InvariantCulture));
+        responseJson.Append('}');
+        WriteJson(response, HttpStatusCode.OK, responseJson.ToString());
+    }
+
+    private void ServeDeleteWebPin(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        ViewLevel viewLevel,
+        string id)
+    {
+        if (!TryAuthorizeWebPinWrite(response, viewLevel) ||
+            !TryAcceptWebPinWrite(request, response))
+        {
+            return;
+        }
+
+        WebPinStore? store = _getWebPinStore();
+        if (store == null)
+        {
+            WriteWebPinError(response, HttpStatusCode.ServiceUnavailable, "not ready");
+            return;
+        }
+
+        string requesterAuthor = WebPinStore.SanitizeAuthor(request.Headers["X-Operator"]);
+        if (!store.TryDelete(
+                id,
+                requesterAuthor,
+                viewLevel == ViewLevel.Admin,
+                out string error))
+        {
+            WriteWebPinStoreError(response, error);
+            return;
+        }
+
+        string json = "{\"ok\":true,\"revision\":" +
+                      store.Revision.ToString(CultureInfo.InvariantCulture) + "}";
+        WriteJson(response, HttpStatusCode.OK, json);
+    }
+
+    private bool CanReadWebPins(ViewLevel viewLevel)
+    {
+        return viewLevel != ViewLevel.Public || _config.PublicWebPins;
+    }
+
+    private bool TryAuthorizeWebPinWrite(
+        HttpListenerResponse response,
+        ViewLevel viewLevel)
+    {
+        if (viewLevel == ViewLevel.Admin ||
+            (viewLevel == ViewLevel.Shared && _config.SharedPinEditing))
+        {
+            return true;
+        }
+
+        WriteWebPinError(response, HttpStatusCode.Forbidden, WebPinStore.ErrorForbidden);
+        return false;
+    }
+
+    private bool TryAcceptWebPinWrite(
+        HttpListenerRequest request,
+        HttpListenerResponse response)
+    {
+        string sourceAddress = request.RemoteEndPoint?.Address.ToString() ?? "unknown";
+        long nowTicks = DateTime.UtcNow.Ticks;
+        bool rateLimited = false;
+        lock (_webPinWriteRateLock)
+        {
+            if (_webPinWriteLastPruneTicks == 0L ||
+                nowTicks < _webPinWriteLastPruneTicks ||
+                nowTicks - _webPinWriteLastPruneTicks >= WebPinWritePruneTicks)
+            {
+                List<string>? expiredAddresses = null;
+                foreach (KeyValuePair<string, (long WindowStartTicks, int Count)> pair in
+                         _webPinWriteRates)
+                {
+                    if (nowTicks < pair.Value.WindowStartTicks ||
+                        nowTicks - pair.Value.WindowStartTicks >= WebPinWritePruneTicks)
+                    {
+                        expiredAddresses ??= new List<string>();
+                        expiredAddresses.Add(pair.Key);
+                    }
+                }
+
+                if (expiredAddresses != null)
+                {
+                    for (int index = 0; index < expiredAddresses.Count; index++)
+                    {
+                        _webPinWriteRates.Remove(expiredAddresses[index]);
+                    }
+                }
+
+                _webPinWriteLastPruneTicks = nowTicks;
+            }
+
+            if (_webPinWriteRates.TryGetValue(
+                    sourceAddress,
+                    out (long WindowStartTicks, int Count) window) &&
+                nowTicks >= window.WindowStartTicks &&
+                nowTicks - window.WindowStartTicks < WebPinWriteWindowTicks)
+            {
+                if (window.Count >= MaximumWebPinWritesPerSecond)
+                {
+                    rateLimited = true;
+                }
+                else
+                {
+                    _webPinWriteRates[sourceAddress] =
+                        (window.WindowStartTicks, window.Count + 1);
+                }
+            }
+            else
+            {
+                _webPinWriteRates[sourceAddress] = (nowTicks, 1);
+            }
+        }
+
+        if (!rateLimited)
+        {
+            return true;
+        }
+
+        WriteWebPinError(response, (HttpStatusCode)429, "rate limited");
+        return false;
+    }
+
+    private static bool TryGetWebPinId(string path, out string id)
+    {
+        const string prefix = "/api/webpins/";
+        id = string.Empty;
+        if (!path.StartsWith(prefix, StringComparison.Ordinal) || path.Length == prefix.Length)
+        {
+            return false;
+        }
+
+        id = path.Substring(prefix.Length);
+        return id.IndexOf('/') < 0;
+    }
+
+    private static void AppendWebPinJson(StringBuilder json, WebPinEntry pin)
+    {
+        json.Append('{');
+        json.Append("\"id\":").Append(JsonWriter.Quote(pin.Id));
+        json.Append(",\"x\":").Append(JsonWriter.Number(pin.X));
+        json.Append(",\"z\":").Append(JsonWriter.Number(pin.Z));
+        json.Append(",\"icon\":").Append(JsonWriter.Quote(pin.Icon));
+        json.Append(",\"label\":").Append(JsonWriter.Quote(pin.Label));
+        json.Append(",\"author\":").Append(JsonWriter.Quote(pin.Author));
+        json.Append(",\"checked\":").Append(pin.Checked ? "true" : "false");
+        json.Append(",\"createdUnixMs\":").Append(
+            pin.CreatedUnixMs.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"updatedUnixMs\":").Append(
+            pin.UpdatedUnixMs.ToString(CultureInfo.InvariantCulture));
+        json.Append('}');
+    }
+
+    private static void WriteWebPinStoreError(HttpListenerResponse response, string error)
+    {
+        HttpStatusCode status = string.Equals(error, WebPinStore.ErrorNotFound, StringComparison.Ordinal)
+            ? HttpStatusCode.NotFound
+            : string.Equals(error, WebPinStore.ErrorForbidden, StringComparison.Ordinal)
+                ? HttpStatusCode.Forbidden
+                : HttpStatusCode.BadRequest;
+        WriteWebPinError(response, status, error);
+    }
+
+    private static void WriteWebPinError(
+        HttpListenerResponse response,
+        HttpStatusCode status,
+        string error)
+    {
+        WriteJson(
+            response,
+            status,
+            "{\"ok\":false,\"error\":" + JsonWriter.Quote(error) + "}");
+    }
+
     private void ServeTile(
         HttpListenerRequest request,
         HttpListenerResponse response,
@@ -2865,6 +3330,53 @@ internal sealed class LiveMapHttpServer
                    NumberStyles.Float,
                    CultureInfo.InvariantCulture,
                    out value);
+    }
+
+    private static bool TryReadJsonStringProperty(
+        string json,
+        string propertyName,
+        out string value)
+    {
+        value = string.Empty;
+        return TryFindJsonPropertyValue(json, propertyName, out int valueIndex) &&
+               TryParseJsonString(json, valueIndex, out value);
+    }
+
+    private static bool TryReadJsonBooleanProperty(
+        string json,
+        string propertyName,
+        out bool value)
+    {
+        value = false;
+        if (!TryFindJsonPropertyValue(json, propertyName, out int valueIndex))
+        {
+            return false;
+        }
+
+        if (json.Length - valueIndex >= 4 &&
+            string.CompareOrdinal(json, valueIndex, "true", 0, 4) == 0 &&
+            IsJsonValueTerminator(json, valueIndex + 4))
+        {
+            value = true;
+            return true;
+        }
+
+        return json.Length - valueIndex >= 5 &&
+               string.CompareOrdinal(json, valueIndex, "false", 0, 5) == 0 &&
+               IsJsonValueTerminator(json, valueIndex + 5);
+    }
+
+    private static bool IsJsonValueTerminator(string json, int index)
+    {
+        if (index >= json.Length)
+        {
+            return true;
+        }
+
+        char character = json[index];
+        return character == ',' || character == '}' ||
+               character == ' ' || character == '\t' ||
+               character == '\r' || character == '\n';
     }
 
     private static bool TryParseJsonString(string json, int startIndex, out string value)

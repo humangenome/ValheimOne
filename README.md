@@ -46,6 +46,10 @@ The embedded HTTP server serves two views: a token-gated admin view with every l
 
 Map generation and runtime data stay on the server. Players join with fully vanilla clients; the browser map does not require a Valheim client mod.
 
+### Web pins
+
+Collaborative web pins let map viewers mark destinations, resources, and tasks directly from the browser. Checking a pin off keeps it in the shared history instead of deleting it, and changes sync live through the existing SSE feed. `SharedPinEditing` controls whether shared-view visitors can create pins and edit their own, while `PublicWebPins` exposes the pins read-only on the public view. The persistent store keeps up to 100 pins per author and 500 globally, and accepts only the built-in icon whitelist.
+
 ### Web Admin Console
 
 Adds a Console tab to the Live Map dashboard (opt-in via `ConsoleEnabled`, admin token required): a live server log with severity colors and resume-scroll, a command input with history and autocomplete that executes whitelisted commands through the game's own console path (`ConsoleWhitelist`, or `AllowAllCommands`), player kick/ban/unban with confirm dialogs, a world-save button, and a stats readout backed by `/api/stats` (uptime, players, ZDOs, Mono heap, frame timings).

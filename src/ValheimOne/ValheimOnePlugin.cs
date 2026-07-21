@@ -25,6 +25,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
     private ConfigHotReloadWatcher? _configWatcher;
     private IVersionHandshake? _versionHandshake;
     private ActivityLogModule? _activityLogModule;
+    private ValheimOne.LiveMap.LiveMapModule? _liveMapModule;
     private DiscordModule? _discordModule;
     private ServerSessionEventSource? _sessionEvents;
     private ValheimOneConfig? _settings;
@@ -51,6 +52,11 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
         _activityLogModule = activityLogModule;
         var discordModule = new DiscordModule(settings.Features, sessionEvents, _log);
         _discordModule = discordModule;
+        var liveMapModule = new ValheimOne.LiveMap.LiveMapModule(
+            settings.Features,
+            activityLogModule,
+            dataDirectory);
+        _liveMapModule = liveMapModule;
         IReadOnlyList<IFeatureModule> modules = new IFeatureModule[]
         {
             new PlayerModule(settings.Features),
@@ -80,7 +86,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
             new DeathPenaltyModule(settings.Features),
             mapSharingModule,
             activityLogModule,
-            new ValheimOne.LiveMap.LiveMapModule(settings.Features, activityLogModule),
+            liveMapModule,
             new ValheimOne.Query.QueryModule(settings.Features),
             discordModule,
             new ServerHostModule(serverConfig),
@@ -212,6 +218,8 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
 
         _discordModule?.Shutdown();
         _discordModule = null;
+        _liveMapModule?.Shutdown();
+        _liveMapModule = null;
         _activityLogModule?.Shutdown();
         _activityLogModule = null;
         _sessionEvents?.StopPermanently();

@@ -6,6 +6,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Added
 
+- LiveMap gains collaborative web pins: admin and shared viewers can drop pins from the map's right-click menu or a new toolbar tool, pick from a whitelisted icon set, label them, drag their own pins, and check them off — checked pins grey out with a strikethrough instead of disappearing, and one click restores them. Pins live-sync to every open viewer through a revision-bumping `webpins` SSE event, persist in an atomically written per-server `webpins.json` (100 pins per author, 500 per server, oldest evicted), join map search, and are served through a sanitized, rate-limited `/api/webpins` CRUD surface where shared viewers may edit only their own pins under a default-on `SharedPinEditing` setting and the public view stays pin-free unless a default-off `PublicWebPins` setting is enabled.
 - LiveMap admin `/api/status` responses and the admin sidebar now expose the current crossplay join code for convenient copying; the access credential is never included in shared or public views and stays absent on non-crossplay servers.
 - LiveMap admin and shared views now include a default-off Last seen layer with privacy-aware offline player ghost markers, relative disconnect times, per-session and accumulated playtime, and restart-safe retained positions.
 - LiveMap can now mirror player Say and Shout chat as transient authenticated-view map bubbles and Saga lines through a privacy-sensitive `MirrorChat` opt-in that is disabled by default and never persists player speech.

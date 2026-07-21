@@ -1168,6 +1168,12 @@ input {
     font-size: 15px;
 }
 
+.layer-swatch-webpins {
+    color: var(--accent);
+    font-size: 15px;
+    text-shadow: 0 0 7px rgba(217, 177, 104, 0.42);
+}
+
 .layer-swatch-trails {
     color: var(--accent);
     font-size: 15px;
@@ -1924,6 +1930,16 @@ input {
     opacity: 0.68;
 }
 
+.leaflet-bar .webpin-drop-button {
+    border-top: 1px solid var(--border);
+    color: var(--accent);
+    font-size: 16px;
+}
+
+.leaflet-bar .webpin-drop-button[hidden] {
+    display: none;
+}
+
 .ping-control[hidden] {
     display: none;
 }
@@ -2188,6 +2204,19 @@ body.is-pinging #map .leaflet-overlay-pane path {
     pointer-events: none !important;
 }
 
+body.is-dropping-webpin #map.leaflet-container,
+body.is-dropping-webpin #map .leaflet-grab,
+body.is-dropping-webpin #map .leaflet-dragging {
+    cursor: crosshair;
+}
+
+body.is-dropping-webpin #map .leaflet-marker-pane,
+body.is-dropping-webpin #map .leaflet-poi-pane,
+body.is-dropping-webpin #map .leaflet-popup-pane,
+body.is-dropping-webpin #map .leaflet-overlay-pane path {
+    pointer-events: none !important;
+}
+
 .map-ping-div-icon {
     border: 0;
     background: transparent;
@@ -2399,6 +2428,215 @@ body.is-pinging #map .leaflet-overlay-pane path {
     color: var(--accent);
 }
 
+.webpin-dialog-backdrop {
+    position: fixed;
+    z-index: 1900;
+    inset: 0;
+    display: grid;
+    padding: 12px;
+    place-items: center;
+    background: rgba(8, 6, 4, 0.74);
+    backdrop-filter: blur(3px);
+}
+
+.webpin-dialog-backdrop[hidden] {
+    display: none;
+}
+
+.webpin-dialog {
+    width: min(352px, calc(100vw - 24px));
+    max-height: calc(100vh - 24px);
+    overflow: auto;
+    border: 1px solid var(--border-strong);
+    border-radius: 9px;
+    background:
+        linear-gradient(180deg, rgba(217, 177, 104, 0.055), transparent 82px),
+        var(--panel);
+    box-shadow:
+        inset 0 0 0 1px rgba(255, 231, 192, 0.04),
+        0 20px 55px rgba(0, 0, 0, 0.62);
+    color: var(--text);
+}
+
+.webpin-dialog-form {
+    display: grid;
+    gap: 11px;
+    padding: 16px;
+}
+
+.webpin-dialog-header {
+    padding-bottom: 9px;
+    border-bottom: 1px solid var(--border);
+}
+
+.webpin-dialog-kicker,
+.webpin-icon-field legend,
+.webpin-dialog-field > span {
+    color: var(--accent);
+    font-family: var(--font-display);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.075em;
+    text-transform: uppercase;
+}
+
+.webpin-dialog-header h2 {
+    margin: 3px 0 0;
+    color: var(--text);
+    font-family: var(--font-display);
+    font-size: 17px;
+    font-weight: 400;
+}
+
+.webpin-dialog-position {
+    margin: -3px 0 0;
+    color: var(--secondary);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
+.webpin-icon-field {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.webpin-icon-field legend {
+    margin-bottom: 6px;
+    padding: 0;
+}
+
+.webpin-icon-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 5px;
+}
+
+.webpin-icon-choice {
+    display: grid;
+    min-width: 0;
+    height: 48px;
+    padding: 4px 2px 3px;
+    place-items: center;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    outline: 0;
+    background: rgba(18, 14, 10, 0.48);
+    color: var(--secondary);
+    cursor: pointer;
+}
+
+.webpin-icon-choice:hover,
+.webpin-icon-choice:focus-visible,
+.webpin-icon-choice.is-selected {
+    border-color: var(--accent);
+    background: rgba(217, 177, 104, 0.11);
+    color: var(--accent);
+}
+
+.webpin-icon-choice.is-selected {
+    box-shadow: inset 0 0 0 1px rgba(217, 177, 104, 0.2);
+}
+
+.webpin-icon-choice-mark {
+    display: grid;
+    width: 19px;
+    height: 19px;
+    place-items: center;
+}
+
+.webpin-icon-choice-mark > svg {
+    display: block;
+    width: 18px;
+    height: 18px;
+}
+
+.webpin-icon-choice-name {
+    width: 100%;
+    overflow: hidden;
+    font-size: 7px;
+    line-height: 1;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.webpin-dialog-field {
+    display: grid;
+    gap: 5px;
+}
+
+.webpin-dialog-field input {
+    width: 100%;
+    height: 36px;
+    padding: 7px 9px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    outline: 0;
+    background: rgba(18, 14, 10, 0.66);
+    color: var(--text);
+}
+
+.webpin-dialog-field input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(217, 177, 104, 0.12);
+}
+
+.webpin-dialog-field input::placeholder {
+    color: #7f6e57;
+}
+
+.webpin-dialog-error {
+    margin: 0;
+    padding: 7px 9px;
+    border: 1px solid rgba(201, 106, 82, 0.36);
+    border-radius: 6px;
+    background: rgba(201, 106, 82, 0.09);
+    color: #e8a08c;
+    font-size: 11px;
+}
+
+.webpin-dialog-error[hidden] {
+    display: none;
+}
+
+.webpin-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 7px;
+    padding-top: 2px;
+}
+
+.webpin-dialog-actions button {
+    min-width: 78px;
+    height: 36px;
+    padding: 6px 11px;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    background: rgba(18, 14, 10, 0.52);
+    color: var(--text);
+    cursor: pointer;
+    font-weight: 650;
+}
+
+.webpin-dialog-actions button:hover,
+.webpin-dialog-actions button:focus-visible {
+    border-color: var(--accent);
+    outline: 0;
+    background: rgba(217, 177, 104, 0.13);
+}
+
+.webpin-dialog-actions .webpin-dialog-submit {
+    background: rgba(217, 177, 104, 0.16);
+    color: var(--accent);
+}
+
+.webpin-dialog-actions button:disabled {
+    cursor: wait;
+    opacity: 0.65;
+}
+
 .minimap-control {
     position: relative;
     width: 158px;
@@ -2521,6 +2759,7 @@ body.is-pinging #map .leaflet-overlay-pane path {
 
 .poi-div-icon,
 .pin-div-icon,
+.webpin-div-icon,
 .entity-div-icon,
 .ghost-div-icon {
     border: 0;
@@ -2965,6 +3204,72 @@ body.is-pinging #map .leaflet-overlay-pane path {
     opacity: 0.78;
 }
 
+.webpin-marker-shell {
+    position: relative;
+    display: grid;
+    width: 24px;
+    height: 24px;
+    place-items: center;
+    border: 1px solid rgba(255, 220, 145, 0.88);
+    border-radius: 7px;
+    background:
+        linear-gradient(145deg, rgba(91, 59, 25, 0.97), rgba(34, 24, 15, 0.98));
+    box-shadow:
+        0 0 0 2px rgba(217, 177, 104, 0.24),
+        0 3px 9px rgba(0, 0, 0, 0.58),
+        0 0 12px rgba(217, 177, 104, 0.28);
+    color: #f0c979;
+    transform: scale(var(--marker-scale, 1));
+    transform-origin: center;
+}
+
+.webpin-marker-shell::after {
+    position: absolute;
+    right: 3px;
+    bottom: -4px;
+    left: 3px;
+    height: 3px;
+    border-radius: 0 0 4px 4px;
+    background: var(--accent);
+    box-shadow: 0 1px 4px rgba(18, 14, 10, 0.72);
+    content: "";
+}
+
+.webpin-marker-glyph {
+    display: grid;
+    width: 16px;
+    height: 16px;
+    place-items: center;
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1;
+}
+
+.webpin-marker-glyph > svg {
+    display: block;
+    width: 16px;
+    height: 16px;
+}
+
+.webpin-div-icon.webpin-checked .webpin-marker-shell {
+    border-color: rgba(180, 166, 143, 0.62);
+    box-shadow: 0 0 0 2px rgba(180, 166, 143, 0.12), 0 3px 8px rgba(0, 0, 0, 0.48);
+    color: #a99a82;
+    filter: grayscale(0.72) saturate(0.32);
+}
+
+.webpin-div-icon.webpin-checked .webpin-marker-shell::after {
+    background: #786b58;
+}
+
+.webpin-div-icon.leaflet-marker-draggable {
+    cursor: grab;
+}
+
+.webpin-div-icon.leaflet-marker-draggable:active {
+    cursor: grabbing;
+}
+
 .leaflet-tooltip {
     padding: 3px 7px;
     border: 1px solid var(--border-strong);
@@ -3040,6 +3345,11 @@ body.is-pinging #map .leaflet-overlay-pane path {
     border-color: rgba(217, 177, 104, 0.64);
 }
 
+.leaflet-tooltip.webpin-tooltip {
+    border-color: rgba(240, 201, 121, 0.72);
+    box-shadow: 0 4px 15px rgba(18, 14, 10, 0.68), 0 0 10px rgba(217, 177, 104, 0.12);
+}
+
 .leaflet-tooltip.entity-tooltip {
     border-color: rgba(126, 177, 214, 0.58);
 }
@@ -3052,6 +3362,39 @@ body.is-pinging #map .leaflet-overlay-pane path {
     color: #9b8b72;
     text-decoration: line-through;
     text-decoration-thickness: 1px;
+}
+
+.webpin-tooltip-content {
+    display: block;
+    min-width: 80px;
+}
+
+.webpin-tooltip-name,
+.webpin-tooltip-author {
+    display: block;
+}
+
+.webpin-tooltip-name {
+    color: var(--text);
+    font-weight: 700;
+}
+
+.webpin-tooltip-author {
+    margin-top: 1px;
+    color: var(--secondary);
+    font-size: 10px;
+}
+
+.webpin-tooltip-content.webpin-checked .webpin-tooltip-name,
+.vo-popup.webpin-checked .vo-popup-title {
+    color: #9b8b72;
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+}
+
+.leaflet-tooltip.webpin-tooltip.webpin-checked {
+    border-color: rgba(155, 139, 114, 0.52);
+    filter: saturate(0.62);
 }
 
 .leaflet-tooltip.vo-minicard-tooltip {
@@ -3369,6 +3712,16 @@ body.is-pinging #map .leaflet-overlay-pane path {
     color: var(--accent);
 }
 
+.vo-popup-action.is-danger,
+.vo-popup-action.is-confirming {
+    border-color: rgba(201, 106, 82, 0.46);
+    color: #e8a08c;
+}
+
+.vo-popup-action.is-confirming {
+    background: rgba(201, 106, 82, 0.14);
+}
+
 .vo-popup-actions {
     display: flex;
     gap: 6px;
@@ -3396,6 +3749,27 @@ body.is-pinging #map .leaflet-overlay-pane path {
     font-style: italic;
     line-height: 1;
     text-align: right;
+}
+
+.vo-popup-footer.has-actions {
+    padding: 0;
+}
+
+.vo-popup-footer.has-actions .vo-popup-actions {
+    padding: 8px 11px;
+    font-style: normal;
+}
+
+.vo-popup-footer-status {
+    display: block;
+    padding: 6px 11px 7px;
+    border-top: 1px solid var(--border);
+}
+
+.leaflet-tooltip.webpin-tooltip.webpin-checked .vo-minicard-title {
+    color: #9b8b72;
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
 }
 
 .leaflet-control-attribution {

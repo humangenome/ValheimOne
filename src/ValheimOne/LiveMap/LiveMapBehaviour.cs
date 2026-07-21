@@ -18,6 +18,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private ActivityLogModule? _activityLog;
     private ModLogger? _log;
     private Func<bool>? _enabledCheck;
+    private Func<WebPinStore?>? _getWebPinStore;
     private WorldMapRenderer? _renderer;
     private FogTracker? _fogTracker;
     private MapTableReader? _mapTableReader;
@@ -80,13 +81,15 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         LiveMapConfig config,
         ActivityLogModule activityLog,
         ModLogger log,
-        Func<bool> enabledCheck)
+        Func<bool> enabledCheck,
+        Func<WebPinStore?> getWebPinStore)
     {
         var behaviour = host.AddComponent<LiveMapBehaviour>();
         behaviour._config = config;
         behaviour._activityLog = activityLog;
         behaviour._log = log;
         behaviour._enabledCheck = enabledCheck;
+        behaviour._getWebPinStore = getWebPinStore;
         behaviour._consoleBridge = new ConsoleBridge(null, log);
         Instance = behaviour;
     }
@@ -264,6 +267,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             () => resourcePoiTracker.Snapshot,
             resourcePoiTracker.NoteResourcesRequested,
             () => _mapTableReader?.Snapshot ?? MapTableSnapshot.Empty,
+            _getWebPinStore!,
             () => entityTracker.Snapshot,
             () => entityTracker.FocusSnapshot,
             entityTracker.NoteEntitiesRequested,
