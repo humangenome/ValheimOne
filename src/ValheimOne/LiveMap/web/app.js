@@ -317,6 +317,9 @@
     var scaleBarElement = null;
     var coordinateChip = null;
     var coordinateUsesMapCenter = window.matchMedia("(hover: none), (pointer: coarse)").matches;
+    var hoverMiniCardsEnabled = window.matchMedia(
+        "(hover: hover) and (pointer: fine)"
+    ).matches;
     var minimapElement = null;
     var minimapImage = null;
     var minimapViewRect = null;
@@ -2175,6 +2178,137 @@
 
     function popupSurveyStalenessText(scanUnixMs) {
         return "as of last survey " + popupAgeText(scanUnixMs);
+    }
+
+    function miniCardStateText(content) {
+        var text = content && typeof content.textContent === "string"
+            ? content.textContent
+            : String(content || "");
+        return text.replace(/\s+/g, " ").trim();
+    }
+
+    function normalizeMiniCardText(titleContent, stateContent) {
+        var title = miniCardStateText(titleContent) || "Point of interest";
+        var state = miniCardStateText(stateContent);
+        var titleLower = title.toLowerCase();
+        var stateLower = state.toLowerCase();
+
+        if (stateLower === titleLower) {
+            state = "";
+        } else if (stateLower.indexOf(titleLower) === 0) {
+            state = state.slice(title.length).replace(/^[\s\-—·:]+/, "").trim();
+        }
+
+        return {
+            state: state,
+            title: title
+        };
+    }
+
+    function miniCard(options) {
+        var card = document.createElement("div");
+        var icon = document.createElement("span");
+        var copy = document.createElement("span");
+        var title = document.createElement("span");
+        var state = document.createElement("span");
+        var normalized = normalizeMiniCardText(options.title, options.state);
+        var iconSvg = window.VO_ICONS &&
+            typeof window.VO_ICONS[options.iconKey] === "string"
+            ? window.VO_ICONS[options.iconKey]
+            : "";
+
+        card.className = "vo-minicard" + (normalized.state ? "" : " is-single-line");
+        icon.className = "vo-minicard-icon";
+        icon.setAttribute("aria-hidden", "true");
+        if (iconSvg) {
+            icon.innerHTML = iconSvg;
+        } else {
+            icon.textContent = options.fallbackGlyph || "•";
+        }
+        copy.className = "vo-minicard-copy";
+        title.className = "vo-minicard-title";
+        title.textContent = normalized.title;
+        state.className = "vo-minicard-state";
+        state.textContent = normalized.state;
+        copy.appendChild(title);
+        if (normalized.state) {
+            copy.appendChild(state);
+        }
+        card.appendChild(icon);
+        card.appendChild(copy);
+        return card;
+    }
+
+    function miniCardTooltipContent(plainContent, cardOptions) {
+        if (!hoverMiniCardsEnabled) {
+            return plainContent;
+        }
+
+        return miniCard({
+            fallbackGlyph: cardOptions.fallbackGlyph,
+            iconKey: cardOptions.iconKey,
+            state: plainContent,
+            title: cardOptions.title
+        });
+    }
+
+    function miniCardTooltipOptions(options) {
+        if (!hoverMiniCardsEnabled) {
+            return options;
+        }
+
+        var cardOptions = {};
+        Object.keys(options).forEach(function (key) {
+            cardOptions[key] = options[key];
+        });
+        cardOptions.className = (options.className ? options.className + " " : "") +
+            "vo-minicard-tooltip";
+        return cardOptions;
+    }
+
+    function bindMarkerTooltip(marker, plainContent, cardOptions, tooltipOptions) {
+        marker.bindTooltip(
+            miniCardTooltipContent(plainContent, cardOptions),
+            miniCardTooltipOptions(tooltipOptions)
+        );
+    }
+
+    function updateMarkerTooltip(marker, plainContent, cardOptions) {
+        if (!hoverMiniCardsEnabled) {
+            marker.setTooltipContent(plainContent);
+            return;
+        }
+
+        var tooltip = marker.getTooltip();
+        var card = tooltip ? tooltip.getContent() : null;
+        if (!card || !card.classList || !card.classList.contains("vo-minicard")) {
+            marker.setTooltipContent(miniCardTooltipContent(plainContent, cardOptions));
+            return;
+        }
+
+        var title = card.querySelector(".vo-minicard-title");
+        var copy = card.querySelector(".vo-minicard-copy");
+        var state = card.querySelector(".vo-minicard-state");
+        var normalized = normalizeMiniCardText(cardOptions.title, plainContent);
+        if (title) {
+            title.textContent = normalized.title;
+        }
+        if (normalized.state) {
+            if (!state && copy) {
+                state = document.createElement("span");
+                state.className = "vo-minicard-state";
+                copy.appendChild(state);
+            }
+            if (state) {
+                state.textContent = normalized.state;
+            }
+            card.classList.remove("is-single-line");
+        } else {
+            if (state && state.parentNode) {
+                state.parentNode.removeChild(state);
+            }
+            card.classList.add("is-single-line");
+        }
     }
 
     function popupShell(options) {
@@ -7613,7 +7747,11 @@
         });
         var tooltipContent = document.createElement("span");
         tooltipContent.textContent = hoverText;
-        marker.bindTooltip(tooltipContent, {
+        bindMarkerTooltip(marker, tooltipContent, {
+            fallbackGlyph: POI_GROUPS[record.group].glyph,
+            iconKey: poiIconKey(record),
+            title: record.title
+        }, {
             className: "map-tooltip poi-tooltip",
             direction: "top",
             offset: [0, -10],
@@ -7656,7 +7794,11 @@
         });
         var tooltipContent = document.createElement("span");
         tooltipContent.textContent = count + " " + POI_GROUPS[group].label;
-        marker.bindTooltip(tooltipContent, {
+        bindMarkerTooltip(marker, tooltipContent, {
+            fallbackGlyph: POI_GROUPS[group].glyph,
+            iconKey: clusterIconKey,
+            title: count + " " + POI_GROUPS[group].label
+        }, {
             className: "map-tooltip poi-tooltip",
             direction: "top",
             offset: [0, -11],
@@ -8229,7 +8371,11 @@
             });
             var tooltipContent = document.createElement("span");
             tooltipContent.textContent = markerTitle;
-            marker.bindTooltip(tooltipContent, {
+            bindMarkerTooltip(marker, tooltipContent, {
+                fallbackGlyph: ENTITY_GROUPS[entity.group].glyph,
+                iconKey: entity.group,
+                title: markerTitle
+            }, {
                 className: "map-tooltip entity-tooltip",
                 direction: "top",
                 offset: [0, -11],
@@ -8593,7 +8739,11 @@
                     icon: icon,
                     title: pinRecord.name
                 });
-                marker.bindTooltip(createPinTooltip(pinRecord), {
+                bindMarkerTooltip(marker, createPinTooltip(pinRecord), {
+                    fallbackGlyph: isChecked ? "✓" : "•",
+                    iconKey: isChecked ? "pin_checked" : "pin",
+                    title: pinRecord.name
+                }, {
                     className: "map-tooltip pin-tooltip",
                     direction: "top",
                     offset: [0, -17],

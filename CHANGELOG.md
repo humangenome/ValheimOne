@@ -7,6 +7,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 ### Added
 
 - LiveMap raid popups now show a live gold progress bar with the event's remaining time.
+- LiveMap POI, entity, and pin markers now show compact dark-oak mini-cards with their matching Viking map art on desktop hover, while touch devices keep the existing plain tooltips and tap behavior.
 
 ## [0.9.0] - 2026-07-21
 
