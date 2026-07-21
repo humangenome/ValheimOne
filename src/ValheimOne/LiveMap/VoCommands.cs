@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
+using ValheimOne.ActivityLog;
 using ValheimOne.Configuration;
 using ValheimOne.Infrastructure;
 
@@ -49,15 +50,18 @@ internal static class VoCommands
 
     private static FeatureRegistry? _registry;
     private static LiveMapConfig? _config;
+    private static ActivityLogModule? _activityLog;
     private static ModLogger? _log;
 
     public static void Initialize(
         FeatureRegistry registry,
         LiveMapConfig config,
+        ActivityLogModule activityLog,
         ModLogger log)
     {
         _registry = registry;
         _config = config;
+        _activityLog = activityLog;
         _log = log;
     }
 
@@ -580,6 +584,26 @@ internal static class VoCommands
         Write(
             args,
             "LiveMap: " + (behaviour == null ? "behaviour unavailable" : behaviour.ServiceState));
+
+        ActivityLogModule? activityLog = _activityLog;
+        if (activityLog == null)
+        {
+            Write(args, "Activity log: unavailable");
+            return;
+        }
+
+        ActivityLogHealthSnapshot activityHealth = activityLog.GetHealth();
+        string lastWrite = activityHealth.LastWriteAgeSeconds.HasValue
+            ? activityHealth.LastWriteAgeSeconds.Value.ToString("0.0", CultureInfo.InvariantCulture) +
+              "s ago"
+            : "never";
+        Write(args, $"Activity log: {(activityHealth.Enabled ? "enabled" : "disabled")}");
+        Write(args, $"  Current file: {activityHealth.CurrentFileName}");
+        Write(
+            args,
+            $"  Events written today: " +
+            activityHealth.EventsWrittenToday.ToString(CultureInfo.InvariantCulture));
+        Write(args, $"  Last write: {lastWrite}");
     }
 
     private static void RunWeather(Terminal.ConsoleEventArgs args)

@@ -5,6 +5,7 @@ using System.IO;
 using System.Net;
 using System.Text;
 using System.Threading;
+using ValheimOne.ActivityLog;
 using ValheimOne.Infrastructure;
 
 namespace ValheimOne.LiveMap;
@@ -51,6 +52,7 @@ internal sealed class LiveMapHttpServer
     private readonly LiveMapConfig _config;
     private readonly ConsoleBridge? _consoleBridge;
     private readonly LogRingBuffer? _logRingBuffer;
+    private readonly ActivityLogModule _activityLog;
     private readonly ModLogger _log;
     private string AccessToken => NormalizeToken(_config.AccessToken);
     private string ShareToken => NormalizeToken(_config.ShareToken);
@@ -92,6 +94,7 @@ internal sealed class LiveMapHttpServer
         LiveMapConfig config,
         ConsoleBridge? consoleBridge,
         LogRingBuffer? logRingBuffer,
+        ActivityLogModule activityLog,
         ModLogger log)
     {
         _port = port;
@@ -117,6 +120,7 @@ internal sealed class LiveMapHttpServer
         _config = config;
         _consoleBridge = consoleBridge;
         _logRingBuffer = logRingBuffer;
+        _activityLog = activityLog;
         _log = log;
     }
 
@@ -391,21 +395,25 @@ internal sealed class LiveMapHttpServer
             {
                 ServeConsoleLog(request, response);
             }
+            else if (isGet && path == "/api/console/history")
+            {
+                ServeConsoleHistory(request, response);
+            }
             else if (isGet && path == "/api/console/meta")
             {
                 ServeConsoleMeta(response);
             }
             else if (isPost && path == "/api/admin/kick")
             {
-                ServeAdminAction(request, response, _consoleBridge!.Kick);
+                ServeAdminAction(request, response, "kick", _consoleBridge!.Kick);
             }
             else if (isPost && path == "/api/admin/ban")
             {
-                ServeAdminAction(request, response, _consoleBridge!.Ban);
+                ServeAdminAction(request, response, "ban", _consoleBridge!.Ban);
             }
             else if (isPost && path == "/api/admin/unban")
             {
-                ServeAdminAction(request, response, _consoleBridge!.Unban);
+                ServeAdminAction(request, response, "unban", _consoleBridge!.Unban);
             }
             else if (isGet && path == "/api/admin/banlist")
             {
@@ -413,7 +421,7 @@ internal sealed class LiveMapHttpServer
             }
             else if (isPost && path == "/api/admin/save")
             {
-                ServeSave(response);
+                ServeSave(request, response);
             }
             else if (isGet && path == "/api/stats")
             {
@@ -495,6 +503,16 @@ internal sealed class LiveMapHttpServer
         return path.StartsWith("/api/console/", StringComparison.Ordinal) ||
                path.StartsWith("/api/admin/", StringComparison.Ordinal) ||
                path == "/api/stats";
+    }
+
+    private static void ReadAuditIdentity(
+        HttpListenerRequest request,
+        out string operatorName,
+        out string source)
+    {
+        string? header = request.Headers["X-Operator"];
+        operatorName = header ?? string.Empty;
+        source = header == null ? "token" : "panel";
     }
 
     private void ServeIndex(HttpListenerResponse response, ViewLevel viewLevel)
@@ -874,8 +892,17 @@ internal sealed class LiveMapHttpServer
 
     private void ServeConsoleExec(HttpListenerRequest request, HttpListenerResponse response)
     {
+        ReadAuditIdentity(request, out string operatorName, out string source);
         if (!TryReadRequiredString(request, response, "command", "command is required", out string line))
         {
+            _activityLog.RecordAdminCommand(
+                operatorName,
+                string.Empty,
+                "error",
+                "command is required",
+                source,
+                string.Empty,
+                appendHistory: false);
             return;
         }
 
@@ -887,6 +914,15 @@ internal sealed class LiveMapHttpServer
             !string.Equals(commandName, "vo", StringComparison.Ordinal) &&
             !_config.ConsoleWhitelist.Contains(commandName))
         {
+            const string error = "command not whitelisted";
+            _activityLog.RecordAdminCommand(
+                operatorName,
+                line,
+                "error",
+                error,
+                source,
+                error,
+                appendHistory: false);
             WriteJson(
                 response,
                 HttpStatusCode.Forbidden,
@@ -897,6 +933,14 @@ internal sealed class LiveMapHttpServer
         ConsoleExecResult result = _consoleBridge!.ExecuteCommand(line);
         if (!result.Ok)
         {
+            _activityLog.RecordAdminCommand(
+                operatorName,
+                line,
+                "error",
+                result.Error,
+                source,
+                result.Error,
+                appendHistory: true);
             HttpStatusCode status = string.Equals(
                 result.Error,
                 "unknown command",
@@ -909,6 +953,15 @@ internal sealed class LiveMapHttpServer
                 "{\"ok\":false,\"error\":" + JsonWriter.Quote(result.Error) + "}");
             return;
         }
+
+        _activityLog.RecordAdminCommand(
+            operatorName,
+            line,
+            "ok",
+            "completed",
+            source,
+            string.Join("\n", result.Output),
+            appendHistory: true);
 
         var json = new StringBuilder(32 + (result.Output.Count * 64));
         json.Append("{\"ok\":true,\"output\":[");
@@ -933,6 +986,39 @@ internal sealed class LiveMapHttpServer
         int maximum = (int)Math.Max(1L, Math.Min(500L, requestedMaximum));
         string json = BuildConsoleLogJson(cursor, maximum, out _, out _);
         WriteJson(response, HttpStatusCode.OK, json);
+    }
+
+    private void ServeConsoleHistory(HttpListenerRequest request, HttpListenerResponse response)
+    {
+        long cursor = ParseLong(request.QueryString["cursor"], 0L);
+        long requestedMaximum = ParseLong(request.QueryString["max"], 200L);
+        int maximum = (int)Math.Max(1L, Math.Min(200L, requestedMaximum));
+        var entries = new List<ConsoleHistoryEntry>(maximum);
+        long latestCursor = _activityLog.CopyConsoleHistoryAfter(cursor, maximum, entries);
+        var json = new StringBuilder(32 + (entries.Count * 192));
+        json.Append("{\"cursor\":");
+        json.Append(latestCursor.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"entries\":[");
+        for (int index = 0; index < entries.Count; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            ConsoleHistoryEntry entry = entries[index];
+            json.Append('{');
+            json.Append("\"id\":").Append(entry.Id.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"operator\":").Append(JsonWriter.Quote(entry.Operator));
+            json.Append(",\"command\":").Append(JsonWriter.Quote(entry.Command));
+            json.Append(",\"output\":").Append(JsonWriter.Quote(entry.Output));
+            json.Append(",\"t\":").Append(entry.UnixMs.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"status\":").Append(JsonWriter.Quote(entry.Status));
+            json.Append('}');
+        }
+
+        json.Append("]}");
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
 
     private string BuildConsoleLogJson(
@@ -1099,17 +1185,33 @@ internal sealed class LiveMapHttpServer
         needsComma = true;
     }
 
-    private static void ServeAdminAction(
+    private void ServeAdminAction(
         HttpListenerRequest request,
         HttpListenerResponse response,
+        string actionName,
         Func<string, ConsoleActionResult> action)
     {
+        ReadAuditIdentity(request, out string operatorName, out string source);
         if (!TryReadRequiredString(request, response, "player", "player is required", out string player))
         {
+            _activityLog.RecordAdminAction(
+                operatorName,
+                actionName,
+                null,
+                "error",
+                "player is required",
+                source);
             return;
         }
 
         ConsoleActionResult result = action(player);
+        _activityLog.RecordAdminAction(
+            operatorName,
+            actionName,
+            player,
+            result.Ok ? "ok" : "error",
+            result.Ok ? "completed" : result.Error,
+            source);
         string json = result.Ok
             ? "{\"ok\":true}"
             : "{\"ok\":false,\"error\":" + JsonWriter.Quote(result.Error) + "}";
@@ -1144,9 +1246,19 @@ internal sealed class LiveMapHttpServer
         WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
 
-    private void ServeSave(HttpListenerResponse response)
+    private void ServeSave(HttpListenerRequest request, HttpListenerResponse response)
     {
+        ReadAuditIdentity(request, out string operatorName, out string source);
         ConsoleSaveResult result = _consoleBridge!.Save();
+        _activityLog.RecordAdminAction(
+            operatorName,
+            "save",
+            null,
+            result.Ok ? "ok" : "error",
+            result.Ok
+                ? result.AlreadySaving ? "already saving" : "save requested"
+                : result.Error,
+            source);
         string json = result.Ok
             ? "{\"ok\":true,\"alreadySaving\":" + (result.AlreadySaving ? "true" : "false") + "}"
             : "{\"ok\":false,\"error\":" + JsonWriter.Quote(result.Error) + "}";
@@ -1170,6 +1282,24 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"worldName\":").Append(JsonWriter.Quote(snapshot.WorldName));
         json.Append(",\"day\":").Append(snapshot.Day.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"timeOfDay\":").Append(JsonWriter.Number(snapshot.TimeOfDay));
+        ActivityLogHealthSnapshot activityHealth = _activityLog.GetHealth();
+        json.Append(",\"activityLog\":{");
+        json.Append("\"enabled\":").Append(activityHealth.Enabled ? "true" : "false");
+        json.Append(",\"currentFile\":").Append(
+            JsonWriter.Quote(activityHealth.CurrentFileName));
+        json.Append(",\"eventsWrittenToday\":").Append(
+            activityHealth.EventsWrittenToday.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"lastWriteAgeSeconds\":");
+        if (activityHealth.LastWriteAgeSeconds.HasValue)
+        {
+            json.Append(JsonWriter.Number(activityHealth.LastWriteAgeSeconds.Value));
+        }
+        else
+        {
+            json.Append("null");
+        }
+
+        json.Append('}');
         json.Append('}');
         WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
@@ -1425,17 +1555,42 @@ internal sealed class LiveMapHttpServer
 
         if (!TryReadPingRequest(request, response, out float x, out float z, out string label))
         {
+            ReadAuditIdentity(request, out string invalidOperator, out string invalidSource);
+            _activityLog.RecordAdminAction(
+                invalidOperator,
+                "ping",
+                null,
+                "error",
+                "invalid request",
+                invalidSource);
             return;
         }
 
         if (!_enqueueMapPing(x, z, label))
         {
+            ReadAuditIdentity(request, out string busyOperator, out string busySource);
+            _activityLog.RecordAdminAction(
+                busyOperator,
+                "ping",
+                null,
+                "error",
+                "too many pending pings",
+                busySource);
             WriteJson(
                 response,
                 (HttpStatusCode)429,
                 "{\"ok\":false,\"error\":\"too many pending pings\"}");
             return;
         }
+
+        ReadAuditIdentity(request, out string operatorName, out string source);
+        _activityLog.RecordAdminAction(
+            operatorName,
+            "ping",
+            null,
+            "ok",
+            "queued",
+            source);
 
         WriteJson(response, HttpStatusCode.OK, "{\"ok\":true}");
     }

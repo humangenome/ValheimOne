@@ -49,10 +49,10 @@ fi
 ref_cfg="${repo_root}/tools/release/valheimone.cfg"
 [[ -f "${ref_cfg}" ]] || fail "missing reference config ${ref_cfg} (regenerate it; see RELEASING.md)"
 
-# Pristine defaults: the only Enabled = true allowed is in [Server].
+# Pristine defaults: Enabled = true is allowed only in [Server] and [ActivityLog].
 bad_enabled="$(awk '
     /^\[/ { section = $0 }
-    /^Enabled = true/ && section != "[Server]" { print section }
+    /^Enabled = true/ && section != "[Server]" && section != "[ActivityLog]" { print section }
 ' "${ref_cfg}")"
 [[ -z "${bad_enabled}" ]] || fail "reference config has non-default Enabled = true in: ${bad_enabled//$'\n'/ }"
 grep -q '^\[Server\]' "${ref_cfg}" || fail "reference config is missing the [Server] section"

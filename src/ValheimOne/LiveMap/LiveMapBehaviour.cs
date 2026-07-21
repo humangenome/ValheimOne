@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Splatform;
 using UnityEngine;
+using ValheimOne.ActivityLog;
 using ValheimOne.Infrastructure;
 
 namespace ValheimOne.LiveMap;
@@ -14,6 +15,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private const int PingType = 3;
 
     private LiveMapConfig? _config;
+    private ActivityLogModule? _activityLog;
     private ModLogger? _log;
     private Func<bool>? _enabledCheck;
     private WorldMapRenderer? _renderer;
@@ -75,11 +77,13 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     public static void Initialize(
         GameObject host,
         LiveMapConfig config,
+        ActivityLogModule activityLog,
         ModLogger log,
         Func<bool> enabledCheck)
     {
         var behaviour = host.AddComponent<LiveMapBehaviour>();
         behaviour._config = config;
+        behaviour._activityLog = activityLog;
         behaviour._log = log;
         behaviour._enabledCheck = enabledCheck;
         behaviour._consoleBridge = new ConsoleBridge(null, log);
@@ -272,6 +276,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             config,
             _consoleBridge,
             _logRingBuffer,
+            _activityLog!,
             log);
         _httpServer.Start();
 

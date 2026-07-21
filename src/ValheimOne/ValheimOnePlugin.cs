@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using BepInEx;
 using HarmonyLib;
+using ValheimOne.ActivityLog;
 using ValheimOne.Configuration;
 using ValheimOne.Discord;
 using ValheimOne.Infrastructure;
@@ -23,7 +24,9 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
     private Harmony? _harmony;
     private ConfigHotReloadWatcher? _configWatcher;
     private IVersionHandshake? _versionHandshake;
+    private ActivityLogModule? _activityLogModule;
     private DiscordModule? _discordModule;
+    private ServerSessionEventSource? _sessionEvents;
     private ValheimOneConfig? _settings;
     private ModLogger? _log;
 
@@ -37,7 +40,16 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
         _settings = settings;
         var serverConfig = new ServerConfig(settings.Features);
         var mapSharingModule = new MapSharingModule(settings.Features, _log);
-        var discordModule = new DiscordModule(settings.Features, _log);
+        var sessionEvents = ServerSessionEventSource.Initialize(gameObject, _log);
+        _sessionEvents = sessionEvents;
+        string dataDirectory = Path.Combine(Paths.ConfigPath, "ValheimOne");
+        var activityLogModule = new ActivityLogModule(
+            settings.Features,
+            dataDirectory,
+            sessionEvents,
+            _log);
+        _activityLogModule = activityLogModule;
+        var discordModule = new DiscordModule(settings.Features, sessionEvents, _log);
         _discordModule = discordModule;
         IReadOnlyList<IFeatureModule> modules = new IFeatureModule[]
         {
@@ -67,7 +79,8 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
             new ExperienceRatesModule(settings.Features),
             new DeathPenaltyModule(settings.Features),
             mapSharingModule,
-            new ValheimOne.LiveMap.LiveMapModule(settings.Features),
+            activityLogModule,
+            new ValheimOne.LiveMap.LiveMapModule(settings.Features, activityLogModule),
             new ValheimOne.Query.QueryModule(settings.Features),
             discordModule,
             new ServerHostModule(serverConfig),
@@ -199,6 +212,10 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
 
         _discordModule?.Shutdown();
         _discordModule = null;
+        _activityLogModule?.Shutdown();
+        _activityLogModule = null;
+        _sessionEvents?.StopPermanently();
+        _sessionEvents = null;
         _settings = null;
 
         _versionHandshake?.Shutdown();

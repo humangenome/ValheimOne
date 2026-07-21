@@ -1,20 +1,22 @@
 using UnityEngine;
 using ValheimOne.Infrastructure;
+using ValheimOne.LiveMap;
 
-namespace ValheimOne.Discord;
+namespace ValheimOne.ActivityLog;
 
-internal sealed class DiscordBehaviour : MonoBehaviour
+internal sealed class ActivityLogBehaviour : MonoBehaviour
 {
-    private DiscordModule? _module;
+    private ActivityLogModule? _module;
     private ServerSessionEventSource? _sessionEvents;
+    private bool _sessionStarted;
     private bool _stopped;
 
-    public static DiscordBehaviour Initialize(
+    public static ActivityLogBehaviour Initialize(
         GameObject host,
-        DiscordModule module,
+        ActivityLogModule module,
         ServerSessionEventSource sessionEvents)
     {
-        var behaviour = host.AddComponent<DiscordBehaviour>();
+        var behaviour = host.AddComponent<ActivityLogBehaviour>();
         behaviour._module = module;
         behaviour._sessionEvents = sessionEvents;
         sessionEvents.SessionStarted += behaviour.OnSessionStarted;
@@ -24,10 +26,11 @@ internal sealed class DiscordBehaviour : MonoBehaviour
         sessionEvents.RaidStarted += behaviour.OnRaidStarted;
         sessionEvents.RaidEnded += behaviour.OnRaidEnded;
         sessionEvents.DayChanged += behaviour.OnDayChanged;
+        WorldSavePatch.WorldSaved += behaviour.OnWorldSaved;
         return behaviour;
     }
 
-    public void StopPermanently()
+    public void StopPermanently(bool recordServerStop)
     {
         if (_stopped)
         {
@@ -35,6 +38,11 @@ internal sealed class DiscordBehaviour : MonoBehaviour
         }
 
         _stopped = true;
+        if (recordServerStop && _sessionStarted)
+        {
+            _module?.RecordServerStop();
+        }
+
         ServerSessionEventSource? sessionEvents = _sessionEvents;
         if (sessionEvents != null)
         {
@@ -47,67 +55,60 @@ internal sealed class DiscordBehaviour : MonoBehaviour
             sessionEvents.DayChanged -= OnDayChanged;
         }
 
+        WorldSavePatch.WorldSaved -= OnWorldSaved;
         _sessionEvents = null;
         _module = null;
     }
 
     private void OnSessionStarted(ServerSessionStartedEvent value)
     {
-        _module?.UpdateWorldName(value.WorldName);
+        _ = value;
+        _sessionStarted = true;
+        _module?.RecordServerStart();
     }
 
     private void OnPlayerJoined(ServerPlayerJoinedEvent value)
     {
-        DiscordModule? module = _module;
-        if (module?.NotifyJoin == true)
-        {
-            module.NotifyPlayerJoined(value.Name);
-        }
+        _module?.RecordPlayerJoin(value.Name, value.SteamId);
     }
 
     private void OnPlayerLeft(ServerPlayerLeftEvent value)
     {
-        DiscordModule? module = _module;
-        if (module?.NotifyLeave == true)
-        {
-            module.NotifyPlayerLeft(value.Name);
-        }
+        _module?.RecordPlayerLeave(value.Name, value.SessionSeconds);
     }
 
     private void OnPlayerDied(ServerPlayerDeathEvent value)
     {
-        _module?.NotifyDeath(value.Name, value.LastPosition);
+        _module?.RecordPlayerDeath(value.Name);
     }
 
     private void OnRaidStarted(ServerRaidEvent value)
     {
-        DiscordModule? module = _module;
-        if (module?.NotifyRaid == true)
-        {
-            module.NotifyRaidStarted(value.Name);
-        }
+        _module?.RecordRaidStarted(value.Name);
     }
 
     private void OnRaidEnded(ServerRaidEvent value)
     {
-        DiscordModule? module = _module;
-        if (module?.NotifyRaid == true)
-        {
-            module.NotifyRaidEnded(value.Name);
-        }
+        _module?.RecordRaidEnded(value.Name);
     }
 
     private void OnDayChanged(ServerDayChangedEvent value)
     {
-        DiscordModule? module = _module;
-        if (module?.NotifyDayChange == true)
-        {
-            module.NotifyNewDay(value.Day);
-        }
+        _module?.RecordDayChanged(value.Day);
+    }
+
+    private void OnWorldSaved()
+    {
+        _module?.RecordWorldSave();
+    }
+
+    private void OnApplicationQuit()
+    {
+        StopPermanently(recordServerStop: true);
     }
 
     private void OnDestroy()
     {
-        StopPermanently();
+        StopPermanently(recordServerStop: false);
     }
 }

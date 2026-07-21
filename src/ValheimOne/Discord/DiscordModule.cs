@@ -25,16 +25,20 @@ public sealed class DiscordModule : IFeatureModule
     private readonly FeatureDefinition _feature;
     private readonly DiscordConfig _config;
     private readonly DiscordWebhookWorker _worker;
+    private readonly ServerSessionEventSource _sessionEvents;
     private readonly ModLogger _log;
     private DiscordBehaviour? _behaviour;
     private string _worldName = "Valheim";
-    private bool _lastPublishedDeliveryEnabled;
     private bool _worldSaveSubscribed;
     private bool _shutdown;
 
-    public DiscordModule(FeatureRegistry registry, ModLogger log)
+    public DiscordModule(
+        FeatureRegistry registry,
+        ServerSessionEventSource sessionEvents,
+        ModLogger log)
     {
         _registry = registry;
+        _sessionEvents = sessionEvents;
         _log = log;
         _feature = registry.Register(Name, Section, Classification);
         ConfigEntryString webhookUrl = _feature.SensitiveString(
@@ -129,7 +133,7 @@ public sealed class DiscordModule : IFeatureModule
             hideFlags = HideFlags.HideAndDontSave,
         };
         UnityEngine.Object.DontDestroyOnLoad(host);
-        _behaviour = DiscordBehaviour.Initialize(host, this, _log);
+        _behaviour = DiscordBehaviour.Initialize(host, this, _sessionEvents);
         _worker.Start();
         PublishDeliverySettings();
     }
@@ -269,21 +273,22 @@ public sealed class DiscordModule : IFeatureModule
         ZDOID characterID)
     {
         DiscordModule? active = _active;
-        if (active == null || !active.DeliveryEnabled || !active._config.NotifyDeath)
+        if (active == null)
         {
             return;
         }
 
         try
         {
-            active._behaviour?.HandleCharacterIdChanged(__instance, rpc, characterID);
+            active._sessionEvents.HandleCharacterIdChanged(__instance, rpc, characterID);
         }
         catch (Exception exception)
         {
             try
             {
                 active._log.Warning(
-                    $"[Discord] death transition detection failed ({exception.GetType().Name}).");
+                    $"[ServerEvents] death transition detection failed " +
+                    $"({exception.GetType().Name}).");
             }
             catch
             {
@@ -304,12 +309,7 @@ public sealed class DiscordModule : IFeatureModule
 
     private void OnEffectiveValuesChanged()
     {
-        bool wasEnabled = _lastPublishedDeliveryEnabled;
         PublishDeliverySettings();
-        if (wasEnabled != DeliveryEnabled)
-        {
-            _behaviour?.ResetObservations();
-        }
     }
 
     private void PublishDeliverySettings()
@@ -320,7 +320,6 @@ public sealed class DiscordModule : IFeatureModule
         string username = string.IsNullOrWhiteSpace(configuredName)
             ? _worldName
             : configuredName.Trim();
-        _lastPublishedDeliveryEnabled = enabled;
         _worker.UpdateSettings(new DiscordDeliverySettings(enabled, webhookUrl, username));
     }
 

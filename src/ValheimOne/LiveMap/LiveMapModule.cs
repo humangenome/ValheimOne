@@ -1,5 +1,6 @@
 using HarmonyLib;
 using UnityEngine;
+using ValheimOne.ActivityLog;
 using ValheimOne.Configuration;
 using ValheimOne.Infrastructure;
 using ValheimOne.Modules;
@@ -10,10 +11,12 @@ public sealed class LiveMapModule : IFeatureModule
 {
     private readonly FeatureDefinition _feature;
     private readonly LiveMapConfig _config;
+    private readonly ActivityLogModule _activityLog;
     private readonly ModLogger _log;
 
-    public LiveMapModule(FeatureRegistry registry)
+    public LiveMapModule(FeatureRegistry registry, ActivityLogModule activityLog)
     {
+        _activityLog = activityLog;
         _log = new ModLogger(BepInEx.Logging.Logger.CreateLogSource("ValheimOne.LiveMap"));
         _feature = registry.Register(Name, Section, Classification);
 
@@ -115,7 +118,7 @@ public sealed class LiveMapModule : IFeatureModule
             allowAllCommands,
             consoleLogLines,
             statusPublic);
-        VoCommands.Initialize(registry, _config, _log);
+        VoCommands.Initialize(registry, _config, activityLog, _log);
     }
 
     public string Name => "Live map";
@@ -141,6 +144,11 @@ public sealed class LiveMapModule : IFeatureModule
             hideFlags = HideFlags.HideAndDontSave,
         };
         UnityEngine.Object.DontDestroyOnLoad(host);
-        LiveMapBehaviour.Initialize(host, _config, _log, () => _feature.Enabled.Value);
+        LiveMapBehaviour.Initialize(
+            host,
+            _config,
+            _activityLog,
+            _log,
+            () => _feature.Enabled.Value);
     }
 }

@@ -7,6 +7,10 @@ All notable changes to ValheimOne will be documented in this file. This project 
 ### Added
 
 - Opt-in, server-only `[Discord]` webhook notifications for player joins and leaves, deaths with a last-known biome when available, raid starts and ends, world saves, and in-game day changes. Delivery uses a bounded background queue, two-second batches of up to ten embeds, TLS 1.2, five-second request timeouts, one retry, overflow dropping with a single warning, and a bounded shutdown flush; all settings hot-reload, while `WebhookUrl` is never logged or synchronized to clients.
+- Default-on, server-only `[ActivityLog]` JSONL activity logging for server lifecycle, player joins, leaves and deaths, raids, world saves, day changes, and operator activity, with UTC daily files, configurable retention, bounded background writes, and live config hot-reload.
+- LiveMap console commands and admin actions now produce operator audit events with sanitized `X-Operator` attribution, success or failure details, and automatic secret redaction; token-authenticated requests without panel attribution are recorded as `unknown` without ever storing token values.
+- The LiveMap web console now keeps a shared, persistent 200-command journal with bounded 300-character output summaries, monotonic cursors through `GET /api/console/history`, restart-safe recall, and operator-prefixed command history on load.
+- `vo doctor` and LiveMap `GET /api/stats` now report activity-log health, including the current UTC file, events written today, and time since the last successful write.
 
 ## [0.8.1] - 2026-07-20
 

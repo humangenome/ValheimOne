@@ -413,6 +413,9 @@
     var consoleMetaRequestPending = false;
     var consoleMetaLoaded = false;
     var consoleMetaPromise = null;
+    var consoleHistoryLoaded = false;
+    var consoleHistoryPromise = null;
+    var pendingConsoleLogPayloads = [];
     var consoleCursor = 0;
     var consoleFollowLog = true;
     var consoleCommands = [];
@@ -657,7 +660,7 @@
 
         startConsolePolling();
         loadConsoleMeta();
-        pollConsoleLog();
+        loadConsoleHistory().then(pollConsoleLog);
         pollConsoleStats();
         loadBanList();
         renderConsolePlayers();
@@ -677,6 +680,7 @@
             return;
         }
 
+        loadConsoleHistory();
         setActiveTab(requestedTab, false);
     }
 
@@ -1409,6 +1413,17 @@
     }
 
     function handleConsoleLogPayload(payload, preserveNewerCursor) {
+        if (!consoleHistoryLoaded) {
+            pendingConsoleLogPayloads.push({
+                payload: payload,
+                preserveNewerCursor: preserveNewerCursor
+            });
+            if (pendingConsoleLogPayloads.length > 20) {
+                pendingConsoleLogPayloads.shift();
+            }
+            return;
+        }
+
         var previousCursor = consoleCursor;
         var nextCursor = payload ? Number(payload.cursor) : NaN;
         var cursorReset = Number.isFinite(nextCursor) && nextCursor < previousCursor &&
@@ -1434,8 +1449,70 @@
         clearConsoleFailure("log");
     }
 
+    function renderConsoleHistory(payload) {
+        var entries = payload && Array.isArray(payload.entries) ? payload.entries : [];
+        var recalled = [];
+        entries.forEach(function (entry) {
+            var operatorName = entry && typeof entry.operator === "string" && entry.operator.trim()
+                ? entry.operator.trim()
+                : "unknown";
+            var command = entry && typeof entry.command === "string" ? entry.command : "";
+            if (!command) {
+                return;
+            }
+
+            recalled.push({
+                kind: "command",
+                text: "[" + operatorName + "] " + command
+            });
+            var output = entry && typeof entry.output === "string" ? entry.output : "";
+            if (output) {
+                recalled.push({
+                    kind: entry.status === "error" ? "error" : "output",
+                    text: entry.status === "error" ? "! " + output : output
+                });
+            }
+        });
+        appendConsoleEntries(recalled);
+
+        commandHistory = entries.map(function (entry) {
+            return entry && typeof entry.command === "string" ? entry.command : "";
+        }).filter(function (command) {
+            return Boolean(command);
+        }).slice(-COMMAND_HISTORY_LIMIT);
+        commandHistoryIndex = commandHistory.length;
+    }
+
+    async function loadConsoleHistory() {
+        if (consoleHistoryLoaded) {
+            return;
+        }
+        if (consoleHistoryPromise) {
+            return consoleHistoryPromise;
+        }
+
+        consoleHistoryPromise = (async function () {
+            try {
+                var payload = await fetchConsoleJson("/api/console/history?cursor=0&max=200");
+                renderConsoleHistory(payload);
+                clearConsoleFailure("history");
+            } catch (error) {
+                reportConsoleFailure("history", "Console history", error);
+            } finally {
+                consoleHistoryLoaded = true;
+                consoleHistoryPromise = null;
+                var pending = pendingConsoleLogPayloads;
+                pendingConsoleLogPayloads = [];
+                pending.forEach(function (record) {
+                    handleConsoleLogPayload(record.payload, record.preserveNewerCursor);
+                });
+            }
+        }());
+        return consoleHistoryPromise;
+    }
+
     async function pollConsoleLog() {
-        if (!consoleIsActive() || consoleLogRequestPending ||
+        if (!consoleIsActive() || !consoleHistoryLoaded || consoleLogRequestPending ||
             (eventSourceOpen && eventSourceLogFlowing)) {
             return;
         }
