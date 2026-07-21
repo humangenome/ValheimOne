@@ -2,7 +2,7 @@
 
 All notable changes to ValheimOne will be documented in this file. This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and intends to use [Semantic Versioning](https://semver.org/spec/v2.0.0.html) after its first release.
 
-## [Unreleased]
+## [0.8.0] - 2026-07-20
 
 ### Added
 
