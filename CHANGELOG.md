@@ -2,6 +2,12 @@
 
 All notable changes to ValheimOne will be documented in this file. This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and intends to use [Semantic Versioning](https://semver.org/spec/v2.0.0.html) after its first release.
 
+## [Unreleased]
+
+### Added
+
+- Opt-in, server-only `[Discord]` webhook notifications for player joins and leaves, deaths with a last-known biome when available, raid starts and ends, world saves, and in-game day changes. Delivery uses a bounded background queue, two-second batches of up to ten embeds, TLS 1.2, five-second request timeouts, one retry, overflow dropping with a single warning, and a bounded shutdown flush; all settings hot-reload, while `WebhookUrl` is never logged or synchronized to clients.
+
 ## [0.8.1] - 2026-07-20
 
 ### Security

@@ -11,6 +11,8 @@ internal static class WorldSavePatch
     private static long _lastSavedUnixMs;
     private static ModLogger? _log;
 
+    public static event Action? WorldSaved;
+
     public static long LastSavedUnixMs => Interlocked.Read(ref _lastSavedUnixMs);
 
     public static void ApplyPatches(Harmony harmony, ModLogger log)
@@ -33,14 +35,41 @@ internal static class WorldSavePatch
             Interlocked.Exchange(
                 ref _lastSavedUnixMs,
                 DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+            Action? callbacks = WorldSaved;
+            if (callbacks == null)
+            {
+                return;
+            }
+
+            foreach (Action callback in callbacks.GetInvocationList())
+            {
+                try
+                {
+                    callback();
+                }
+                catch (Exception exception)
+                {
+                    try
+                    {
+                        _log?.Warning(
+                            $"[WorldSave] notification callback failed: " +
+                            $"{exception.GetType().Name}.");
+                    }
+                    catch
+                    {
+                        // Never allow diagnostics to escape into the world-save path.
+                    }
+                }
+            }
         }
         catch (Exception exception)
         {
             try
             {
                 _log?.Warning(
-                    $"[LiveMap] could not record world save time: " +
-                    $"{exception.GetType().Name}: {exception.Message}");
+                    $"[WorldSave] could not record world save time: " +
+                    $"{exception.GetType().Name}.");
             }
             catch
             {

@@ -12,7 +12,7 @@
 [![Valheim — Dedicated Server](https://img.shields.io/badge/Valheim-Dedicated_Server-1b2838.svg?logo=steam&logoColor=white)](https://store.steampowered.com/app/892970/)
 [![Client Mods: Optional](https://img.shields.io/badge/Client_Mods-Optional-brightgreen.svg)](#features)
 
-Everything your Valheim dedicated server is missing: a live map, a web console, server-enforced settings, and a server query endpoint — with vanilla-compatible server features and synchronized client features where game ownership requires them.
+Everything your Valheim dedicated server is missing: a live map, a web console, Discord notifications, server-enforced settings, and a server query endpoint — with vanilla-compatible server features and synchronized client features where game ownership requires them.
 
 _ValheimOne is a community project and is not affiliated with or endorsed by Iron Gate Studio._
 
@@ -56,6 +56,12 @@ The command input autocompletes against the server's whitelist as you type:
 
 ![ValheimOne console command autocomplete](docs/screenshots/console-autocomplete.png)
 
+### Discord Notifications
+
+The opt-in, server-only `[Discord]` feature sends batched webhook embeds for player joins and leaves, deaths (including the last known biome when available), raid starts and ends, world saves, and new in-game days. Join, leave, death, and raid notifications default on; the noisier world-save and day-change notifications default off. Set `WebhookUrl`, optionally set `ServerDisplayName` (otherwise the world name is used), and enable the section. Changes to the feature gate, URL, display name, and event toggles apply live.
+
+Webhook delivery is isolated to a bounded background worker with HTTPS/TLS 1.2, short timeouts, and limited retries. The webhook URL is treated as sensitive: it is never logged or synchronized to clients, and notification payloads contain only the configured/world display name and event text—not passwords, join codes, connection addresses, platform IDs, or tokens. This feature works independently of the Live Map and Server Query modules.
+
 ### Server-Enforced Settings
 
 Uses one `BepInEx/config/valheimone.cfg` file as the server ruleset. Typed sections keep Boolean, integer, float, and percentage settings explicit; every feature has its own `Enabled = false` gate, so installing ValheimOne changes nothing until an operator opts in.
@@ -64,7 +70,7 @@ The enforcement chassis exchanges `VO_Hello`, `VO_Config`, and `VO_Ack` over rou
 
 ![ValheimOne server log: enforced ruleset and live config hot-reload](docs/screenshots/enforced-settings.png)
 
-Features use three modes: **server-authoritative** logic runs under server ownership and can support vanilla clients; **synced** logic requires a compatible client and receives the server overlay; **client-only** settings stay local and are never pushed. The current gameplay modules are:
+Features use four modes: **server-authoritative** logic runs under server ownership and can support vanilla clients; **synced** logic requires a compatible client and receives the server overlay; **client-only** settings stay local and are never pushed; and **server-only** integrations run only on the host and are never synchronized. The current gameplay modules are:
 
 - `Player` (`[Player]`) — sets carry weight, the Megingjord bonus, auto-pickup range, encumbered pickup, and rested seconds per comfort level. **Mode:** server-authoritative.
 - `PlayerStamina` (`[Stamina]`) — scales stamina regeneration, delay, movement drains, and action costs. **Mode:** synced.

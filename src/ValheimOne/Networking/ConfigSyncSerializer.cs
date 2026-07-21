@@ -17,13 +17,19 @@ internal static class ConfigSyncSerializer
         var result = new StringBuilder();
         foreach (FeatureDefinition feature in registry.Features)
         {
-            if (feature.Classification == FeatureClassification.ClientOnly)
+            if (feature.Classification == FeatureClassification.ClientOnly ||
+                feature.Classification == FeatureClassification.ServerOnly)
             {
                 continue;
             }
 
             foreach (IConfigEntry entry in feature.Keys)
             {
+                if (entry.Definition.IsSensitive)
+                {
+                    continue;
+                }
+
                 result.Append('[')
                     .Append(feature.Section)
                     .Append("] / ")

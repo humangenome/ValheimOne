@@ -130,7 +130,6 @@ public sealed class LiveMapModule : IFeatureModule
     {
         VoCommands.ApplyPatches(harmony);
         MapPingPatch.ApplyPatches(harmony, () => _feature.Enabled.Value, _log);
-        WorldSavePatch.ApplyPatches(harmony, _log);
         if (LiveMapBehaviour.Instance != null)
         {
             _log.Warning("[LiveMap] behaviour already exists; skipping duplicate initialization.");

@@ -63,12 +63,18 @@ public sealed class ValheimOneConfig
                 continue;
             }
 
-            if (feature.Classification == FeatureClassification.ClientOnly)
+            if (feature.Classification == FeatureClassification.ClientOnly ||
+                feature.Classification == FeatureClassification.ServerOnly)
             {
                 continue;
             }
 
             if (!feature.TryGetKey(key, out IConfigEntry? entry) || entry == null)
+            {
+                continue;
+            }
+
+            if (entry.Definition.IsSensitive)
             {
                 continue;
             }

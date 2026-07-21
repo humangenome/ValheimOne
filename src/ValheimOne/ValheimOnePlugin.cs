@@ -4,6 +4,7 @@ using System.IO;
 using BepInEx;
 using HarmonyLib;
 using ValheimOne.Configuration;
+using ValheimOne.Discord;
 using ValheimOne.Infrastructure;
 using ValheimOne.Modules;
 using ValheimOne.Networking;
@@ -22,6 +23,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
     private Harmony? _harmony;
     private ConfigHotReloadWatcher? _configWatcher;
     private IVersionHandshake? _versionHandshake;
+    private DiscordModule? _discordModule;
     private ValheimOneConfig? _settings;
     private ModLogger? _log;
 
@@ -35,6 +37,8 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
         _settings = settings;
         var serverConfig = new ServerConfig(settings.Features);
         var mapSharingModule = new MapSharingModule(settings.Features, _log);
+        var discordModule = new DiscordModule(settings.Features, _log);
+        _discordModule = discordModule;
         IReadOnlyList<IFeatureModule> modules = new IFeatureModule[]
         {
             new PlayerModule(settings.Features),
@@ -65,6 +69,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
             mapSharingModule,
             new ValheimOne.LiveMap.LiveMapModule(settings.Features),
             new ValheimOne.Query.QueryModule(settings.Features),
+            discordModule,
             new ServerHostModule(serverConfig),
         };
 
@@ -162,9 +167,18 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
                     ? " (feature gate — patches stay installed; enabling/disabling applies live, " +
                       "new patch topology requires restart)"
                     : string.Empty;
-                log.Info(
-                    $"Config hot-reload: [{entry.Definition.Section}] {entry.Definition.Name}: " +
-                    $"{beforeValue} -> {afterValue} (applied live){featureGateNote}");
+                if (entry.Definition.IsSensitive)
+                {
+                    log.Info(
+                        $"Config hot-reload: [{entry.Definition.Section}] " +
+                        $"{entry.Definition.Name}: value changed (applied live){featureGateNote}");
+                }
+                else
+                {
+                    log.Info(
+                        $"Config hot-reload: [{entry.Definition.Section}] {entry.Definition.Name}: " +
+                        $"{beforeValue} -> {afterValue} (applied live){featureGateNote}");
+                }
             }
         }
 
@@ -182,6 +196,9 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
     {
         _configWatcher?.Dispose();
         _configWatcher = null;
+
+        _discordModule?.Shutdown();
+        _discordModule = null;
         _settings = null;
 
         _versionHandshake?.Shutdown();

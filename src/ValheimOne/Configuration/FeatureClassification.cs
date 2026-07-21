@@ -6,4 +6,5 @@ public enum FeatureClassification
     RequiresClient,
     ClientOnly,
     Synced,
+    ServerOnly,
 }

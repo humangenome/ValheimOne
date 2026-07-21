@@ -20,6 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Reference Include="System.Net.Http"><Private>false</Private></Reference>
     <Reference Include="BepInEx"><HintPath>$(BepInExCore)/BepInEx.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="0Harmony"><HintPath>$(BepInExCore)/0Harmony.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="assembly_valheim"><HintPath>$(ValheimPublicized)/assembly_valheim_publicized.dll</HintPath><Private>false</Private></Reference>
