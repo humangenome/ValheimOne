@@ -280,7 +280,8 @@
         tombstone: false,
         densityDots: false,
         iconSize: "m",
-        legendCollapsed: false
+        legendCollapsed: false,
+        mapStyle: "default"
     };
 
     var query = new URLSearchParams(window.location.search);
@@ -371,6 +372,10 @@
     var currentTimeOfDay = null;
     var currentStatusDay = null;
     var renderRevision = "0";
+    var latestMapStatus = null;
+    var displayedMapStyle = "default";
+    var mapStyleProbeRequested = "";
+    var renderStatusFailureTimer = 0;
     var lastSavedUnixMs = 0;
     var savedBadgeTimer = 0;
     var dayToastTimer = 0;
@@ -525,44 +530,79 @@
             "token=" + encodeURIComponent(token);
     }
 
-    function versionedMapUrl(path) {
+    function sanitizeMapStyle(style) {
+        return style === "topo" || style === "chart" ? style : "default";
+    }
+
+    function mapStyleStatus(statusMap, style) {
+        if (style === "default") {
+            return statusMap || null;
+        }
+        if (!statusMap || !statusMap.styles ||
+            !Object.prototype.hasOwnProperty.call(statusMap.styles, style)) {
+            return null;
+        }
+        return statusMap.styles[style];
+    }
+
+    function mapStyleRevision(style) {
+        if (style === "default") {
+            return renderRevision;
+        }
+        var status = mapStyleStatus(latestMapStatus, style);
+        return status && typeof status.revision === "string" && status.revision
+            ? status.revision
+            : "0";
+    }
+
+    function mapStyleCacheKey(style) {
+        return style + "|" + mapStyleRevision(style);
+    }
+
+    function versionedMapUrl(path, style) {
+        style = sanitizeMapStyle(style || displayedMapStyle);
+        if (style === "default") {
+            return authorizedUrl(path + (path.indexOf("?") === -1 ? "?" : "&") +
+                "v=" + encodeURIComponent(renderRevision));
+        }
+
         return authorizedUrl(path + (path.indexOf("?") === -1 ? "?" : "&") +
-            "v=" + encodeURIComponent(renderRevision));
+            "style=" + encodeURIComponent(style) +
+            "&v=" + encodeURIComponent(mapStyleRevision(style)));
     }
 
     function updateRenderRevision(statusMap) {
+        var previousCacheKey = mapStyleCacheKey(displayedMapStyle);
         var nextRevision = statusMap && typeof statusMap.renderRevision === "string" &&
             statusMap.renderRevision ? statusMap.renderRevision : "0";
-        if (nextRevision === renderRevision) {
-            refreshBaseOverlay();
-            return;
-        }
-
+        latestMapStatus = statusMap || null;
         renderRevision = nextRevision;
-        if (tileLayer) {
+        var nextCacheKey = mapStyleCacheKey(displayedMapStyle);
+        if (tileLayer && previousCacheKey !== nextCacheKey) {
             tileLayer.setUrl(versionedMapUrl("/tiles/{z}/{x}-{y}.png"));
         }
         refreshBaseOverlay();
-        if (minimapImage) {
+        if (minimapImage && previousCacheKey !== nextCacheKey) {
             minimapImage.src = versionedMapUrl("/base.png");
         }
     }
 
     function refreshBaseOverlay() {
+        var cacheKey = mapStyleCacheKey(displayedMapStyle);
         if (!map || !worldBounds ||
-            renderRevision === baseOverlayDisplayedRevision ||
-            renderRevision === baseOverlayRequestedRevision) {
+            cacheKey === baseOverlayDisplayedRevision ||
+            cacheKey === baseOverlayRequestedRevision) {
             return;
         }
 
-        var revision = renderRevision;
-        var url = versionedMapUrl("/base.png");
+        var style = displayedMapStyle;
+        var url = versionedMapUrl("/base.png", style);
         var loadSequence = ++baseOverlayLoadSequence;
         var image = new window.Image();
-        baseOverlayRequestedRevision = revision;
+        baseOverlayRequestedRevision = cacheKey;
         image.onload = function () {
             if (loadSequence !== baseOverlayLoadSequence ||
-                revision !== renderRevision || !map || !worldBounds) {
+                cacheKey !== mapStyleCacheKey(displayedMapStyle) || !map || !worldBounds) {
                 return;
             }
 
@@ -576,16 +616,130 @@
                     pane: "basePane"
                 }).addTo(map);
             }
-            baseOverlayDisplayedRevision = revision;
-            baseOverlayRequestedRevision = revision;
+            baseOverlayDisplayedRevision = cacheKey;
+            baseOverlayRequestedRevision = cacheKey;
         };
         image.onerror = function () {
             if (loadSequence === baseOverlayLoadSequence &&
-                baseOverlayRequestedRevision === revision) {
+                baseOverlayRequestedRevision === cacheKey) {
                 baseOverlayRequestedRevision = null;
             }
         };
         image.src = url;
+    }
+
+    function mapStyleName(style) {
+        return style === "topo" ? "Topographic" : style === "chart" ? "Old Chart" : "Default";
+    }
+
+    function mapStyleRenderLabel(style) {
+        return style === "topo" ? "topographic map" : "old chart map";
+    }
+
+    function syncMapStyleControl() {
+        if (!layersRows) {
+            return;
+        }
+        layersRows.querySelectorAll("[data-map-style]").forEach(function (button) {
+            var isSelected = button.dataset.mapStyle === layerSettings.mapStyle;
+            button.classList.toggle("is-selected", isSelected);
+            button.setAttribute("aria-pressed", String(isSelected));
+        });
+    }
+
+    function clearMapStyleFailureMessage() {
+        window.clearTimeout(renderStatusFailureTimer);
+        renderStatusFailureTimer = 0;
+    }
+
+    function showMapStyleFailure(style) {
+        clearMapStyleFailureMessage();
+        elements.mapStatus.hidden = false;
+        elements.mapStatus.querySelector(".spinner").hidden = true;
+        elements.mapStatusText.textContent = mapStyleName(style) +
+            " map rendering failed — reverted to Default";
+        renderStatusFailureTimer = window.setTimeout(function () {
+            renderStatusFailureTimer = 0;
+            updateRenderStatus(latestMapStatus);
+        }, 4000);
+    }
+
+    function triggerMapStyleRender(style) {
+        if (style === "default" || mapStyleProbeRequested === style) {
+            return;
+        }
+
+        mapStyleProbeRequested = style;
+        fetch(versionedMapUrl("/base.png", style), {
+            cache: "no-store",
+            credentials: "same-origin"
+        }).catch(function () {
+            return;
+        });
+    }
+
+    function setDisplayedMapStyle(style) {
+        style = sanitizeMapStyle(style);
+        var previousStyle = displayedMapStyle;
+        var previousCacheKey = mapStyleCacheKey(previousStyle);
+        displayedMapStyle = style;
+        var nextCacheKey = mapStyleCacheKey(displayedMapStyle);
+        if (tileLayer && (previousStyle !== displayedMapStyle ||
+            previousCacheKey !== nextCacheKey)) {
+            tileLayer.setUrl(versionedMapUrl("/tiles/{z}/{x}-{y}.png"));
+        }
+        refreshBaseOverlay();
+        if (minimapImage && (previousStyle !== displayedMapStyle ||
+            previousCacheKey !== nextCacheKey)) {
+            minimapImage.src = versionedMapUrl("/base.png");
+        }
+        applyFogStatus();
+    }
+
+    function reconcileMapStyle(statusMap) {
+        var requestedStyle = sanitizeMapStyle(layerSettings.mapStyle);
+        var requestedStatus = mapStyleStatus(statusMap, requestedStyle);
+        if (requestedStyle === "default") {
+            mapStyleProbeRequested = "";
+            setDisplayedMapStyle("default");
+            syncMapStyleControl();
+            return;
+        }
+        if (!statusMap || statusMap.state !== "ready") {
+            syncMapStyleControl();
+            return;
+        }
+
+        if (requestedStatus && requestedStatus.state === "failed") {
+            layerSettings.mapStyle = "default";
+            mapStyleProbeRequested = "";
+            saveLayerSettings();
+            setDisplayedMapStyle("default");
+            syncMapStyleControl();
+            scheduleHashUpdate();
+            showMapStyleFailure(requestedStyle);
+            return;
+        }
+
+        if (requestedStatus && requestedStatus.state === "ready") {
+            mapStyleProbeRequested = "";
+            setDisplayedMapStyle(requestedStyle);
+        } else {
+            triggerMapStyleRender(requestedStyle);
+        }
+        syncMapStyleControl();
+    }
+
+    function selectMapStyle(style) {
+        style = sanitizeMapStyle(style);
+        clearMapStyleFailureMessage();
+        layerSettings.mapStyle = style;
+        mapStyleProbeRequested = "";
+        saveLayerSettings();
+        syncMapStyleControl();
+        scheduleHashUpdate();
+        reconcileMapStyle(latestMapStatus);
+        updateRenderStatus(latestMapStatus);
     }
 
     async function fetchJson(path) {
@@ -1969,6 +2123,9 @@
                 if (["s", "m", "l"].indexOf(saved.iconSize) !== -1) {
                     settings.iconSize = saved.iconSize;
                 }
+                if (["default", "topo", "chart"].indexOf(saved.mapStyle) !== -1) {
+                    settings.mapStyle = saved.mapStyle;
+                }
                 if (saved.dungeon === true) {
                     POI_CATEGORIES.find(function (category) {
                         return category.key === "dungeons";
@@ -2852,8 +3009,33 @@
     }
 
     function updateRenderStatus(mapStatus) {
+        if (renderStatusFailureTimer) {
+            return;
+        }
+        if (consecutiveStatusFailures >= 3) {
+            elements.mapStatus.hidden = false;
+            elements.mapStatusText.textContent = "Server offline — waiting to reconnect";
+            elements.mapStatus.querySelector(".spinner").hidden = true;
+            return;
+        }
         if (mapStatus && mapStatus.state === "ready") {
-            elements.mapStatus.hidden = true;
+            var requestedStyle = sanitizeMapStyle(layerSettings.mapStyle);
+            var requestedStatus = mapStyleStatus(mapStatus, requestedStyle);
+            if (requestedStyle === "default" ||
+                (requestedStatus && requestedStatus.state === "ready")) {
+                elements.mapStatus.hidden = true;
+                return;
+            }
+
+            elements.mapStatus.hidden = false;
+            var styleSpinner = elements.mapStatus.querySelector(".spinner");
+            styleSpinner.hidden = false;
+            var styleProgress = requestedStatus ? Number(requestedStatus.progress) : 0;
+            var stylePercentage = Number.isFinite(styleProgress)
+                ? Math.round(Math.max(0, Math.min(1, styleProgress)) * 100)
+                : 0;
+            elements.mapStatusText.textContent = "Rendering " +
+                mapStyleRenderLabel(requestedStyle) + " — " + stylePercentage + "%";
             return;
         }
 
@@ -2984,6 +3166,12 @@
         map.getPane("wardRadiusPane").style.zIndex = "390";
         map.getPane("wardRadiusPane").style.pointerEvents = "none";
 
+        applyInitialHashState(Math.max(0, overviewZoom - 1));
+        var initialStyle = sanitizeMapStyle(layerSettings.mapStyle);
+        var initialStyleStatus = mapStyleStatus(statusMap, initialStyle);
+        displayedMapStyle = initialStyle !== "default" && initialStyleStatus &&
+            initialStyleStatus.state === "ready" ? initialStyle : "default";
+
         // With fog active, keep an ocean-colored cover over the pane until the
         // fog image has loaded so the unfogged world never flashes on first paint.
         if (fogAvailable) {
@@ -3026,7 +3214,6 @@
         createCoordinateControl();
         createMinimapControl();
         applyDensityPreferences();
-        applyInitialHashState(Math.max(0, overviewZoom - 1));
         map.on("dragstart", function () {
             if (!cinemaState) {
                 clearFollow();
@@ -4293,16 +4480,26 @@
 
     function applyInitialHashState(defaultZoom) {
         var parameters = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+        var settingsChanged = false;
         pendingCinemaFromHash = parameters.has("cinema");
+        var hashStyle = parameters.get("st");
+        if (["default", "topo", "chart"].indexOf(hashStyle) !== -1) {
+            layerSettings.mapStyle = hashStyle;
+            settingsChanged = true;
+        }
         var layerKeys = parameters.get("ly");
         if (layerKeys) {
             layerKeys.split(",").forEach(function (key) {
                 if (key !== "legendCollapsed" && key !== "densityDots" &&
+                    key !== "iconSize" && key !== "mapStyle" &&
                     typeof LAYER_DEFAULTS[key] === "boolean" &&
                     Object.prototype.hasOwnProperty.call(layerSettings, key)) {
                     layerSettings[key] = true;
+                    settingsChanged = true;
                 }
             });
+        }
+        if (settingsChanged) {
             saveLayerSettings();
             renderLayerRows();
         }
@@ -4365,8 +4562,12 @@
         parameters.set("x", String(Math.round(center.x)));
         parameters.set("z", String(Math.round(center.z)));
         parameters.set("zm", String(Number(map.getZoom().toFixed(2))));
+        if (layerSettings.mapStyle !== "default") {
+            parameters.set("st", layerSettings.mapStyle);
+        }
         var enabledNonDefaultLayers = Object.keys(layerSettings).filter(function (key) {
             return key !== "legendCollapsed" && key !== "densityDots" &&
+                key !== "iconSize" && key !== "mapStyle" &&
                 layerSettings[key] === true &&
                 LAYER_DEFAULTS[key] === false;
         });
@@ -4547,6 +4748,7 @@
 
         var overlayFeeds = hasLiveAccess() ? ["fog", "entities"] : ["fog"];
         var overlaysBody = appendLayerSection("overlays", "Overlays", overlayFeeds);
+        appendMapStyleControl(overlaysBody);
         if (fogAvailable) {
             appendLayerRow(overlaysBody, "fog", "Fog", "≈", "fog", { counted: false });
         }
@@ -4644,6 +4846,36 @@
         section.appendChild(body);
         layersRows.appendChild(section);
         return body;
+    }
+
+    function appendMapStyleControl(parent) {
+        var row = document.createElement("div");
+        var title = document.createElement("span");
+        var segments = document.createElement("div");
+        row.className = "layer-map-style";
+        title.className = "layer-map-style-title";
+        title.textContent = "Map style";
+        segments.className = "layer-map-style-segments";
+        segments.setAttribute("role", "group");
+        segments.setAttribute("aria-label", "Map style");
+        [["default", "Default"], ["topo", "Topographic"], ["chart", "Old Chart"]]
+            .forEach(function (choice) {
+                var button = document.createElement("button");
+                var isSelected = layerSettings.mapStyle === choice[0];
+                button.type = "button";
+                button.className = "layer-map-style-option" +
+                    (isSelected ? " is-selected" : "");
+                button.dataset.mapStyle = choice[0];
+                button.textContent = choice[1];
+                button.setAttribute("aria-pressed", String(isSelected));
+                button.addEventListener("click", function () {
+                    selectMapStyle(choice[0]);
+                });
+                segments.appendChild(button);
+            });
+        row.appendChild(title);
+        row.appendChild(segments);
+        parent.appendChild(row);
     }
 
     function setSectionLayers(section, isEnabled) {
@@ -8346,7 +8578,18 @@
         applyFogStatus();
     }
 
+    function fogMapStyle() {
+        return displayedMapStyle === "chart" ? "chart" : "default";
+    }
+
+    function fogCacheKey(revision) {
+        return fogMapStyle() + "|" + revision;
+    }
+
     function fogUrl(revision) {
+        if (fogMapStyle() === "chart") {
+            return authorizedUrl("/fog.png?style=chart&rev=" + encodeURIComponent(revision));
+        }
         return authorizedUrl("/fog.png?rev=" + encodeURIComponent(revision));
     }
 
@@ -8399,20 +8642,22 @@
         }
 
         var revision = fogStatus.revision;
+        var cacheKey = fogCacheKey(revision);
         var url = fogUrl(revision);
         if (!fogOverlay) {
-            if (revision === fogRequestedRevision) {
+            if (cacheKey === fogRequestedRevision) {
                 syncLayerVisibility();
                 return;
             }
 
             // Preload the first fog image before creating the overlay so the
             // cover only lifts once the fogged view is actually renderable.
-            fogRequestedRevision = revision;
+            fogRequestedRevision = cacheKey;
             var initialSequence = ++fogLoadSequence;
             var initialImage = new window.Image();
             initialImage.onload = function () {
-                if (initialSequence !== fogLoadSequence || !fogAvailable || fogOverlay) {
+                if (initialSequence !== fogLoadSequence || !fogAvailable || fogOverlay ||
+                    cacheKey !== fogCacheKey(fogStatus.revision)) {
                     return;
                 }
 
@@ -8422,14 +8667,14 @@
                     opacity: 1,
                     pane: "fogPane"
                 });
-                fogDisplayedRevision = revision;
-                fogRequestedRevision = revision;
+                fogDisplayedRevision = cacheKey;
+                fogRequestedRevision = cacheKey;
                 feedLastUpdated.fog = Date.now();
                 syncLayerVisibility();
                 hideFogCover();
             };
             initialImage.onerror = function () {
-                if (initialSequence === fogLoadSequence && fogRequestedRevision === revision) {
+                if (initialSequence === fogLoadSequence && fogRequestedRevision === cacheKey) {
                     fogRequestedRevision = null;
                 }
             };
@@ -8437,28 +8682,28 @@
             return;
         }
 
-        if (revision === fogDisplayedRevision || revision === fogRequestedRevision) {
+        if (cacheKey === fogDisplayedRevision || cacheKey === fogRequestedRevision) {
             syncLayerVisibility();
             return;
         }
 
-        fogRequestedRevision = revision;
+        fogRequestedRevision = cacheKey;
         var loadSequence = ++fogLoadSequence;
         var image = new window.Image();
         image.onload = function () {
             if (loadSequence !== fogLoadSequence || !fogAvailable ||
-                revision !== fogStatus.revision || !fogOverlay) {
+                cacheKey !== fogCacheKey(fogStatus.revision) || !fogOverlay) {
                 return;
             }
 
             fogOverlay.setUrl(url);
-            fogDisplayedRevision = revision;
-            fogRequestedRevision = revision;
+            fogDisplayedRevision = cacheKey;
+            fogRequestedRevision = cacheKey;
             feedLastUpdated.fog = Date.now();
             syncLayerVisibility();
         };
         image.onerror = function () {
-            if (loadSequence === fogLoadSequence && fogRequestedRevision === revision) {
+            if (loadSequence === fogLoadSequence && fogRequestedRevision === cacheKey) {
                 fogRequestedRevision = null;
             }
         };
@@ -8479,13 +8724,14 @@
         updateWorldMetrics(status);
         updateLastSaved(status.lastSavedUnixMs);
         renderPlayerCount(status.players);
-        updateRenderStatus(status.map);
         updateRenderRevision(status.map);
         updateView(status.view);
         updateEntityAvailability(status);
         updateConsoleAvailability(status);
         updateFogStatus(status.map && status.map.fog);
         ensureMap(status.map);
+        reconcileMapStyle(status.map);
+        updateRenderStatus(status.map);
         applyRaidEvent(status.event);
         renderCinemaHud();
         tryBootCinemaFromHash();
@@ -8679,6 +8925,7 @@
         window.clearTimeout(eventSourceRetryTimer);
         window.clearTimeout(hashUpdateTimer);
         window.clearTimeout(entityFocusPollTimer);
+        window.clearTimeout(renderStatusFailureTimer);
         stopAllLazyPoiPolling();
         window.clearInterval(popupRefreshTimer);
         window.clearInterval(layersStalenessTimer);
