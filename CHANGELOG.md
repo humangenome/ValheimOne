@@ -2,6 +2,12 @@
 
 All notable changes to ValheimOne will be documented in this file. This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and intends to use [Semantic Versioning](https://semver.org/spec/v2.0.0.html) after its first release.
 
+## [Unreleased]
+
+### Added
+
+- LiveMap raid popups now show a live gold progress bar with the event's remaining time.
+
 ## [0.9.0] - 2026-07-21
 
 ### Added

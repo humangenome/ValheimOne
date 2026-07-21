@@ -347,6 +347,7 @@
     var selectedTrailTargets = new Map();
     var openPopupTrailTarget = null;
     var popupRefreshTimer = 0;
+    var raidProgressTimer = 0;
     var nextShipTrackId = 1;
     var poiLayers = new Map();
     var poiRecords = new Map();
@@ -2785,8 +2786,14 @@
                 );
             }
             window.clearInterval(popupRefreshTimer);
+            window.clearInterval(raidProgressTimer);
+            raidProgressTimer = 0;
             refreshOpenPopupFooter();
             popupRefreshTimer = window.setInterval(refreshOpenPopupContent, 5000);
+            if (source && source._voPopupKind === "raid") {
+                refreshOpenRaidProgress();
+                raidProgressTimer = window.setInterval(refreshOpenRaidProgress, 1000);
+            }
             renderTrails();
             renderPortalLinks();
         });
@@ -2795,6 +2802,8 @@
             openPopupTrailTarget = null;
             window.clearInterval(popupRefreshTimer);
             popupRefreshTimer = 0;
+            window.clearInterval(raidProgressTimer);
+            raidProgressTimer = 0;
             renderTrails();
             renderPortalLinks();
         });
@@ -7382,19 +7391,114 @@
         return buildTombstonePopup(entity);
     }
 
+    function raidProgressState(event) {
+        if (!event || !Number.isFinite(event.duration) || event.duration <= 0) {
+            return null;
+        }
+
+        var sampledAgo = feedLastUpdated.status > 0
+            ? Math.max(0, Date.now() - feedLastUpdated.status) / 1000
+            : 0;
+        var elapsed = Math.max(0, Math.min(
+            event.duration,
+            event.elapsed + sampledAgo
+        ));
+        return {
+            elapsed: elapsed,
+            percentage: elapsed / event.duration * 100,
+            remaining: Math.max(0, event.duration - elapsed)
+        };
+    }
+
+    function formatRaidRemaining(seconds) {
+        if (seconds <= 10) {
+            return "ending soon";
+        }
+
+        var wholeSeconds = Math.ceil(seconds);
+        var minutes = Math.floor(wholeSeconds / 60);
+        var remainder = wholeSeconds % 60;
+        return minutes > 0
+            ? minutes + "m " + remainder + "s left"
+            : remainder + "s left";
+    }
+
+    function updateRaidProgress(element, event) {
+        var state = raidProgressState(event);
+        if (!element || !state) {
+            return;
+        }
+
+        var fill = element.querySelector(".vo-raid-progress-fill");
+        var text = element.querySelector(".vo-raid-progress-text");
+        var remainingText = formatRaidRemaining(state.remaining);
+        element.setAttribute("aria-valuenow", String(Math.round(state.percentage)));
+        element.setAttribute("aria-valuetext", remainingText);
+        if (fill) {
+            fill.style.width = state.percentage.toFixed(1) + "%";
+        }
+        if (text) {
+            text.textContent = remainingText;
+        }
+    }
+
+    function buildRaidProgress(event) {
+        if (!raidProgressState(event)) {
+            return null;
+        }
+
+        var progress = document.createElement("span");
+        var track = document.createElement("span");
+        var fill = document.createElement("span");
+        var text = document.createElement("span");
+        progress.className = "vo-raid-progress";
+        progress.setAttribute("role", "progressbar");
+        progress.setAttribute("aria-label", "Raid progress");
+        progress.setAttribute("aria-valuemin", "0");
+        progress.setAttribute("aria-valuemax", "100");
+        track.className = "vo-raid-progress-track";
+        fill.className = "vo-raid-progress-fill";
+        text.className = "vo-raid-progress-text";
+        track.appendChild(fill);
+        progress.appendChild(track);
+        progress.appendChild(text);
+        updateRaidProgress(progress, event);
+        return progress;
+    }
+
+    function refreshOpenRaidProgress() {
+        if (!map || !map._popup || !map._popup.getElement() || !currentRaidEvent) {
+            return;
+        }
+
+        var source = map._popup._source;
+        var progress = map._popup.getElement().querySelector(".vo-raid-progress");
+        if (source && source._voPopupKind === "raid" && progress) {
+            updateRaidProgress(progress, currentRaidEvent);
+        }
+    }
+
     function buildRaidPopup() {
         var event = currentRaidEvent;
+        var progress = buildRaidProgress(event);
+        var rows = [{
+            label: "Radius",
+            value: Math.round(event.radius) + " m"
+        }, {
+            label: "Vikings inside",
+            value: String(nearbyPlayers(event.x, event.z, event.radius).length)
+        }];
+        if (progress) {
+            rows.push({
+                label: "Progress",
+                valueNode: progress
+            });
+        }
         return popupShell({
             feed: "status",
             glyph: "◯",
             kicker: "RAID EVENT",
-            rows: [{
-                label: "Radius",
-                value: Math.round(event.radius) + " m"
-            }, {
-                label: "Vikings inside",
-                value: String(nearbyPlayers(event.x, event.z, event.radius).length)
-            }],
+            rows: rows,
             title: event.name
         });
     }
@@ -8928,6 +9032,7 @@
         window.clearTimeout(renderStatusFailureTimer);
         stopAllLazyPoiPolling();
         window.clearInterval(popupRefreshTimer);
+        window.clearInterval(raidProgressTimer);
         window.clearInterval(layersStalenessTimer);
         window.clearInterval(savedBadgeTimer);
         window.clearTimeout(dayToastTimer);

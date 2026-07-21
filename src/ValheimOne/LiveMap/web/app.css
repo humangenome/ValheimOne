@@ -2649,6 +2649,40 @@ body.is-pinging #map .leaflet-overlay-pane path {
     overflow-wrap: anywhere;
 }
 
+.vo-raid-progress {
+    display: flex;
+    width: 100%;
+    flex-direction: column;
+    gap: 4px;
+    padding: 4px 0;
+}
+
+.vo-raid-progress-track {
+    display: block;
+    width: 100%;
+    height: 6px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--panel);
+}
+
+.vo-raid-progress-fill {
+    display: block;
+    width: 0;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--accent);
+    transition: width 0.3s linear;
+}
+
+.vo-raid-progress-text {
+    color: var(--secondary);
+    font-size: 9px;
+    line-height: 1;
+    text-align: right;
+}
+
 .player-health.is-popup {
     width: 100%;
     max-width: 140px;
