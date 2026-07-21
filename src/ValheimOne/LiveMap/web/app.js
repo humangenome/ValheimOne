@@ -29,6 +29,8 @@
     var SHIP_MOVING_SPEED_MPS = 0.3;
     var SHIP_HEADING_LENGTH_M = 30;
     var MAP_PING_LIFETIME_MS = 30000;
+    var CHAT_BUBBLE_LIFETIME_MS = 8000;
+    var CHAT_BUBBLE_LIMIT = 8;
     var SAVED_BADGE_REFRESH_MS = 30000;
     var SAVED_STALE_MS = 30 * 60 * 1000;
     var DAY_TOAST_DURATION_MS = 4000;
@@ -390,6 +392,9 @@
     var pingLayer = null;
     var pendingMapPings = [];
     var activePingMarkers = new Set();
+    var chatLayer = null;
+    var pendingChatBubbles = [];
+    var activeChatBubbles = [];
     var playerLayer = null;
     var pinLayer = null;
     var latestPins = [];
@@ -455,6 +460,7 @@
     var searchResultIndex = -1;
     var currentView = null;
     var sagaEvents = [];
+    var sagaChatEvents = [];
     var sagaCursor = 0;
     var sagaEnabled = null;
     var sagaLoaded = false;
@@ -3644,6 +3650,7 @@
         portalPopupLinkLayer = L.layerGroup().addTo(map);
         wardRadiusLayer = L.layerGroup();
         pingLayer = L.layerGroup().addTo(map);
+        chatLayer = L.layerGroup().addTo(map);
         POI_GROUP_ORDER.forEach(function (group) {
             poiLayers.set(group, L.layerGroup());
             poiRecords.set(group, []);
@@ -3652,6 +3659,7 @@
             entityLayers.set(group, L.layerGroup());
         });
         pendingMapPings.splice(0).forEach(renderMapPing);
+        pendingChatBubbles.splice(0).forEach(renderChatBubble);
     }
 
     function worldToLatLng(worldX, worldZ) {
@@ -4319,6 +4327,181 @@
             unixMs: Number(payload.unixMs) || Date.now(),
             receivedAt: Date.now()
         });
+    }
+
+    function matchingPlayerMarker(playerName) {
+        var normalizedName = playerName.trim().toLowerCase();
+        if (!normalizedName) {
+            return null;
+        }
+
+        var match = null;
+        markerRecords.forEach(function (record) {
+            if (match || !record.player) {
+                return;
+            }
+            var candidateName = typeof record.player.name === "string"
+                ? record.player.name.trim().toLowerCase()
+                : "";
+            if (candidateName === normalizedName) {
+                match = record;
+            }
+        });
+        return match;
+    }
+
+    function removeChatBubble(record) {
+        if (!record || record.removed) {
+            return;
+        }
+
+        record.removed = true;
+        window.clearTimeout(record.timer);
+        if (chatLayer && record.marker) {
+            chatLayer.removeLayer(record.marker);
+        }
+        var index = activeChatBubbles.indexOf(record);
+        if (index !== -1) {
+            activeChatBubbles.splice(index, 1);
+        }
+    }
+
+    function renderChatBubble(chat) {
+        if (currentView === "public") {
+            return;
+        }
+        if (!map || !chatLayer) {
+            pendingChatBubbles.push(chat);
+            while (pendingChatBubbles.length > CHAT_BUBBLE_LIMIT) {
+                pendingChatBubbles.shift();
+            }
+            return;
+        }
+
+        var remainingLifetime = CHAT_BUBBLE_LIFETIME_MS -
+            Math.max(0, Date.now() - chat.receivedAt);
+        if (remainingLifetime <= 0) {
+            return;
+        }
+
+        var playerRecord = matchingPlayerMarker(chat.playerName);
+        var anchor = playerRecord
+            ? playerRecord.marker.getLatLng()
+            : worldToLatLng(chat.x, chat.z);
+        var shell = document.createElement("div");
+        var name = document.createElement("span");
+        var text = document.createElement("span");
+        shell.className = "map-chat-bubble" + (chat.shout ? " is-shout" : "");
+        name.className = "map-chat-name";
+        text.className = "map-chat-text";
+        name.textContent = (chat.shout ? "📯 " : "") +
+            (chat.shout ? chat.playerName.toUpperCase() : chat.playerName);
+        text.textContent = chat.text;
+        shell.appendChild(name);
+        shell.appendChild(text);
+
+        var marker = L.marker(anchor, {
+            icon: L.divIcon({
+                className: "map-chat-div-icon",
+                html: shell.outerHTML,
+                iconAnchor: [0, 0],
+                iconSize: [1, 1]
+            }),
+            interactive: false,
+            keyboard: false,
+            zIndexOffset: 1400
+        }).addTo(chatLayer);
+        var record = {
+            marker: marker,
+            playerKey: playerRecord ? playerRecord.player.key : "",
+            playerName: chat.playerName,
+            removed: false,
+            timer: 0
+        };
+        while (activeChatBubbles.length >= CHAT_BUBBLE_LIMIT) {
+            removeChatBubble(activeChatBubbles[0]);
+        }
+        activeChatBubbles.push(record);
+        record.timer = window.setTimeout(function () {
+            removeChatBubble(record);
+        }, remainingLifetime);
+    }
+
+    function updateChatBubblesForPlayer(playerKey, latLng) {
+        activeChatBubbles.forEach(function (record) {
+            if (record.playerKey === playerKey) {
+                record.marker.setLatLng(latLng);
+            }
+        });
+    }
+
+    function updateChatBubblePositions() {
+        activeChatBubbles.forEach(function (record) {
+            var playerRecord = record.playerKey
+                ? markerRecords.get(record.playerKey)
+                : matchingPlayerMarker(record.playerName);
+            if (!playerRecord) {
+                return;
+            }
+            record.playerKey = playerRecord.player.key;
+            record.marker.setLatLng(playerRecord.marker.getLatLng());
+        });
+    }
+
+    function clearChatBubbles() {
+        pendingChatBubbles = [];
+        activeChatBubbles.slice().forEach(removeChatBubble);
+    }
+
+    function handleChatPayload(payload) {
+        if (currentView === "public" || !payload || typeof payload !== "object") {
+            return;
+        }
+
+        var sequence = Number(payload.sequence);
+        var x = Number(payload.x);
+        var z = Number(payload.z);
+        var unixMs = Number(payload.unixMs);
+        var playerName = typeof payload.playerName === "string"
+            ? payload.playerName.trim()
+            : "";
+        var text = typeof payload.text === "string" ? payload.text.trim() : "";
+        if (!Number.isFinite(sequence) || sequence <= 0 ||
+            !Number.isFinite(x) || !Number.isFinite(z) ||
+            !Number.isFinite(unixMs) || unixMs <= 0 ||
+            !text) {
+            return;
+        }
+
+        var chat = {
+            playerName: playerName || "A viking",
+            receivedAt: Date.now(),
+            sequence: Math.floor(sequence),
+            shout: payload.shout === true,
+            text: text.slice(0, 256),
+            unixMs: Math.floor(unixMs),
+            x: x,
+            z: z
+        };
+        var sagaId = "chat:" + chat.unixMs + ":" + chat.sequence;
+        if (!sagaChatEvents.some(function (event) { return event.id === sagaId; })) {
+            sagaChatEvents.push({
+                data: {
+                    name: chat.playerName,
+                    shout: chat.shout,
+                    text: chat.text
+                },
+                id: sagaId,
+                type: "chat",
+                unixMs: chat.unixMs
+            });
+            sagaChatEvents.sort(function (left, right) {
+                return right.unixMs - left.unixMs;
+            });
+            sagaChatEvents = sagaChatEvents.slice(0, SAGA_EVENT_LIMIT);
+            renderSagaFeed();
+        }
+        renderChatBubble(chat);
     }
 
     function copyFromButton(button) {
@@ -6345,6 +6528,8 @@
             }
         });
 
+        updateChatBubblePositions();
+
         updateFollowStyles();
         updateFollowPill();
         renderTrails();
@@ -6386,6 +6571,7 @@
         cancelAnimationFrame(record.animationFrame);
         if (document.hidden) {
             record.marker.setLatLng(target);
+            updateChatBubblesForPlayer(record.player.key, target);
             record.animationFrame = 0;
             return;
         }
@@ -6400,6 +6586,7 @@
                 start.lng + ((target.lng - start.lng) * eased)
             );
             record.marker.setLatLng(current);
+            updateChatBubblesForPlayer(record.player.key, current);
             if (isFollowing("player", record.player.key) &&
                 (!cinemaState || !cinemaState.raidJumpActive)) {
                 map.panTo(current, { animate: false });
@@ -9401,6 +9588,19 @@
                         ? "Day " + Math.floor(day) + " dawns"
                         : "A new day dawns"
                 };
+            case "chat":
+                var speaker = sagaName(data);
+                var message = typeof data.text === "string" ? data.text.trim() : "";
+                if (!message) {
+                    return null;
+                }
+                return {
+                    className: "is-chat" + (data.shout === true ? " is-shout" : ""),
+                    fallbackGlyph: data.shout === true ? "📯" : "❝",
+                    iconKey: "saga_chat",
+                    text: "“" + message + "” — " +
+                        (data.shout === true ? speaker.toUpperCase() : speaker)
+                };
             default:
                 return null;
         }
@@ -9459,24 +9659,29 @@
 
     function renderSagaFeed() {
         elements.sagaList.textContent = "";
+        var feedEvents = sagaEvents.concat(sagaChatEvents).sort(function (left, right) {
+            return right.unixMs - left.unixMs;
+        }).slice(0, SAGA_EVENT_LIMIT);
         var note = "";
-        if (sagaEnabled === false) {
+        if (feedEvents.length > 0) {
+            note = "";
+        } else if (sagaEnabled === false) {
             note = "Activity log disabled";
         } else if (!sagaLoaded) {
             note = "Reading the runes…";
-        } else if (sagaLoadFailed && sagaEvents.length === 0) {
+        } else if (sagaLoadFailed) {
             note = "Saga unavailable";
-        } else if (sagaEvents.length === 0) {
+        } else {
             note = "No tales recorded yet";
         }
 
         elements.sagaNote.hidden = !note;
         elements.sagaNote.textContent = note;
-        if (note && sagaEvents.length === 0) {
+        if (note && feedEvents.length === 0) {
             return;
         }
 
-        sagaEvents.forEach(function (event) {
+        feedEvents.forEach(function (event) {
             var presentation = sagaPresentation(event);
             if (!presentation) {
                 return;
@@ -9620,11 +9825,13 @@
         sagaRequestSequence++;
         sagaRequestPending = false;
         sagaEvents = [];
+        sagaChatEvents = [];
         sagaCursor = 0;
         sagaEnabled = null;
         sagaLoaded = false;
         sagaLoadFailed = false;
         pendingSagaPayloads = [];
+        clearChatBubbles();
         setSagaCollapsed(true);
         renderSagaFeed();
     }
@@ -10020,6 +10227,9 @@
         });
         source.addEventListener("ping", function (event) {
             readEventStreamPayload(source, event, handlePingPayload);
+        });
+        source.addEventListener("chat", function (event) {
+            readEventStreamPayload(source, event, handleChatPayload);
         });
         source.addEventListener("activity", function (event) {
             readEventStreamPayload(source, event, handleActivityStreamPayload);

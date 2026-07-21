@@ -14,6 +14,7 @@ internal sealed class LiveMapConfig
     private readonly ConfigEntryString _accessToken;
     private readonly ConfigEntryString _shareToken;
     private readonly ConfigEntryBool _publicView;
+    private readonly ConfigEntryBool _mirrorChat;
     private readonly ConfigEntryBool _respectInGameVisibility;
     private readonly ConfigEntryBool _publicShowPlayerNames;
     private readonly ConfigEntryBool _entityLayer;
@@ -34,6 +35,7 @@ internal sealed class LiveMapConfig
         ConfigEntryString accessToken,
         ConfigEntryString shareToken,
         ConfigEntryBool publicView,
+        ConfigEntryBool mirrorChat,
         ConfigEntryBool respectInGameVisibility,
         ConfigEntryBool publicShowPlayerNames,
         ConfigEntryBool entityLayer,
@@ -53,6 +55,7 @@ internal sealed class LiveMapConfig
         _accessToken = accessToken;
         _shareToken = shareToken;
         _publicView = publicView;
+        _mirrorChat = mirrorChat;
         _respectInGameVisibility = respectInGameVisibility;
         _publicShowPlayerNames = publicShowPlayerNames;
         _entityLayer = entityLayer;
@@ -80,6 +83,8 @@ internal sealed class LiveMapConfig
     public string ShareToken => _shareToken.Value;
 
     public bool PublicView => _publicView.Value;
+
+    public bool MirrorChat => _mirrorChat.Value;
 
     public bool RespectInGameVisibility => _respectInGameVisibility.Value;
 

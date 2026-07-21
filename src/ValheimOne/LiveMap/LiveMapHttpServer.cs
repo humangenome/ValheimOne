@@ -849,6 +849,9 @@ internal sealed class LiveMapHttpServer
             Stream output = response.OutputStream;
             long pingCursor = MapPingPatch.LatestCursor;
             var pendingPings = new List<MapPingSnapshot>(16);
+            bool sendChat = viewLevel != ViewLevel.Public;
+            long chatCursor = sendChat ? MapPingPatch.LatestChatCursor : 0L;
+            var pendingChats = new List<MapChatSnapshot>(32);
             bool sendActivity = viewLevel != ViewLevel.Public;
             long activityCursor = _activityLog.LatestActivityCursor;
             var pendingActivity = new List<ActivityFeedEntry>(EventStreamActivityBatchSize);
@@ -903,6 +906,16 @@ internal sealed class LiveMapHttpServer
                 {
                     WriteEventStreamEvent(output, "ping", BuildPingJson(pendingPings[index]));
                     sentEvent = true;
+                }
+
+                if (sendChat)
+                {
+                    chatCursor = MapPingPatch.CopyChatAfter(chatCursor, pendingChats);
+                    for (int index = 0; index < pendingChats.Count; index++)
+                    {
+                        WriteEventStreamEvent(output, "chat", BuildChatJson(pendingChats[index]));
+                        sentEvent = true;
+                    }
                 }
 
                 if (sendActivity && _activityLog.ActivityFeedEnabled)
@@ -1812,6 +1825,23 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"label\":").Append(JsonWriter.Quote(ping.Label));
         json.Append(",\"unixMs\":").Append(
             ping.UnixMs.ToString(CultureInfo.InvariantCulture));
+        json.Append('}');
+        return json.ToString();
+    }
+
+    private static string BuildChatJson(MapChatSnapshot chat)
+    {
+        var json = new StringBuilder(384);
+        json.Append('{');
+        json.Append("\"sequence\":").Append(
+            chat.Sequence.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"x\":").Append(JsonWriter.Number(chat.X));
+        json.Append(",\"z\":").Append(JsonWriter.Number(chat.Z));
+        json.Append(",\"playerName\":").Append(JsonWriter.Quote(chat.PlayerName));
+        json.Append(",\"text\":").Append(JsonWriter.Quote(chat.Text));
+        json.Append(",\"shout\":").Append(chat.Shout ? "true" : "false");
+        json.Append(",\"unixMs\":").Append(
+            chat.UnixMs.ToString(CultureInfo.InvariantCulture));
         json.Append('}');
         return json.ToString();
     }

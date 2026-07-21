@@ -54,6 +54,12 @@ public sealed class LiveMapModule : IFeatureModule
             "PublicView",
             true,
             "Serve a read-only public map view to tokenless requests.");
+        ConfigEntryBool mirrorChat = _feature.Bool(
+            "MirrorChat",
+            false,
+            "Mirror player Say and Shout chat onto authenticated live-map views. " +
+            "Disabled by default because chat is player speech and the server owner must " +
+            "explicitly opt in.");
         ConfigEntryBool respectInGameVisibility = _feature.Bool(
             "RespectInGameVisibility",
             true,
@@ -108,6 +114,7 @@ public sealed class LiveMapModule : IFeatureModule
             accessToken,
             shareToken,
             publicView,
+            mirrorChat,
             respectInGameVisibility,
             publicShowPlayerNames,
             entityLayer,
@@ -118,6 +125,7 @@ public sealed class LiveMapModule : IFeatureModule
             allowAllCommands,
             consoleLogLines,
             statusPublic);
+        registry.EffectiveValuesChanged += MapPingPatch.RefreshChatConfiguration;
         VoCommands.Initialize(registry, _config, activityLog, _log);
     }
 
@@ -132,7 +140,11 @@ public sealed class LiveMapModule : IFeatureModule
     public void ApplyPatches(Harmony harmony)
     {
         VoCommands.ApplyPatches(harmony);
-        MapPingPatch.ApplyPatches(harmony, () => _feature.Enabled.Value, _log);
+        MapPingPatch.ApplyPatches(
+            harmony,
+            () => _feature.Enabled.Value,
+            () => _config.MirrorChat,
+            _log);
         if (LiveMapBehaviour.Instance != null)
         {
             _log.Warning("[LiveMap] behaviour already exists; skipping duplicate initialization.");
