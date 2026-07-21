@@ -24,6 +24,8 @@
     var TRAIL_MAX_POINTS = 900;
     var TRAIL_BUCKET_COUNT = 10;
     var SHIP_MATCH_DISTANCE = 40;
+    var SHIP_MOVING_SPEED_MPS = 0.3;
+    var SHIP_HEADING_LENGTH_M = 30;
     var MAP_PING_LIFETIME_MS = 30000;
     var SAVED_BADGE_REFRESH_MS = 30000;
     var SAVED_STALE_MS = 30 * 60 * 1000;
@@ -348,6 +350,8 @@
     var pinLayer = null;
     var latestPins = [];
     var trailLayer = null;
+    var shipHeadingLayer = null;
+    var shipHeadingLines = new Map();
     var trailBuffers = new Map();
     var trailBackfillWindows = new Map();
     var selectedTrailTargets = new Map();
@@ -2715,6 +2719,7 @@
             }
             buffer.motion = calculateDerivedMotion(buffer.samples);
             markerRecords.forEach(updatePlayerMarkerMotion);
+            updateShipHeadingLines(latestEntities);
             renderTrails();
             refreshOpenPopupContent();
         } catch (error) {
@@ -2749,6 +2754,92 @@
     function derivedMotion(key) {
         var buffer = trailBuffers.get(key);
         return buffer ? buffer.motion : null;
+    }
+
+    function shipHeadingColor() {
+        var color = window.getComputedStyle(document.documentElement)
+            .getPropertyValue("--accent").trim();
+        return color || "#d9b168";
+    }
+
+    function removeShipHeadingLine(key) {
+        var line = shipHeadingLines.get(key);
+        if (!line) {
+            return;
+        }
+
+        if (shipHeadingLayer) {
+            shipHeadingLayer.removeLayer(line);
+        }
+        shipHeadingLines.delete(key);
+    }
+
+    function clearShipHeadingLines() {
+        if (shipHeadingLayer) {
+            shipHeadingLayer.clearLayers();
+        }
+        shipHeadingLines.clear();
+    }
+
+    function updateShipHeadingLine(entity) {
+        if (!shipHeadingLayer || !entity || entity.group !== "ship" ||
+            !entity.trailKey) {
+            return;
+        }
+
+        var motion = derivedMotion(entity.trailKey);
+        if (!layerSettings.ship || !entityLayersAreAvailable() || !motion ||
+            !Number.isFinite(motion.speedMps) ||
+            motion.speedMps < SHIP_MOVING_SPEED_MPS ||
+            !Number.isFinite(motion.headingDeg)) {
+            removeShipHeadingLine(entity.trailKey);
+            return;
+        }
+
+        var headingRadians = motion.headingDeg * Math.PI / 180;
+        var points = [
+            worldToLatLng(entity.x, entity.z),
+            worldToLatLng(
+                entity.x + Math.sin(headingRadians) * SHIP_HEADING_LENGTH_M,
+                entity.z + Math.cos(headingRadians) * SHIP_HEADING_LENGTH_M
+            )
+        ];
+        var line = shipHeadingLines.get(entity.trailKey);
+        if (line) {
+            line.setLatLngs(points);
+            return;
+        }
+
+        line = L.polyline(points, {
+            color: shipHeadingColor(),
+            dashArray: "8 6",
+            interactive: false,
+            opacity: 0.75,
+            pane: "trailPane",
+            weight: 2
+        }).addTo(shipHeadingLayer);
+        shipHeadingLines.set(entity.trailKey, line);
+    }
+
+    function updateShipHeadingLines(entities) {
+        if (!shipHeadingLayer || !layerSettings.ship || !entityLayersAreAvailable()) {
+            clearShipHeadingLines();
+            return;
+        }
+
+        var seenKeys = new Set();
+        entities.forEach(function (entity) {
+            if (entity.group !== "ship" || !entity.trailKey) {
+                return;
+            }
+            seenKeys.add(entity.trailKey);
+            updateShipHeadingLine(entity);
+        });
+        shipHeadingLines.forEach(function (line, key) {
+            if (!seenKeys.has(key)) {
+                removeShipHeadingLine(key);
+            }
+        });
     }
 
     function recordPlayerTrails(players) {
@@ -3386,6 +3477,7 @@
         pinLayer = L.layerGroup();
         regionLayer = L.layerGroup();
         trailLayer = L.layerGroup().addTo(map);
+        shipHeadingLayer = L.layerGroup();
         portalNetworkLayer = L.layerGroup();
         portalPopupLinkLayer = L.layerGroup().addTo(map);
         wardRadiusLayer = L.layerGroup();
@@ -5801,6 +5893,13 @@
             wardRadiusLayer,
             entityLayersAreAvailable() && layerSettings.ward
         );
+        var shipHeadingsVisible = entityLayersAreAvailable() && layerSettings.ship;
+        setLayerVisible(shipHeadingLayer, shipHeadingsVisible);
+        if (shipHeadingsVisible) {
+            updateShipHeadingLines(latestEntities);
+        } else {
+            clearShipHeadingLines();
+        }
         ENTITY_GROUP_ORDER.forEach(function (group) {
             setLayerVisible(
                 entityLayers.get(group),
@@ -7482,7 +7581,7 @@
                 value: motion.speedMps.toFixed(1) + " m/s · " +
                     (motion.speedMps * 1.9438).toFixed(1) + " kn"
             });
-            if (motion.speedMps >= 0.3) {
+            if (motion.speedMps >= SHIP_MOVING_SPEED_MPS) {
                 rows.push({ label: "Heading", value: headingLabel(motion.headingDeg) });
                 if (latestWind) {
                     var windTowardDeg = (latestWind.fromDeg + 180) % 360;
@@ -8284,6 +8383,7 @@
         if (wardRadiusLayer) {
             wardRadiusLayer.clearLayers();
         }
+        clearShipHeadingLines();
         entityMarkerRecords.clear();
         portalMarkerRecords.clear();
         if (!preserveState) {
@@ -8718,6 +8818,7 @@
                 entity.z,
                 Number.isFinite(timestamp) ? timestamp : Date.now()
             );
+            updateShipHeadingLine(entity);
             for (var index = 0; index < latestEntities.length; index++) {
                 if (latestEntities[index].id === entity.id) {
                     latestEntities[index] = entity;
