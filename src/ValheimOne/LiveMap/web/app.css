@@ -927,50 +927,50 @@ input {
 }
 
 .layer-swatch-spawn {
-    color: var(--frost);
+    color: var(--poi-cat-bosses, var(--frost));
 }
 
 .layer-swatch-trader {
-    color: var(--accent);
+    color: var(--poi-cat-bosses, var(--accent));
 }
 
 .layer-swatch-boss {
-    color: var(--raid);
+    color: var(--poi-cat-bosses, var(--raid));
 }
 
 .layer-swatch-dungeon {
-    color: var(--dungeon);
+    color: var(--poi-cat-dungeons, var(--dungeon));
 }
 
 .layer-swatch[class*="layer-swatch-dungeon_"] {
-    color: var(--dungeon);
+    color: var(--poi-cat-dungeons, var(--dungeon));
 }
 
 .layer-swatch-spawner {
-    color: var(--spawner);
+    color: var(--poi-cat-spawners, var(--spawner));
     font-size: 16px;
 }
 
 .layer-swatch[class*="layer-swatch-spawner_"] {
-    color: var(--spawner);
+    color: var(--poi-cat-spawners, var(--spawner));
 }
 
 .layer-swatch[class*="layer-swatch-ore_"] {
-    color: var(--sun);
+    color: var(--poi-cat-ores, var(--sun));
     font-size: 9px;
 }
 
 .layer-swatch[class*="layer-swatch-forage_"] {
-    color: var(--moss);
+    color: var(--poi-cat-forage, var(--moss));
 }
 
 .layer-swatch[class*="layer-swatch-structure_"] {
-    color: var(--marker-muted);
+    color: var(--poi-cat-structures, var(--marker-muted));
 }
 
 .layer-swatch-misc,
 .layer-swatch-other {
-    color: var(--marker-muted);
+    color: var(--poi-cat-structures, var(--marker-muted));
     font-size: 9px;
 }
 
@@ -1196,6 +1196,57 @@ input {
     gap: 3px;
 }
 
+.poi-category-colors {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 0 3px 4px 7px;
+}
+
+.poi-category-color-label {
+    flex: 0 0 auto;
+    color: var(--secondary);
+    font-size: 7px;
+    font-weight: 700;
+    letter-spacing: 0.055em;
+    text-transform: uppercase;
+}
+
+.poi-category-swatches {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 3px;
+}
+
+.poi-color-swatch {
+    width: 14px;
+    height: 14px;
+    flex: 0 0 14px;
+    padding: 0;
+    border: 1px solid rgba(18, 14, 10, 0.9);
+    border-radius: 50%;
+    background: var(--poi-swatch-color, var(--accent));
+    box-shadow: 0 0 0 1px rgba(217, 177, 104, 0.2);
+    cursor: pointer;
+}
+
+.poi-color-swatch:hover {
+    box-shadow: 0 0 0 1px var(--text);
+}
+
+.poi-color-swatch.is-selected {
+    border-color: var(--background);
+    box-shadow: 0 0 0 1px var(--background), 0 0 0 2px var(--accent);
+}
+
+.poi-color-swatch:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
 .poi-category-count {
     color: var(--secondary);
     font-size: 8px;
@@ -1337,6 +1388,67 @@ input {
     background: var(--background);
     color: var(--text);
     font-size: 9px;
+}
+
+.layer-opacity-control {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.layer-opacity-control input[type="range"] {
+    width: 82px;
+    height: 14px;
+    margin: 0;
+    appearance: none;
+    background: transparent;
+    cursor: pointer;
+}
+
+.layer-opacity-control input[type="range"]::-webkit-slider-runnable-track {
+    height: 3px;
+    border-radius: 999px;
+    background: var(--border-strong);
+}
+
+.layer-opacity-control input[type="range"]::-webkit-slider-thumb {
+    width: 10px;
+    height: 10px;
+    margin-top: -4px;
+    appearance: none;
+    border: 1px solid var(--background);
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 1px var(--border-strong);
+}
+
+.layer-opacity-control input[type="range"]::-moz-range-track {
+    height: 3px;
+    border-radius: 999px;
+    background: var(--border-strong);
+}
+
+.layer-opacity-control input[type="range"]::-moz-range-progress {
+    height: 3px;
+    border-radius: 999px;
+    background: var(--accent);
+}
+
+.layer-opacity-control input[type="range"]::-moz-range-thumb {
+    width: 10px;
+    height: 10px;
+    border: 1px solid var(--background);
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 1px var(--border-strong);
+}
+
+.layer-opacity-control output {
+    width: 29px;
+    color: var(--text);
+    font-size: 8px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
 }
 
 .layer-section-mini:focus-visible,
@@ -1796,6 +1908,7 @@ body.is-measuring #map .leaflet-dragging {
 }
 
 body.is-measuring #map .leaflet-marker-pane,
+body.is-measuring #map .leaflet-poi-pane,
 body.is-measuring #map .leaflet-popup-pane,
 body.is-measuring #map .leaflet-overlay-pane path {
     pointer-events: none !important;
@@ -1812,6 +1925,7 @@ body.is-pinging #map .leaflet-dragging {
 }
 
 body.is-pinging #map .leaflet-marker-pane,
+body.is-pinging #map .leaflet-poi-pane,
 body.is-pinging #map .leaflet-popup-pane,
 body.is-pinging #map .leaflet-overlay-pane path {
     pointer-events: none !important;
@@ -2065,6 +2179,10 @@ body.is-pinging #map .leaflet-overlay-pane path {
     opacity: 0;
 }
 
+.leaflet-poi-pane {
+    opacity: var(--poi-opacity, 1);
+}
+
 .poi-div-icon,
 .pin-div-icon,
 .entity-div-icon {
@@ -2102,66 +2220,66 @@ body.is-pinging #map .leaflet-overlay-pane path {
 
 .poi-spawn .poi-marker-shell {
     border-color: rgba(126, 177, 214, 0.72);
-    color: var(--frost);
+    color: var(--poi-cat-bosses, var(--frost));
 }
 
 .poi-trader .poi-marker-shell {
     border-color: rgba(217, 177, 104, 0.72);
-    color: var(--accent);
+    color: var(--poi-cat-bosses, var(--accent));
 }
 
 .poi-boss .poi-marker-shell {
     border-color: rgba(201, 106, 82, 0.76);
-    color: #e8a08c;
+    color: var(--poi-cat-bosses, #e8a08c);
     font-size: 11px;
 }
 
 .poi-dungeon .poi-marker-shell {
     border-color: rgba(151, 126, 177, 0.74);
-    color: #c1acd7;
+    color: var(--poi-cat-dungeons, #c1acd7);
 }
 
 .poi-div-icon[class*="poi-dungeon_"] .poi-marker-shell {
     border-color: rgba(151, 126, 177, 0.74);
-    color: #c1acd7;
+    color: var(--poi-cat-dungeons, #c1acd7);
 }
 
 .poi-spawner .poi-marker-shell {
     border-color: rgba(193, 106, 139, 0.72);
-    color: #e0a0b7;
+    color: var(--poi-cat-spawners, #e0a0b7);
     font-size: 17px;
 }
 
 .poi-div-icon[class*="poi-spawner_"] .poi-marker-shell {
     border-color: rgba(193, 106, 139, 0.72);
-    color: #e0a0b7;
+    color: var(--poi-cat-spawners, #e0a0b7);
 }
 
 .poi-div-icon[class*="poi-ore_"] .poi-marker-shell {
     border-color: rgba(224, 168, 60, 0.72);
-    color: #e8c47f;
+    color: var(--poi-cat-ores, #e8c47f);
     font-size: 9px;
 }
 
 .poi-div-icon[class*="poi-forage_"] .poi-marker-shell {
     border-color: rgba(163, 194, 106, 0.72);
-    color: #bad787;
+    color: var(--poi-cat-forage, #bad787);
 }
 
 .poi-div-icon[class*="poi-structure_"] .poi-marker-shell {
     border-color: rgba(180, 166, 143, 0.62);
-    color: #c6b79d;
+    color: var(--poi-cat-structures, #c6b79d);
 }
 
 .poi-misc .poi-marker-shell,
 .poi-other .poi-marker-shell {
-    color: #c6b79d;
+    color: var(--poi-cat-structures, #c6b79d);
     font-size: 9px;
 }
 
 .poi-other .poi-marker-shell {
     border-style: dashed;
-    color: #a99679;
+    color: var(--poi-cat-structures, #a99679);
 }
 
 .poi-cluster-shell {
@@ -2214,56 +2332,61 @@ body.is-pinging #map .leaflet-overlay-pane path {
 
 .poi-spawn .poi-cluster-shell {
     border-color: rgba(126, 177, 214, 0.74);
-    color: var(--frost);
+    color: var(--poi-cat-bosses, var(--frost));
 }
 
 .poi-trader .poi-cluster-shell {
     border-color: rgba(217, 177, 104, 0.74);
-    color: var(--accent);
+    color: var(--poi-cat-bosses, var(--accent));
 }
 
 .poi-boss .poi-cluster-shell {
     border-color: rgba(201, 106, 82, 0.78);
-    color: #e8a08c;
+    color: var(--poi-cat-bosses, #e8a08c);
 }
 
 .poi-dungeon .poi-cluster-shell {
     border-color: rgba(151, 126, 177, 0.76);
-    color: #c1acd7;
+    color: var(--poi-cat-dungeons, #c1acd7);
 }
 
 .poi-div-icon[class*="poi-dungeon_"] .poi-cluster-shell {
     border-color: rgba(151, 126, 177, 0.76);
-    color: #c1acd7;
+    color: var(--poi-cat-dungeons, #c1acd7);
 }
 
 .poi-spawner .poi-cluster-shell {
     border-color: rgba(193, 106, 139, 0.74);
-    color: #e0a0b7;
+    color: var(--poi-cat-spawners, #e0a0b7);
 }
 
 .poi-div-icon[class*="poi-spawner_"] .poi-cluster-shell {
     border-color: rgba(193, 106, 139, 0.74);
-    color: #e0a0b7;
+    color: var(--poi-cat-spawners, #e0a0b7);
 }
 
 .poi-div-icon[class*="poi-ore_"] .poi-cluster-shell {
     border-color: rgba(224, 168, 60, 0.74);
-    color: #e8c47f;
+    color: var(--poi-cat-ores, #e8c47f);
 }
 
 .poi-div-icon[class*="poi-forage_"] .poi-cluster-shell {
     border-color: rgba(163, 194, 106, 0.74);
-    color: #bad787;
+    color: var(--poi-cat-forage, #bad787);
 }
 
 .poi-div-icon[class*="poi-structure_"] .poi-cluster-shell {
     border-color: rgba(180, 166, 143, 0.64);
-    color: #c6b79d;
+    color: var(--poi-cat-structures, #c6b79d);
+}
+
+.poi-misc .poi-cluster-shell {
+    color: var(--poi-cat-structures, var(--accent));
 }
 
 .poi-other .poi-cluster-shell {
     border-style: dashed;
+    color: var(--poi-cat-structures, var(--accent));
 }
 
 .entity-marker-shell {
@@ -2313,43 +2436,48 @@ body.is-pinging #map .leaflet-overlay-pane path {
 }
 
 #map.is-density-dots .poi-spawn .poi-marker-shell {
-    background: var(--frost);
+    background: var(--poi-cat-bosses, var(--frost));
 }
 
 #map.is-density-dots .poi-trader .poi-marker-shell {
-    background: var(--accent);
+    background: var(--poi-cat-bosses, var(--accent));
 }
 
 #map.is-density-dots .poi-boss .poi-marker-shell {
-    background: var(--raid);
+    background: var(--poi-cat-bosses, var(--raid));
 }
 
 #map.is-density-dots .poi-dungeon .poi-marker-shell {
-    background: var(--dungeon);
+    background: var(--poi-cat-dungeons, var(--dungeon));
 }
 
 #map.is-density-dots .poi-div-icon[class*="poi-dungeon_"] .poi-marker-shell {
-    background: var(--dungeon);
+    background: var(--poi-cat-dungeons, var(--dungeon));
 }
 
 #map.is-density-dots .poi-spawner .poi-marker-shell {
-    background: var(--spawner);
+    background: var(--poi-cat-spawners, var(--spawner));
 }
 
 #map.is-density-dots .poi-div-icon[class*="poi-spawner_"] .poi-marker-shell {
-    background: var(--spawner);
+    background: var(--poi-cat-spawners, var(--spawner));
 }
 
 #map.is-density-dots .poi-div-icon[class*="poi-ore_"] .poi-marker-shell {
-    background: var(--sun);
+    background: var(--poi-cat-ores, var(--sun));
 }
 
 #map.is-density-dots .poi-div-icon[class*="poi-forage_"] .poi-marker-shell {
-    background: var(--moss);
+    background: var(--poi-cat-forage, var(--moss));
 }
 
 #map.is-density-dots .poi-div-icon[class*="poi-structure_"] .poi-marker-shell {
-    background: var(--marker-muted);
+    background: var(--poi-cat-structures, var(--marker-muted));
+}
+
+#map.is-density-dots .poi-misc .poi-marker-shell,
+#map.is-density-dots .poi-other .poi-marker-shell {
+    background: var(--poi-cat-structures, var(--marker-muted));
 }
 
 #map.is-density-dots .entity-ship .entity-marker-shell {

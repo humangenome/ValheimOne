@@ -46,6 +46,24 @@
         world: "World",
         diagnostics: "Diagnostics"
     };
+    var POI_COLOR_PALETTE = [
+        { key: "gold", label: "Gold", value: "var(--accent)" },
+        { key: "parchment", label: "Parchment", value: "var(--text)" },
+        { key: "moss", label: "Moss green", value: "var(--moss)" },
+        { key: "frost", label: "Frost blue", value: "var(--frost)" },
+        { key: "raid", label: "Raid red", value: "var(--raid)" },
+        { key: "dungeon", label: "Dungeon violet", value: "var(--dungeon)" },
+        { key: "cart", label: "Cart amber", value: "var(--cart)" },
+        { key: "spawner", label: "Spawner pink", value: "var(--spawner)" }
+    ];
+    var POI_CATEGORY_DEFAULT_SWATCHES = {
+        bosses: "conic-gradient(var(--frost) 0 33%, var(--raid) 33% 66%, var(--accent) 66%)",
+        dungeons: "var(--dungeon)",
+        spawners: "var(--spawner)",
+        ores: "var(--sun)",
+        forage: "var(--moss)",
+        structures: "var(--marker-muted)"
+    };
 
     var POI_CATEGORIES = [
         {
@@ -292,6 +310,8 @@
         tombstone: false,
         densityDots: false,
         iconSize: "m",
+        poiColors: {},
+        poiOpacity: 100,
         legendCollapsed: false,
         mapStyle: "default"
     };
@@ -2120,10 +2140,24 @@
         return Number.isFinite(number) ? number : null;
     }
 
+    function poiPaletteChoice(key) {
+        return POI_COLOR_PALETTE.find(function (choice) {
+            return choice.key === key;
+        }) || null;
+    }
+
+    function sanitizePoiOpacity(value) {
+        var opacity = Number(value);
+        if (!Number.isFinite(opacity)) {
+            return LAYER_DEFAULTS.poiOpacity;
+        }
+        return Math.max(20, Math.min(100, Math.round(opacity / 5) * 5));
+    }
+
     function loadLayerSettings() {
         var settings = {};
         Object.keys(LAYER_DEFAULTS).forEach(function (key) {
-            settings[key] = LAYER_DEFAULTS[key];
+            settings[key] = key === "poiColors" ? {} : LAYER_DEFAULTS[key];
         });
 
         try {
@@ -2146,6 +2180,19 @@
                 }
                 if (["default", "topo", "chart"].indexOf(saved.mapStyle) !== -1) {
                     settings.mapStyle = saved.mapStyle;
+                }
+                if (typeof saved.poiOpacity === "number" &&
+                    Number.isFinite(saved.poiOpacity)) {
+                    settings.poiOpacity = sanitizePoiOpacity(saved.poiOpacity);
+                }
+                if (saved.poiColors && typeof saved.poiColors === "object" &&
+                    !Array.isArray(saved.poiColors)) {
+                    POI_CATEGORIES.forEach(function (category) {
+                        var colorKey = saved.poiColors[category.key];
+                        if (poiPaletteChoice(colorKey)) {
+                            settings.poiColors[category.key] = colorKey;
+                        }
+                    });
                 }
                 if (saved.dungeon === true) {
                     POI_CATEGORIES.find(function (category) {
@@ -3412,6 +3459,8 @@
         map.createPane("wardRadiusPane");
         map.getPane("wardRadiusPane").style.zIndex = "390";
         map.getPane("wardRadiusPane").style.pointerEvents = "none";
+        map.createPane("poiPane");
+        map.getPane("poiPane").style.zIndex = "595";
 
         applyInitialHashState(Math.max(0, overviewZoom - 1));
         var initialStyle = sanitizeMapStyle(layerSettings.mapStyle);
@@ -3462,6 +3511,7 @@
         bindMapContextMenu();
         createMinimapControl();
         applyDensityPreferences();
+        applyPoiPreferences();
         map.on("dragstart", function () {
             if (!cinemaState) {
                 clearFollow();
@@ -4884,6 +4934,7 @@
             layerKeys.split(",").forEach(function (key) {
                 if (key !== "legendCollapsed" && key !== "densityDots" &&
                     key !== "iconSize" && key !== "mapStyle" &&
+                    key !== "poiColors" && key !== "poiOpacity" &&
                     typeof LAYER_DEFAULTS[key] === "boolean" &&
                     Object.prototype.hasOwnProperty.call(layerSettings, key)) {
                     layerSettings[key] = true;
@@ -4960,6 +5011,7 @@
         var enabledNonDefaultLayers = Object.keys(layerSettings).filter(function (key) {
             return key !== "legendCollapsed" && key !== "densityDots" &&
                 key !== "iconSize" && key !== "mapStyle" &&
+                key !== "poiColors" && key !== "poiOpacity" &&
                 layerSettings[key] === true &&
                 LAYER_DEFAULTS[key] === false;
         });
@@ -5326,9 +5378,72 @@
         header.appendChild(name);
         header.appendChild(actions);
         section.appendChild(header);
+        appendPoiColorControls(section, category);
         section.appendChild(body);
         parent.appendChild(section);
         return body;
+    }
+
+    function appendPoiColorControls(parent, category) {
+        var row = document.createElement("div");
+        var label = document.createElement("span");
+        var swatches = document.createElement("span");
+        var choices = [{
+            key: "",
+            label: "Default",
+            value: POI_CATEGORY_DEFAULT_SWATCHES[category.key]
+        }].concat(POI_COLOR_PALETTE);
+        var activeKey = layerSettings.poiColors[category.key] || "";
+
+        row.className = "poi-category-colors";
+        label.className = "poi-category-color-label";
+        label.textContent = "Color";
+        swatches.className = "poi-category-swatches";
+        swatches.setAttribute("role", "group");
+        swatches.setAttribute("aria-label", category.label + " marker color");
+        choices.forEach(function (choice) {
+            var button = document.createElement("button");
+            var isSelected = choice.key === activeKey;
+            button.type = "button";
+            button.className = "poi-color-swatch" +
+                (choice.key ? "" : " is-default") +
+                (isSelected ? " is-selected" : "");
+            button.dataset.poiColorCategory = category.key;
+            button.dataset.poiColorKey = choice.key;
+            button.style.setProperty("--poi-swatch-color", choice.value);
+            button.title = choice.label;
+            button.setAttribute(
+                "aria-label",
+                (choice.key ? "Use " + choice.label : "Use default colors") +
+                    " for " + category.label
+            );
+            button.setAttribute("aria-pressed", String(isSelected));
+            button.addEventListener("click", function () {
+                if (choice.key) {
+                    layerSettings.poiColors[category.key] = choice.key;
+                } else {
+                    delete layerSettings.poiColors[category.key];
+                }
+                saveLayerSettings();
+                applyPoiPreferences();
+            });
+            swatches.appendChild(button);
+        });
+        row.appendChild(label);
+        row.appendChild(swatches);
+        parent.appendChild(row);
+    }
+
+    function syncPoiColorControls() {
+        if (!layersRows) {
+            return;
+        }
+        layersRows.querySelectorAll("[data-poi-color-category]").forEach(function (button) {
+            var activeKey = layerSettings.poiColors[button.dataset.poiColorCategory] || "";
+            var isSelected = button.dataset.poiColorKey === activeKey;
+            button.classList.toggle("is-selected", isSelected);
+            button.setAttribute("aria-pressed", String(isSelected));
+        });
     }
 
     function appendLayerRow(parent, key, labelText, glyph, swatchClass, options) {
@@ -5542,6 +5657,11 @@
         var sizeLabel = document.createElement("label");
         var sizeText = document.createElement("span");
         var sizeSelect = document.createElement("select");
+        var opacityLabel = document.createElement("label");
+        var opacityText = document.createElement("span");
+        var opacityControl = document.createElement("span");
+        var opacityInput = document.createElement("input");
+        var opacityOutput = document.createElement("output");
 
         container.className = "layer-preferences";
         dotsLabel.className = "layer-preference-row";
@@ -5573,8 +5693,30 @@
         });
         sizeLabel.appendChild(sizeText);
         sizeLabel.appendChild(sizeSelect);
+
+        opacityLabel.className = "layer-preference-row";
+        opacityText.textContent = "Marker opacity";
+        opacityControl.className = "layer-opacity-control";
+        opacityInput.type = "range";
+        opacityInput.min = "20";
+        opacityInput.max = "100";
+        opacityInput.step = "5";
+        opacityInput.value = String(layerSettings.poiOpacity);
+        opacityInput.setAttribute("aria-label", "POI marker opacity");
+        opacityOutput.textContent = layerSettings.poiOpacity + "%";
+        opacityInput.addEventListener("input", function () {
+            layerSettings.poiOpacity = sanitizePoiOpacity(opacityInput.value);
+            opacityOutput.textContent = layerSettings.poiOpacity + "%";
+            saveLayerSettings();
+            applyPoiPreferences();
+        });
+        opacityControl.appendChild(opacityInput);
+        opacityControl.appendChild(opacityOutput);
+        opacityLabel.appendChild(opacityText);
+        opacityLabel.appendChild(opacityControl);
         container.appendChild(dotsLabel);
         container.appendChild(sizeLabel);
+        container.appendChild(opacityLabel);
         layersRows.appendChild(container);
     }
 
@@ -5588,6 +5730,28 @@
             "--marker-scale",
             scales[layerSettings.iconSize] || scales.m
         );
+    }
+
+    function applyPoiPreferences() {
+        if (!elements.mapPane) {
+            return;
+        }
+        POI_CATEGORIES.forEach(function (category) {
+            var colorKey = layerSettings.poiColors[category.key];
+            var choice = poiPaletteChoice(colorKey);
+            var property = "--poi-cat-" + category.key;
+            if (choice) {
+                elements.mapPane.style.setProperty(property, choice.value);
+            } else {
+                elements.mapPane.style.removeProperty(property);
+            }
+        });
+        layerSettings.poiOpacity = sanitizePoiOpacity(layerSettings.poiOpacity);
+        elements.mapPane.style.setProperty(
+            "--poi-opacity",
+            String(layerSettings.poiOpacity / 100)
+        );
+        syncPoiColorControls();
     }
 
     function findMarkerNearLayer(layer, latLng) {
@@ -8020,6 +8184,7 @@
             icon: icon,
             opacity: (record.placed ? 1 : 0.55) * (record.explored ? 1 : 0.45) *
                 (dimmed ? 0.52 : 1),
+            pane: "poiPane",
             title: hoverText
         });
         var tooltipContent = document.createElement("span");
@@ -8070,6 +8235,7 @@
             icon: icon,
             opacity: (0.45 + (0.55 * bucket.exploredWeight / bucket.weight)) *
                 (0.52 + (0.48 * bucket.activeWeight / bucket.weight)),
+            pane: "poiPane",
             title: count + " " + POI_GROUPS[group].label
         });
         var tooltipContent = document.createElement("span");
