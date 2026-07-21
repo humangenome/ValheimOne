@@ -563,6 +563,9 @@
         dayToast: document.getElementById("day-toast"),
         dayNumber: document.getElementById("day-number"),
         exploredChip: document.getElementById("explored-chip"),
+        joinCode: document.getElementById("join-code"),
+        joinCodeCopy: document.getElementById("join-code-copy"),
+        joinCodeLine: document.getElementById("join-code-line"),
         mapPane: document.getElementById("map"),
         mapTab: document.getElementById("map-tab"),
         mapStatus: document.getElementById("render-status"),
@@ -10129,6 +10132,7 @@
         setFeedState("status", true);
         elements.serverName.textContent = textOrDash(status.serverName);
         elements.worldName.textContent = textOrDash(status.worldName);
+        updateJoinCode(status.joinCode);
         renderWorldTime(status.day, status.timeOfDay);
         renderBossProgression(status.globalKeys);
         updateWorldMetrics(status);
@@ -10145,6 +10149,17 @@
         applyRaidEvent(status.event);
         renderCinemaHud();
         tryBootCinemaFromHash();
+    }
+
+    function updateJoinCode(joinCode) {
+        var normalized = typeof joinCode === "string" ? joinCode.trim() : "";
+        elements.joinCodeLine.hidden = normalized.length === 0;
+        elements.joinCode.textContent = normalized;
+        if (normalized) {
+            elements.joinCodeCopy.setAttribute("data-copy", normalized);
+        } else {
+            elements.joinCodeCopy.removeAttribute("data-copy");
+        }
     }
 
     function handlePluginVersion(pluginVersion) {

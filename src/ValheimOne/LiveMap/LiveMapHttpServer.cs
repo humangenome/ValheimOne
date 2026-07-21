@@ -690,6 +690,11 @@ internal sealed class LiveMapHttpServer
         json.Append('{');
         json.Append("\"serverName\":").Append(JsonWriter.Quote(snapshot.ServerName));
         json.Append(",\"worldName\":").Append(JsonWriter.Quote(snapshot.WorldName));
+        if (viewLevel == ViewLevel.Admin && !string.IsNullOrEmpty(snapshot.JoinCode))
+        {
+            json.Append(",\"joinCode\":").Append(JsonWriter.Quote(snapshot.JoinCode));
+        }
+
         json.Append(",\"pluginVersion\":").Append(JsonWriter.Quote(ValheimOnePlugin.PluginVersion));
         json.Append(",\"day\":").Append(snapshot.Day.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"timeOfDay\":").Append(JsonWriter.Number(snapshot.TimeOfDay));
@@ -775,6 +780,11 @@ internal sealed class LiveMapHttpServer
         long lastSavedMinute = lastSavedUnixMs > 0L ? lastSavedUnixMs / 60000L : 0L;
         key.Append(lastSavedMinute.ToString(CultureInfo.InvariantCulture)).Append('|');
         key.Append(snapshotStale ? "stale" : "fresh");
+        if (viewLevel == ViewLevel.Admin)
+        {
+            key.Append('|').Append(snapshot.JoinCode);
+        }
+
         if (hasSharedMapAccess)
         {
             key.Append('|').Append(entitiesAvailable ? "entities" : "no-entities");

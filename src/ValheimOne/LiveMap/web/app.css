@@ -288,6 +288,38 @@ input {
     white-space: nowrap;
 }
 
+.join-code-line {
+    grid-template-columns: 64px minmax(0, 1fr);
+}
+
+.join-code-line[hidden] {
+    display: none;
+}
+
+.join-code-detail {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+}
+
+.join-code-value {
+    overflow: hidden;
+    color: var(--accent);
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.join-code-copy {
+    min-height: 22px;
+    padding: 3px 5px;
+}
+
 .boss-progression-line {
     display: grid;
     grid-template-columns: 48px minmax(0, 1fr);

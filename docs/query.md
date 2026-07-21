@@ -29,6 +29,7 @@ curl http://<server-ip>:8790/api/status
 | Field | Meaning |
 |---|---|
 | `serverName` / `worldName` | World identity. |
+| `joinCode` | Current PlayFab crossplay join code. Admin view only; absent from shared/public responses and when no code is available. Treat this value as a server-access credential. |
 | `day` | Current in-game day number. |
 | `timeOfDay` | 0..1 fraction of the current day. |
 | `players` | Players visible at the caller's view level (public callers only see players sharing their position unless names/positions are public). |

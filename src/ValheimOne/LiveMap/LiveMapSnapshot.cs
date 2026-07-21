@@ -7,6 +7,7 @@ internal sealed class LiveMapSnapshot
     public static readonly LiveMapSnapshot Empty = new LiveMapSnapshot(
         string.Empty,
         string.Empty,
+        string.Empty,
         0,
         0f,
         0f,
@@ -19,6 +20,7 @@ internal sealed class LiveMapSnapshot
     public LiveMapSnapshot(
         string serverName,
         string worldName,
+        string joinCode,
         int day,
         float timeOfDay,
         float windDirDeg,
@@ -30,6 +32,7 @@ internal sealed class LiveMapSnapshot
     {
         ServerName = serverName;
         WorldName = worldName;
+        JoinCode = joinCode;
         Day = day;
         TimeOfDay = timeOfDay;
         WindDirDeg = windDirDeg;
@@ -43,6 +46,8 @@ internal sealed class LiveMapSnapshot
     public string ServerName { get; }
 
     public string WorldName { get; }
+
+    public string JoinCode { get; }
 
     public int Day { get; }
 

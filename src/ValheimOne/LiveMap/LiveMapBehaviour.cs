@@ -38,6 +38,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private float _nextPlayerUpdate;
     private float _nextFogUpdate;
     private bool _poiCatalogBuilt;
+    private bool _joinCodeReadFailureLogged;
     private bool _started;
     private bool _stopped;
     private volatile bool _idle;
@@ -416,6 +417,26 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             VoCommands.GetGlobalKeyState(zoneSystem, out globalKeys, out modifiers);
         }
 
+        string joinCode = string.Empty;
+        try
+        {
+            string? currentJoinCode = ZPlayFabMatchmaking.JoinCode;
+            if (!string.IsNullOrWhiteSpace(currentJoinCode))
+            {
+                joinCode = currentJoinCode.Trim();
+            }
+        }
+        catch (Exception exception)
+        {
+            if (!_joinCodeReadFailureLogged)
+            {
+                _joinCodeReadFailureLogged = true;
+                _log?.Warning(
+                    $"[LiveMap] crossplay join code is unavailable: " +
+                    $"{exception.GetType().Name}: {exception.Message}");
+            }
+        }
+
         var players = new List<LiveMapPlayerSnapshot>();
         var presentIds = new HashSet<long>();
         List<ZNetPeer> peers = GameAccess.GetPeers(network);
@@ -561,6 +582,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _snapshot = new LiveMapSnapshot(
             _worldName,
             _worldName,
+            joinCode,
             day,
             timeOfDay,
             windDirDeg,

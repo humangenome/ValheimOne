@@ -6,6 +6,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Added
 
+- LiveMap admin `/api/status` responses and the admin sidebar now expose the current crossplay join code for convenient copying; the access credential is never included in shared or public views and stays absent on non-crossplay servers.
 - LiveMap admin and shared views now include a default-off Last seen layer with privacy-aware offline player ghost markers, relative disconnect times, per-session and accumulated playtime, and restart-safe retained positions.
 - LiveMap can now mirror player Say and Shout chat as transient authenticated-view map bubbles and Saga lines through a privacy-sensitive `MirrorChat` opt-in that is disabled by default and never persists player speech.
 - LiveMap admin and shared views now include a default-collapsed Saga panel backed by a restart-seeded activity ring, cursor-based `GET /api/activity` history, and live `activity` SSE batches for joins, leaves, deaths, raids, world saves, and new days.
