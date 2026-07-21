@@ -1,6 +1,6 @@
 # Contributing to ValheimOne
 
-Thanks for helping build ValheimOne. The project is unreleased, so discuss large features before investing in a long implementation.
+Thanks for helping build ValheimOne. Please discuss large features in an issue before investing in a long implementation.
 
 ## Development basics
 

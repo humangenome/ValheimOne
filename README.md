@@ -18,7 +18,7 @@ _ValheimOne is a community project and is not affiliated with or endorsed by Iro
 
 > **Official Hosting:** [SurvivalServers.com](https://www.survivalservers.com/services/game_servers/valheim/?utm_source=github&utm_medium=readme&utm_campaign=valheim_one) offers managed Valheim dedicated servers with BepInEx support for ValheimOne.
 
-**Status — unreleased.** The server enforcement chassis, twenty-six default-off gameplay modules, the Live Map (world render, players, POIs, pins, fog-of-war, admin and public views), the web admin console, and the standalone A2S query responder are implemented. There is no public release yet. Gameplay features are disabled by default; the `[Server]` transport infrastructure is enabled by default but does not alter gameplay on its own.
+**Status — released.** ValheimOne is available with the server enforcement chassis, twenty-six default-off gameplay modules, the Live Map (world render, players, POIs, pins, fog-of-war, admin and public views), the web admin console, and the standalone A2S query responder. Gameplay features are disabled by default; the `[Server]` transport infrastructure is enabled by default but does not alter gameplay on its own.
 
 ---
 
@@ -27,6 +27,7 @@ _ValheimOne is a community project and is not affiliated with or endorsed by Iro
 - [Features](#features)
 - [Installation](#installation)
 - [Using ValheimOne](#using-valheimone)
+- [Getting Help](#getting-help)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -121,7 +122,9 @@ When the Live Map is enabled, its embedded HTTP server also exposes the richer `
 
 ValheimOne requires a Valheim Dedicated Server with [BepInEx 5.4.x](https://github.com/BepInEx/BepInEx) installed.
 
-ValheimOne is unreleased, so build it from source for now:
+Download the latest release zip from [GitHub Releases](https://github.com/HumanGenome/ValheimOne/releases). Choose the plugin-only package for a server that already has BepInEx installed, or the full BepInEx-bundled package for a new installation.
+
+Alternatively, build ValheimOne from source:
 
 ```bash
 ./build.sh
@@ -164,6 +167,12 @@ MegingjordBuff = 200
 `BaseMaximumWeight` is the absolute unmodified carry limit; `MegingjordBuff` is the absolute bonus applied when the belt is active. Their Valheim defaults are 300 and 150 respectively.
 
 Configuration edits hot-reload: saving `valheimone.cfg` applies changed values live (debounced, with a per-key diff logged), and server-pushed overlay values keep precedence. Only changes that alter patch topology still require a restart.
+
+---
+
+## Getting Help
+
+For ValheimOne bug reports and feature requests, use [GitHub Issues](https://github.com/HumanGenome/ValheimOne/issues). If you play through a hosting provider, contact that provider's support for hosting or control-panel questions. SurvivalServers customers: for hosting or control-panel questions, contact SurvivalServers support; for ValheimOne bugs, [GitHub Issues here](https://github.com/HumanGenome/ValheimOne/issues) works too.
 
 ---
 

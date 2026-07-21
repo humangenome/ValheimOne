@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest an improvement or new capability for ValheimOne
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for suggesting an improvement to ValheimOne.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or motivation
+      description: What problem would this feature solve, or what motivates the request?
+    validations:
+      required: true
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed solution
+      description: Describe how you would like ValheimOne to address the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe any alternative solutions or workarounds you considered.
+    validations:
+      required: false

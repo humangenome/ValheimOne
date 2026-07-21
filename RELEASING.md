@@ -2,8 +2,6 @@
 
 The release flow is: **build → reference config → package → smoke → tag → GitHub release draft.**
 
-> The repository is currently private. Releases are created as **drafts** and stay drafts until the public flip; do not publish a release before that.
-
 ## 1. Version bump
 
 `src/ValheimOne/Networking/VersionInfo.cs` → `PluginVersion` is the single source of truth; `tools/package-release.sh` reads the version from it. Keep `<Version>`/`<AssemblyVersion>`/`<FileVersion>` in `src/ValheimOne/ValheimOne.csproj` in sync, and move the `[Unreleased]` items in `CHANGELOG.md` under the new version heading.

@@ -1,0 +1,60 @@
+name: Bug report
+description: Report a reproducible problem with ValheimOne
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to report a ValheimOne bug.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the problem and the steps that led to it.
+    validations:
+      required: true
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: Describe what you expected to happen instead.
+    validations:
+      required: true
+  - type: input
+    id: valheim-version
+    attributes:
+      label: Valheim version
+      placeholder: e.g. 0.221.12
+    validations:
+      required: true
+  - type: input
+    id: bepinex-version
+    attributes:
+      label: BepInEx version
+      placeholder: e.g. 5.4.2333
+    validations:
+      required: true
+  - type: input
+    id: valheimone-version
+    attributes:
+      label: ValheimOne version
+      placeholder: e.g. 0.10.0
+    validations:
+      required: true
+  - type: textarea
+    id: log-excerpt
+    attributes:
+      label: Relevant log excerpt
+      description: Paste the relevant section from BepInEx/LogOutput.log. Remove passwords, tokens, and other sensitive information.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: config-context
+    attributes:
+      label: Configuration context
+      description: If relevant, paste the affected sections or keys from valheimone.cfg. Remove sensitive values.
+      render: ini
+    validations:
+      required: false
