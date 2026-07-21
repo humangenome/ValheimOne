@@ -96,4 +96,54 @@ internal static class BiomePalette
                 return Unknown;
         }
     }
+
+    public static bool TryDescribe(
+        Heightmap.Biome biome,
+        out string key,
+        out string displayName)
+    {
+        switch (biome)
+        {
+            case Heightmap.Biome.Meadows:
+                key = "meadows";
+                displayName = "Meadows";
+                return true;
+            case Heightmap.Biome.BlackForest:
+                key = "black_forest";
+                displayName = "Black Forest";
+                return true;
+            case Heightmap.Biome.Swamp:
+                key = "swamp";
+                displayName = "Swamp";
+                return true;
+            case Heightmap.Biome.Mountain:
+                key = "mountain";
+                displayName = "Mountain";
+                return true;
+            case Heightmap.Biome.Plains:
+                key = "plains";
+                displayName = "Plains";
+                return true;
+            case Heightmap.Biome.Ocean:
+                key = "ocean";
+                displayName = "Ocean";
+                return true;
+            case Heightmap.Biome.Mistlands:
+                key = "mistlands";
+                displayName = "Mistlands";
+                return true;
+            case Heightmap.Biome.AshLands:
+                key = "ashlands";
+                displayName = "Ashlands";
+                return true;
+            case Heightmap.Biome.DeepNorth:
+                key = "deep_north";
+                displayName = "Deep North";
+                return true;
+            default:
+                key = string.Empty;
+                displayName = string.Empty;
+                return false;
+        }
+    }
 }

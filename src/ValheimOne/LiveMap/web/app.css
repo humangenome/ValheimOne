@@ -917,6 +917,12 @@ input {
     font-size: 16px;
 }
 
+.layer-swatch-regions {
+    color: var(--accent);
+    font-family: var(--font-display);
+    font-size: 9px;
+}
+
 .layer-swatch-tint {
     color: var(--frost);
     font-size: 14px;
@@ -2346,6 +2352,43 @@ body.is-pinging #map .leaflet-overlay-pane path {
 .leaflet-tooltip.poi-tooltip {
     color: var(--text);
     font-weight: 550;
+}
+
+.region-label-anchor {
+    border: 0;
+    background: transparent;
+}
+
+.leaflet-tooltip.region-label {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    color: #d9b168;
+    font-family: var(--font-display);
+    font-size: 9px;
+    font-variant: small-caps;
+    font-weight: 600;
+    letter-spacing: 0.11em;
+    line-height: 1;
+    pointer-events: none;
+    text-shadow:
+        -1px -1px 1px rgba(8, 6, 4, 0.95),
+        1px -1px 1px rgba(8, 6, 4, 0.95),
+        -1px 1px 1px rgba(8, 6, 4, 0.95),
+        1px 1px 1px rgba(8, 6, 4, 0.95),
+        0 0 4px rgba(8, 6, 4, 0.9);
+    text-transform: uppercase;
+}
+
+.leaflet-tooltip.region-label.is-major {
+    font-size: 11px;
+    letter-spacing: 0.13em;
+}
+
+.leaflet-tooltip.region-label::before {
+    display: none;
 }
 
 .leaflet-tooltip.pin-tooltip {

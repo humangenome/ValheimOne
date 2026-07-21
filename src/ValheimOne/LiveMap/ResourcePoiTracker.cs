@@ -10,11 +10,23 @@ internal sealed class ResourcePoiTracker
 {
     private const float RefreshIntervalSeconds = 180f;
     private const long RequestActiveMilliseconds = 5L * 60L * 1000L;
-    private const int MaximumOreEntriesPerGroup = 5000;
+    private const int MaximumEntriesPerGroup = 5000;
     private const float ForageClusterSize = 64f;
 
     private static readonly ResourcePrefabDefinition[] Prefabs =
     {
+        new ResourcePrefabDefinition(
+            "spawner_greydwarf",
+            "Spawner_GreydwarfNest",
+            ResourceNodeKind.Plain),
+        new ResourcePrefabDefinition(
+            "spawner_bonepile",
+            "BonePileSpawner",
+            ResourceNodeKind.Plain),
+        new ResourcePrefabDefinition(
+            "spawner_draugrpile",
+            "Spawner_DraugrPile",
+            ResourceNodeKind.Plain),
         new ResourcePrefabDefinition("ore_copper", "rock4_copper", ResourceNodeKind.MineRock5),
         new ResourcePrefabDefinition("ore_tin", "MineRock_Tin", ResourceNodeKind.SingleHealth),
         new ResourcePrefabDefinition("ore_iron", "mudpile2", ResourceNodeKind.SingleHealth),
@@ -157,7 +169,7 @@ internal sealed class ResourcePoiTracker
             ResourceHealthDefinition healthDefinition = GetHealthDefinition(prefab);
             for (int index = 0; index < _scanResults.Count; index++)
             {
-                if (!prefab.Cluster && pending.Count >= MaximumOreEntriesPerGroup)
+                if (!prefab.Cluster && pending.Count >= MaximumEntriesPerGroup)
                 {
                     break;
                 }
@@ -556,6 +568,7 @@ internal sealed class ResourcePoiTracker
 
     private enum ResourceNodeKind
     {
+        Plain,
         MineRock5,
         SingleHealth,
         Leviathan,

@@ -191,10 +191,8 @@ internal static class PoiClassifier
             MatchKind.Contains,
             new[] { "Crypt", "Grave" },
             new[] { "SunkenCrypt" }),
-        new PoiRule("spawner_greydwarf", MatchKind.Contains, "GreydwarfNest"),
-        new PoiRule("spawner_bonepile", MatchKind.Contains, "BonePile"),
-        new PoiRule("spawner_draugrpile", MatchKind.Contains, "DraugrPile"),
         new PoiRule("spawner_firehole", MatchKind.Exact, "FireHole"),
+        new PoiRule("spawner_charred", MatchKind.Exact, "CharredStone_Spawner"),
         new PoiRule("spawner_other", MatchKind.Contains, "Spawner"),
         new PoiRule("structure_camp", MatchKind.StartsWith, "GoblinCamp"),
         new PoiRule("structure_camp", MatchKind.Contains, "DraugrVillage"),
@@ -337,7 +335,6 @@ internal sealed class PoiGroupDefinition
 
     public bool Resource { get; }
 
-    public bool Inline => !Resource;
 }
 
 internal static class PoiGroups
@@ -353,10 +350,11 @@ internal static class PoiGroups
         new PoiGroupDefinition("dungeon_frostcave", "Frost Caves", "dungeons", false),
         new PoiGroupDefinition("dungeon_mine", "Infested Mines", "dungeons", false),
         new PoiGroupDefinition("dungeon_ashlands", "Ashlands Ruins", "dungeons", false),
-        new PoiGroupDefinition("spawner_greydwarf", "Greydwarf Nests", "spawners", false),
-        new PoiGroupDefinition("spawner_bonepile", "Skeleton Spawners", "spawners", false),
-        new PoiGroupDefinition("spawner_draugrpile", "Draugr Spawners", "spawners", false),
+        new PoiGroupDefinition("spawner_greydwarf", "Greydwarf Nests", "spawners", true),
+        new PoiGroupDefinition("spawner_bonepile", "Skeleton Spawners", "spawners", true),
+        new PoiGroupDefinition("spawner_draugrpile", "Draugr Spawners", "spawners", true),
         new PoiGroupDefinition("spawner_firehole", "Surtling Geysers", "spawners", false),
+        new PoiGroupDefinition("spawner_charred", "Charred Spawners", "spawners", false),
         new PoiGroupDefinition("spawner_other", "Other Spawners", "spawners", false),
         new PoiGroupDefinition("ore_copper", "Copper", "ores", true),
         new PoiGroupDefinition("ore_tin", "Tin", "ores", true),

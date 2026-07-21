@@ -32,6 +32,7 @@ internal sealed class WorldMapRenderer
     private int _state;
     private int _completedRows;
     private string? _renderRevision;
+    private BiomeRegionSnapshot[] _regions = Array.Empty<BiomeRegionSnapshot>();
 
     public WorldMapRenderer(
         WorldGenerator generator,
@@ -73,6 +74,8 @@ internal sealed class WorldMapRenderer
 
     // Deepest zoom served overall, including on-demand detail tiles.
     public int MaximumZoom { get; }
+
+    public BiomeRegionSnapshot[] Regions => Volatile.Read(ref _regions);
 
     public string StateName
     {
@@ -155,8 +158,13 @@ internal sealed class WorldMapRenderer
         if (TryUseCache())
         {
             Volatile.Write(ref _completedRows, TextureSize);
-            Volatile.Write(ref _state, 1);
-            _log.Info($"[LiveMap] using cached world render for {_worldName} ({TextureSize}x{TextureSize}).");
+            _thread = new Thread(PrepareCachedMap)
+            {
+                IsBackground = true,
+                Name = "ValheimOne.LiveMap.Regions",
+                Priority = System.Threading.ThreadPriority.BelowNormal,
+            };
+            _thread.Start();
             _detailRenderer.Start();
             return;
         }
@@ -214,6 +222,7 @@ internal sealed class WorldMapRenderer
                 BaseMaximumZoom,
                 IsStopping);
 
+            BuildRegions();
             ThrowIfStopping();
             stopwatch.Stop();
             WriteMetadata(stopwatch.Elapsed.TotalMilliseconds);
@@ -232,6 +241,42 @@ internal sealed class WorldMapRenderer
             Volatile.Write(ref _state, 2);
             DeleteTemporaryMetadata();
             _log.Error($"[LiveMap] world render failed: {exception}");
+        }
+    }
+
+    private void PrepareCachedMap()
+    {
+        try
+        {
+            BuildRegions();
+            ThrowIfStopping();
+            Volatile.Write(ref _state, 1);
+            _log.Info(
+                $"[LiveMap] using cached world render for {_worldName} " +
+                $"({TextureSize}x{TextureSize}).");
+        }
+        catch (OperationCanceledException)
+        {
+            // The renderer is stopping.
+        }
+    }
+
+    private void BuildRegions()
+    {
+        try
+        {
+            BiomeRegionSnapshot[] regions = BiomeRegionCatalog.Build(_generator, IsStopping);
+            Volatile.Write(ref _regions, regions);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _log.Warning(
+                $"[LiveMap] biome region labels could not be generated: " +
+                $"{exception.GetType().Name}: {exception.Message}");
         }
     }
 

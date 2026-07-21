@@ -71,6 +71,7 @@
                 "spawner_bonepile",
                 "spawner_draugrpile",
                 "spawner_firehole",
+                "spawner_charred",
                 "spawner_other"
             ]
         },
@@ -125,10 +126,17 @@
         dungeon_frostcave: { label: "Frost Caves", glyph: "❄", category: "dungeons" },
         dungeon_mine: { label: "Infested Mines", glyph: "⛏", category: "dungeons" },
         dungeon_ashlands: { label: "Ashlands Ruins", glyph: "♨", category: "dungeons" },
-        spawner_greydwarf: { label: "Greydwarf Nests", glyph: "♣", category: "spawners" },
-        spawner_bonepile: { label: "Skeleton Spawners", glyph: "☠", category: "spawners" },
-        spawner_draugrpile: { label: "Draugr Spawners", glyph: "⚔", category: "spawners" },
+        spawner_greydwarf: {
+            label: "Greydwarf Nests", glyph: "♣", category: "spawners", resource: true
+        },
+        spawner_bonepile: {
+            label: "Skeleton Spawners", glyph: "☠", category: "spawners", resource: true
+        },
+        spawner_draugrpile: {
+            label: "Draugr Spawners", glyph: "⚔", category: "spawners", resource: true
+        },
         spawner_firehole: { label: "Surtling Geysers", glyph: "♨", category: "spawners" },
+        spawner_charred: { label: "Charred Spawners", glyph: "✦", category: "spawners" },
         spawner_other: { label: "Other Spawners", glyph: "•", category: "spawners" },
         ore_copper: { label: "Copper", glyph: "Cu", category: "ores", resource: true },
         ore_tin: { label: "Tin", glyph: "Sn", category: "ores", resource: true },
@@ -234,6 +242,7 @@
         spawner_bonepile: false,
         spawner_draugrpile: false,
         spawner_firehole: false,
+        spawner_charred: false,
         spawner_other: false,
         ore_copper: false,
         ore_tin: false,
@@ -257,6 +266,7 @@
         structure_runestone: false,
         misc: false,
         fog: true,
+        regions: true,
         tint: true,
         minimap: false,
         ship: true,
@@ -332,7 +342,7 @@
     var poiLayers = new Map();
     var poiRecords = new Map();
     var poiGroupMeta = new Map();
-    var resourcePoiStates = new Map();
+    var lazyPoiStates = new Map();
     var availablePoiGroups = new Set();
     var entityLayers = new Map();
     var entityAvailability = "unknown";
@@ -357,6 +367,8 @@
     var dayToastTimer = 0;
     var latestWind = null;
     var tintOverlay = null;
+    var regionLayer = null;
+    var regionsRequested = false;
     var layerSettings = loadLayerSettings();
     var layersRows = null;
     var layersSetCollapsed = null;
@@ -2784,6 +2796,7 @@
         map.setView(center, zoom, { animate: false });
         updateScaleBar();
         scheduleMinimapUpdate();
+        updateRegionLayerVisibility();
     }
 
     function ensureMap(statusMap) {
@@ -2829,6 +2842,9 @@
         map.createPane("tintPane");
         map.getPane("tintPane").style.zIndex = "360";
         map.getPane("tintPane").style.pointerEvents = "none";
+        map.createPane("regionPane");
+        map.getPane("regionPane").style.zIndex = "370";
+        map.getPane("regionPane").style.pointerEvents = "none";
         map.createPane("trailPane");
         map.getPane("trailPane").style.zIndex = "380";
         map.getPane("trailPane").style.pointerEvents = "none";
@@ -2880,12 +2896,14 @@
             }
         });
         map.on("zoomend", renderPoiLayers);
+        map.on("zoomend", updateRegionLayerVisibility);
         map.on("moveend zoomend", scheduleHashUpdate);
         syncLayerVisibility();
         updatePlayerMarkers(latestPlayers);
         applyInitialPlayersView();
         applyPendingHashFollow();
         loadPoisForCurrentView();
+        loadRegions();
         applyFogStatus();
         applyRaidEvent(currentRaidEvent);
         ensureEntityFeed();
@@ -2895,6 +2913,7 @@
     function initialiseDataLayers() {
         playerLayer = L.layerGroup();
         pinLayer = L.layerGroup();
+        regionLayer = L.layerGroup();
         trailLayer = L.layerGroup().addTo(map);
         portalNetworkLayer = L.layerGroup();
         portalPopupLinkLayer = L.layerGroup().addTo(map);
@@ -2942,6 +2961,64 @@
         }
 
         return Math.abs(distance / mapMetrics.pixelSize * mapMetrics.unitsPerPixel);
+    }
+
+    function updateRegionLayerVisibility() {
+        setLayerVisible(
+            regionLayer,
+            Boolean(map && mapMetrics && layerSettings.regions &&
+                map.getZoom() <= mapMetrics.baseZoom + 1)
+        );
+    }
+
+    async function loadRegions() {
+        if (!map || !regionLayer || regionsRequested) {
+            return;
+        }
+
+        regionsRequested = true;
+        try {
+            var payload = await fetchJson("/api/regions");
+            var regions = payload && Array.isArray(payload.regions) ? payload.regions : [];
+            regionLayer.clearLayers();
+            regions.forEach(function (region) {
+                var name = region && typeof region.name === "string"
+                    ? region.name.trim()
+                    : "";
+                var x = Number(region && region.x);
+                var z = Number(region && region.z);
+                var area = Number(region && region.area);
+                if (!name || !Number.isFinite(x) || !Number.isFinite(z)) {
+                    return;
+                }
+
+                var label = document.createElement("span");
+                label.textContent = name;
+                var marker = L.marker(worldToLatLng(x, z), {
+                    icon: L.divIcon({
+                        className: "region-label-anchor",
+                        html: "",
+                        iconAnchor: [0, 0],
+                        iconSize: [0, 0]
+                    }),
+                    interactive: false,
+                    keyboard: false,
+                    pane: "regionPane"
+                });
+                marker.bindTooltip(label, {
+                    className: "region-label" +
+                        (Number.isFinite(area) && area >= 1500000 ? " is-major" : ""),
+                    direction: "center",
+                    opacity: 1,
+                    pane: "regionPane",
+                    permanent: true
+                });
+                marker.addTo(regionLayer);
+            });
+            updateRegionLayerVisibility();
+        } catch (error) {
+            return;
+        }
     }
 
     function createCompassControl() {
@@ -3617,7 +3694,8 @@
         });
         POI_GROUP_ORDER.forEach(function (group) {
             var definition = POI_GROUPS[group];
-            if (availablePoiGroups.has(group) && definition.resource) {
+            var metadata = poiGroupMeta.get(group);
+            if (availablePoiGroups.has(group) && metadata && metadata.inline === false) {
                 items.push({
                     glyph: definition.glyph,
                     groupOnly: true,
@@ -3805,7 +3883,7 @@
         }
         setMapSearchOpen(false, false);
         if (item.groupOnly) {
-            updateResourcePoiPolling();
+            updateLazyPoiLoading();
             return;
         }
         focusMapLocation(item.latLng, item.markerResolver);
@@ -4278,6 +4356,14 @@
         }
         appendLayerRow(
             overlaysBody,
+            "regions",
+            "Region names",
+            "Aa",
+            "regions",
+            { counted: false }
+        );
+        appendLayerRow(
+            overlaysBody,
             "portalNetwork",
             "Portal network",
             "╌",
@@ -4530,11 +4616,15 @@
         }
         layersRows.querySelectorAll("[data-layer-count]").forEach(function (badge) {
             var key = badge.dataset.layerCount;
-            var resourceState = resourcePoiStates.get(key);
+            var lazyState = lazyPoiStates.get(key);
             var surveying = isResourcePoiGroup(key) && layerSettings[key] &&
-                resourceState && (resourceState.requestPending || resourceState.scanning);
-            badge.textContent = surveying ? "Surveying…" : String(layerCountValue(key));
-            badge.classList.toggle("is-surveying", Boolean(surveying));
+                lazyState && (lazyState.requestPending || lazyState.scanning);
+            var loading = !surveying && layerSettings[key] && lazyState &&
+                lazyState.requestPending;
+            badge.textContent = surveying
+                ? "Surveying…"
+                : loading ? "Loading…" : String(layerCountValue(key));
+            badge.classList.toggle("is-surveying", Boolean(surveying || loading));
         });
         layersRows.querySelectorAll(".layer-section").forEach(function (section) {
             var inputs = Array.prototype.slice.call(
@@ -4983,6 +5073,7 @@
             );
         });
         setLayerVisible(fogOverlay, fogAvailable && layerSettings.fog);
+        updateRegionLayerVisibility();
         setLayerVisible(tintOverlay, layerSettings.tint);
         setLayerVisible(
             portalNetworkLayer,
@@ -5001,7 +5092,7 @@
         renderTrails();
         renderLegend();
         updateFeedStalenessDots();
-        updateResourcePoiPolling();
+        updateLazyPoiLoading();
     }
 
     function normalizePlayers(payload) {
@@ -6124,6 +6215,10 @@
     }
 
     function isResourcePoiGroup(group) {
+        var metadata = poiGroupMeta.get(group);
+        if (metadata) {
+            return metadata.resource === true;
+        }
         return Object.prototype.hasOwnProperty.call(POI_GROUPS, group) &&
             POI_GROUPS[group].resource === true;
     }
@@ -6508,6 +6603,15 @@
     }
 
     function resourcePoiTitle(group) {
+        if (group === "spawner_greydwarf") {
+            return "Greydwarf nest";
+        }
+        if (group === "spawner_bonepile") {
+            return "Skeleton spawner";
+        }
+        if (group === "spawner_draugrpile") {
+            return "Draugr spawner";
+        }
         if (group === "ore_copper") {
             return "Copper deposit";
         }
@@ -6533,6 +6637,9 @@
     }
 
     function resourcePoiStateText(record) {
+        if (record.group.indexOf("spawner_") === 0) {
+            return "";
+        }
         if (record.group.indexOf("forage_") === 0) {
             if (record.state === "respawning" || record.available === 0) {
                 return "Picked — respawning";
@@ -6555,7 +6662,7 @@
     }
 
     function resourcePoiSurveyUnixMs(group) {
-        var state = resourcePoiStates.get(group);
+        var state = lazyPoiStates.get(group);
         if (state && Number.isFinite(state.scanUnixMs) && state.scanUnixMs > 0) {
             return state.scanUnixMs;
         }
@@ -6818,7 +6925,7 @@
     }
 
     function clearPoiLayers() {
-        stopAllResourcePoiPolling();
+        stopAllLazyPoiPolling();
         poiLayers.forEach(function (layer) {
             layer.clearLayers();
         });
@@ -6827,7 +6934,7 @@
         });
         availablePoiGroups.clear();
         poiGroupMeta.clear();
-        resourcePoiStates.clear();
+        lazyPoiStates.clear();
         renderLayerRows();
         syncLayerVisibility();
     }
@@ -7042,8 +7149,8 @@
         });
     }
 
-    function getResourcePoiState(group) {
-        var state = resourcePoiStates.get(group);
+    function getLazyPoiState(group) {
+        var state = lazyPoiStates.get(group);
         if (!state) {
             state = {
                 lastFetchAt: 0,
@@ -7053,20 +7160,20 @@
                 scanning: false,
                 timer: 0
             };
-            resourcePoiStates.set(group, state);
+            lazyPoiStates.set(group, state);
         }
         return state;
     }
 
-    function resourcePoiPollingAllowed(group) {
+    function lazyPoiLoadingAllowed(group) {
         var metadata = poiGroupMeta.get(group);
-        return Boolean(map && hasLiveAccess() && layerSettings[group] &&
-            availablePoiGroups.has(group) && isResourcePoiGroup(group) &&
+        return Boolean(map && layerSettings[group] &&
+            availablePoiGroups.has(group) &&
             metadata && metadata.inline === false);
     }
 
-    function stopResourcePoiPolling(group) {
-        var state = resourcePoiStates.get(group);
+    function stopLazyPoiPolling(group) {
+        var state = lazyPoiStates.get(group);
         if (!state) {
             return;
         }
@@ -7074,72 +7181,76 @@
         state.timer = 0;
     }
 
-    function stopAllResourcePoiPolling() {
-        resourcePoiStates.forEach(function (state) {
+    function stopAllLazyPoiPolling() {
+        lazyPoiStates.forEach(function (state) {
             window.clearTimeout(state.timer);
             state.timer = 0;
         });
     }
 
-    function scheduleResourcePoiPoll(group, delay) {
-        var state = getResourcePoiState(group);
+    function scheduleLazyPoiPoll(group, delay) {
+        var state = getLazyPoiState(group);
         window.clearTimeout(state.timer);
         state.timer = 0;
-        if (!resourcePoiPollingAllowed(group)) {
+        if (!lazyPoiLoadingAllowed(group)) {
             return;
         }
         state.timer = window.setTimeout(function () {
             state.timer = 0;
-            loadResourcePoiGroup(group);
+            loadLazyPoiGroup(group);
         }, Math.max(0, delay));
     }
 
-    function updateResourcePoiPolling() {
+    function updateLazyPoiLoading() {
         POI_GROUP_ORDER.forEach(function (group) {
-            if (!isResourcePoiGroup(group)) {
-                return;
-            }
-            if (!resourcePoiPollingAllowed(group)) {
-                stopResourcePoiPolling(group);
+            if (!lazyPoiLoadingAllowed(group)) {
+                stopLazyPoiPolling(group);
                 return;
             }
 
-            var state = getResourcePoiState(group);
+            var state = getLazyPoiState(group);
+            var resource = isResourcePoiGroup(group);
             if (state.requestPending || state.timer) {
                 return;
             }
-            if (!state.loaded || state.scanning) {
-                state.scanning = true;
-                scheduleResourcePoiPoll(group, 0);
+            if (!state.loaded || (resource && state.scanning)) {
+                state.scanning = resource;
+                scheduleLazyPoiPoll(group, 0);
                 return;
             }
-            scheduleResourcePoiPoll(
-                group,
-                Math.max(0, state.lastFetchAt + RESOURCE_POI_REFRESH_INTERVAL_MS - Date.now())
-            );
+            if (resource) {
+                scheduleLazyPoiPoll(
+                    group,
+                    Math.max(
+                        0,
+                        state.lastFetchAt + RESOURCE_POI_REFRESH_INTERVAL_MS - Date.now()
+                    )
+                );
+            }
         });
         updateLayerCounts();
     }
 
-    async function loadResourcePoiGroup(group) {
-        if (!resourcePoiPollingAllowed(group)) {
-            stopResourcePoiPolling(group);
+    async function loadLazyPoiGroup(group) {
+        if (!lazyPoiLoadingAllowed(group)) {
+            stopLazyPoiPolling(group);
             return;
         }
 
-        var state = getResourcePoiState(group);
+        var state = getLazyPoiState(group);
+        var resource = isResourcePoiGroup(group);
         if (state.requestPending) {
             return;
         }
         state.requestPending = true;
-        if (!state.loaded) {
+        if (resource && !state.loaded) {
             state.scanning = true;
         }
         updateLayerCounts();
         var nextDelay = RESOURCE_POI_POLL_INTERVAL_MS;
         try {
             var payload = await fetchJson("/api/pois?group=" + encodeURIComponent(group));
-            if (resourcePoiStates.get(group) !== state || !hasLiveAccess() ||
+            if (lazyPoiStates.get(group) !== state ||
                 normalizePoiGroup(payload && payload.group) !== group) {
                 return;
             }
@@ -7163,15 +7274,19 @@
             }
             if (metadata) {
                 metadata.count = count;
-                metadata.scanUnixMs = scanUnixMs;
+                if (resource) {
+                    metadata.scanUnixMs = scanUnixMs;
+                }
             }
             state.lastFetchAt = Date.now();
-            state.loaded = scanUnixMs > 0;
-            state.scanUnixMs = scanUnixMs;
-            state.scanning = payload && payload.scanning === true;
-            nextDelay = state.scanning
-                ? RESOURCE_POI_POLL_INTERVAL_MS
-                : RESOURCE_POI_REFRESH_INTERVAL_MS;
+            state.loaded = resource ? scanUnixMs > 0 : true;
+            state.scanUnixMs = resource ? scanUnixMs : 0;
+            state.scanning = resource && payload && payload.scanning === true;
+            if (resource) {
+                nextDelay = state.scanning
+                    ? RESOURCE_POI_POLL_INTERVAL_MS
+                    : RESOURCE_POI_REFRESH_INTERVAL_MS;
+            }
             feedLastUpdated.pois = Date.now();
             setFeedState("pois", true);
             renderPoiGroup(group, map.getZoom() < POI_CLUSTER_ZOOM);
@@ -7180,11 +7295,12 @@
                 renderMapSearchResults();
             }
         } catch (error) {
-            state.scanning = !state.loaded;
+            state.scanning = resource && !state.loaded;
         } finally {
             state.requestPending = false;
-            if (resourcePoiStates.get(group) === state && resourcePoiPollingAllowed(group)) {
-                scheduleResourcePoiPoll(group, nextDelay);
+            if (resource && lazyPoiStates.get(group) === state &&
+                lazyPoiLoadingAllowed(group)) {
+                scheduleLazyPoiPoll(group, nextDelay);
             }
             updateLayerCounts();
         }
@@ -7226,6 +7342,7 @@
                     label: typeof entry.label === "string" && entry.label.trim()
                         ? entry.label.trim()
                         : POI_GROUPS[group].label,
+                    resource: entry.resource === true,
                     scanUnixMs: Number.isFinite(scanUnixMs) && scanUnixMs >= 0
                         ? scanUnixMs
                         : 0
@@ -7233,7 +7350,7 @@
                 poiGroupMeta.set(group, metadata);
                 availablePoiGroups.add(group);
                 if (isResourcePoiGroup(group)) {
-                    getResourcePoiState(group).scanUnixMs = metadata.scanUnixMs;
+                    getLazyPoiState(group).scanUnixMs = metadata.scanUnixMs;
                 }
             });
 
@@ -7258,6 +7375,7 @@
                             inline: true,
                             key: group,
                             label: POI_GROUPS[group].label,
+                            resource: POI_GROUPS[group].resource === true,
                             scanUnixMs: 0
                         });
                     }
@@ -8263,7 +8381,7 @@
         window.clearTimeout(eventSourceRetryTimer);
         window.clearTimeout(hashUpdateTimer);
         window.clearTimeout(entityFocusPollTimer);
-        stopAllResourcePoiPolling();
+        stopAllLazyPoiPolling();
         window.clearInterval(popupRefreshTimer);
         window.clearInterval(layersStalenessTimer);
         window.clearInterval(savedBadgeTimer);

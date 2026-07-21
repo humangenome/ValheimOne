@@ -16,6 +16,7 @@ internal sealed class LiveMapHttpServer
     private const int EventStreamTickMilliseconds = 1000;
     private const int EventStreamHeartbeatTicks = 15;
     private const int EventStreamLogBatchSize = 100;
+    private const int MaximumInlineLocationPoisPerGroup = 400;
     private const float MaximumPingWorldRadius = 10500f;
     private const int MaximumPingLabelLength = 32;
     private const long ResourceRefreshMilliseconds = 180L * 1000L;
@@ -357,6 +358,10 @@ internal sealed class LiveMapHttpServer
             else if (isGet && path == "/api/pois")
             {
                 ServePois(request, response, viewLevel);
+            }
+            else if (isGet && path == "/api/regions")
+            {
+                ServeRegions(response);
             }
             else if (isGet && path == "/api/pins")
             {
@@ -1653,7 +1658,7 @@ internal sealed class LiveMapHttpServer
             .ToLowerInvariant();
         if (!string.IsNullOrEmpty(requestedGroup))
         {
-            ServeResourcePois(response, viewLevel, requestedGroup);
+            ServePoiGroup(response, viewLevel, requestedGroup);
             return;
         }
 
@@ -1664,6 +1669,7 @@ internal sealed class LiveMapHttpServer
         FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
         long unixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var json = new StringBuilder(128 + (pois.Count * 96));
+        var deferredGroups = new HashSet<string>(StringComparer.Ordinal);
         json.Append("{\"unixMs\":");
         json.Append(unixMs.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"groups\":[");
@@ -1692,12 +1698,20 @@ internal sealed class LiveMapHttpServer
                 count = resourceGroup.Count;
             }
 
+            bool inline = !definition.Resource &&
+                          count <= MaximumInlineLocationPoisPerGroup;
+            if (!inline)
+            {
+                deferredGroups.Add(definition.Key);
+            }
+
             json.Append('{');
             json.Append("\"key\":").Append(JsonWriter.Quote(definition.Key));
             json.Append(",\"label\":").Append(JsonWriter.Quote(definition.Label));
             json.Append(",\"category\":").Append(JsonWriter.Quote(definition.Category));
             json.Append(",\"count\":").Append(count.ToString(CultureInfo.InvariantCulture));
-            json.Append(",\"inline\":").Append(definition.Inline ? "true" : "false");
+            json.Append(",\"inline\":").Append(inline ? "true" : "false");
+            json.Append(",\"resource\":").Append(definition.Resource ? "true" : "false");
             if (definition.Resource)
             {
                 json.Append(",\"scanUnixMs\":").Append(
@@ -1714,6 +1728,11 @@ internal sealed class LiveMapHttpServer
         {
             PoiSnapshot poi = pois[index];
             if (viewLevel == ViewLevel.Public && !PoiGroups.IsPublic(poi.Group))
+            {
+                continue;
+            }
+
+            if (deferredGroups.Contains(poi.Group))
             {
                 continue;
             }
@@ -1739,22 +1758,79 @@ internal sealed class LiveMapHttpServer
         WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
 
-    private void ServeResourcePois(
+    private void ServePoiGroup(
         HttpListenerResponse response,
         ViewLevel viewLevel,
         string requestedGroup)
     {
-        if (viewLevel == ViewLevel.Public || !_config.ResourceLayers ||
-            !PoiGroups.TryGet(requestedGroup, out PoiGroupDefinition? definition) ||
-            definition == null || !definition.Resource)
+        if (!PoiGroups.TryGet(requestedGroup, out PoiGroupDefinition? definition) ||
+            definition == null ||
+            (viewLevel == ViewLevel.Public && !PoiGroups.IsPublic(definition.Key)) ||
+            (definition.Resource && !_config.ResourceLayers))
         {
             WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
             return;
         }
 
+        if (!definition.Resource)
+        {
+            ServeLocationPoiGroup(response, definition);
+            return;
+        }
+
+        ServeResourcePoiGroup(response, definition);
+    }
+
+    private void ServeLocationPoiGroup(
+        HttpListenerResponse response,
+        PoiGroupDefinition definition)
+    {
+        PoiCatalog catalog = _getPoiCatalog();
+        IReadOnlyList<PoiSnapshot> catalogPois = catalog.ServedPois;
+        int count = catalog.GetCount(definition.Key);
+        FogMaskSnapshot fogSnapshot = _fogTracker.Snapshot;
+        var json = new StringBuilder(128 + (count * 96));
+        json.Append("{\"group\":").Append(JsonWriter.Quote(definition.Key));
+        json.Append(",\"label\":").Append(JsonWriter.Quote(definition.Label));
+        json.Append(",\"count\":").Append(count.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"resource\":false,\"scanning\":false,\"pois\":[");
+        bool needsComma = false;
+        for (int index = 0; index < catalogPois.Count; index++)
+        {
+            PoiSnapshot poi = catalogPois[index];
+            if (!string.Equals(poi.Group, definition.Key, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (needsComma)
+            {
+                json.Append(',');
+            }
+
+            json.Append('{');
+            json.Append("\"name\":").Append(JsonWriter.Quote(poi.Name));
+            json.Append(",\"group\":").Append(JsonWriter.Quote(poi.Group));
+            json.Append(",\"x\":").Append(JsonWriter.NumberOneDecimal(poi.X));
+            json.Append(",\"z\":").Append(JsonWriter.NumberOneDecimal(poi.Z));
+            json.Append(",\"placed\":").Append(poi.Placed ? "true" : "false");
+            json.Append(",\"explored\":").Append(
+                FogTracker.IsExplored(fogSnapshot, poi.X, poi.Z) ? "true" : "false");
+            json.Append('}');
+            needsComma = true;
+        }
+
+        json.Append("]}");
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private void ServeResourcePoiGroup(
+        HttpListenerResponse response,
+        PoiGroupDefinition definition)
+    {
         _noteResourcesRequested();
         ResourcePoiMapSnapshot snapshot = _getResourcePoiSnapshot();
-        snapshot.TryGetGroup(requestedGroup, out ResourcePoiGroupSnapshot? group);
+        snapshot.TryGetGroup(definition.Key, out ResourcePoiGroupSnapshot? group);
         ResourcePoiEntry[] pois = group?.Entries ?? Array.Empty<ResourcePoiEntry>();
         int count = group?.Count ?? 0;
         long nowUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -1769,6 +1845,7 @@ internal sealed class LiveMapHttpServer
         json.Append("{\"group\":").Append(JsonWriter.Quote(definition.Key));
         json.Append(",\"label\":").Append(JsonWriter.Quote(definition.Label));
         json.Append(",\"count\":").Append(count.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"resource\":true");
         json.Append(",\"scanUnixMs\":").Append(
             snapshot.LastScanUnixMs.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"scanning\":").Append(scanning ? "true" : "false");
@@ -1811,6 +1888,33 @@ internal sealed class LiveMapHttpServer
                     poi.Available.ToString(CultureInfo.InvariantCulture));
             }
 
+            json.Append('}');
+        }
+
+        json.Append("]}");
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private void ServeRegions(HttpListenerResponse response)
+    {
+        BiomeRegionSnapshot[] regions = _renderer.Regions;
+        var json = new StringBuilder(16 + (regions.Length * 96));
+        json.Append("{\"regions\":[");
+        for (int index = 0; index < regions.Length; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            BiomeRegionSnapshot region = regions[index];
+            json.Append('{');
+            json.Append("\"name\":").Append(JsonWriter.Quote(region.Name));
+            json.Append(",\"biome\":").Append(JsonWriter.Quote(region.Biome));
+            json.Append(",\"x\":").Append(JsonWriter.NumberOneDecimal(region.X));
+            json.Append(",\"z\":").Append(JsonWriter.NumberOneDecimal(region.Z));
+            json.Append(",\"area\":").Append(
+                region.Area.ToString(CultureInfo.InvariantCulture));
             json.Append('}');
         }
 
