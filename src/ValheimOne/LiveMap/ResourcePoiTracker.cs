@@ -143,7 +143,7 @@ internal sealed class ResourcePoiTracker
         _scanWarningLogged = false;
         _scanning = true;
         _nextRefresh = now + RefreshIntervalSeconds;
-        _snapshot = _snapshot.WithScanState(true, 0, -1);
+        _snapshot = _snapshot.WithScanState(true, -1, -1);
     }
 
     private void ContinueScan(float now)
@@ -224,9 +224,15 @@ internal sealed class ResourcePoiTracker
 
     private void PublishScanProgress(ZDOMan manager)
     {
-        int sectorCount = manager.m_objectsBySector?.Length ?? 0;
-        if (!_scanning || sectorCount <= 0)
+        if (!_scanning)
         {
+            return;
+        }
+
+        if (!GameAccess.TryGetZdoSectorCount(manager, out int sectorCount) ||
+            sectorCount <= 0)
+        {
+            _snapshot = _snapshot.WithScanState(true, -1, -1);
             return;
         }
 
