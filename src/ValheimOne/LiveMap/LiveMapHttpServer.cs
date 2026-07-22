@@ -1958,7 +1958,30 @@ internal sealed class LiveMapHttpServer
         json.Append("{\"revision\":");
         json.Append(snapshot.Revision.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"time\":").Append(snapshot.UnixMs.ToString(CultureInfo.InvariantCulture));
-        json.Append(",\"entities\":[");
+        json.Append(",\"groups\":[");
+        for (int index = 0; index < snapshot.Groups.Length; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            EntityGroupSnapshot group = snapshot.Groups[index];
+            json.Append('{');
+            json.Append("\"key\":").Append(JsonWriter.Quote(group.Key));
+            json.Append(",\"count\":").Append(
+                group.Count.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"cap\":").Append(
+                group.Cap.ToString(CultureInfo.InvariantCulture));
+            if (group.Truncated)
+            {
+                json.Append(",\"truncated\":true");
+            }
+
+            json.Append('}');
+        }
+
+        json.Append("],\"entities\":[");
         for (int index = 0; index < snapshot.Entities.Length; index++)
         {
             if (index > 0)

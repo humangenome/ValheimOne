@@ -380,6 +380,7 @@
     var markerRecords = new Map();
     var latestPlayers = [];
     var latestEntities = [];
+    var entityGroupMeta = new Map();
     var latestPlayerCount = 0;
     var map = null;
     var tileLayer = null;
@@ -6458,11 +6459,24 @@
             return metadata ? metadata.count : (poiRecords.get(key) || []).length;
         }
         if (Object.prototype.hasOwnProperty.call(ENTITY_GROUPS, key)) {
-            return latestEntities.filter(function (entity) {
-                return entity.group === key;
-            }).length;
+            var groupMetadata = entityGroupMeta.get(key);
+            var count = groupMetadata
+                ? groupMetadata.count
+                : latestEntities.filter(function (entity) {
+                    return entity.group === key;
+                }).length;
+            return formatEntityGroupCount(key, count);
         }
         return "";
+    }
+
+    function formatEntityGroupCount(group, count) {
+        var metadata = entityGroupMeta.get(group);
+        if (!metadata || !metadata.truncated) {
+            return String(count);
+        }
+
+        return String(metadata.cap) + "+";
     }
 
     function updateLayerCounts() {
@@ -9832,6 +9846,7 @@
         if (!preserveState) {
             entityRevision = null;
             latestEntities = [];
+            entityGroupMeta.clear();
             derivePortalPairs(latestEntities);
             openPopupPortalId = "";
         }
@@ -9981,6 +9996,33 @@
             newest.entity.isNewestDeath = true;
         });
         return normalized;
+    }
+
+    function updateEntityGroupMetadata(payload) {
+        entityGroupMeta.clear();
+        var groups = payload && Array.isArray(payload.groups) ? payload.groups : [];
+        groups.forEach(function (entry) {
+            var group = entry && typeof entry.key === "string"
+                ? entry.key.trim().toLowerCase()
+                : "";
+            if (!Object.prototype.hasOwnProperty.call(ENTITY_GROUPS, group)) {
+                return;
+            }
+
+            var count = Math.floor(Number(entry.count));
+            var cap = Math.floor(Number(entry.cap));
+            if (!Number.isFinite(count) || count < 0) {
+                count = 0;
+            }
+            if (!Number.isFinite(cap) || cap < 1) {
+                cap = count;
+            }
+            entityGroupMeta.set(group, {
+                cap: cap,
+                count: count,
+                truncated: entry.truncated === true
+            });
+        });
     }
 
     function entityMarkerTitle(entity) {
@@ -10175,6 +10217,7 @@
             feedLastUpdated.entities = Date.now();
             setFeedState("entities", true);
             var entities = normalizeEntityPayload(payload);
+            updateEntityGroupMetadata(payload);
             recordEntityTrails(entities);
             latestEntities = entities;
             derivePortalPairs(latestEntities);

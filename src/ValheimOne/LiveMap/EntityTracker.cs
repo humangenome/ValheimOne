@@ -16,28 +16,43 @@ internal sealed class EntityTracker
     private const float FocusRefreshIntervalSeconds = 2f;
     private const long RequestActiveMilliseconds = 2L * 60L * 1000L;
     private const long FocusRequestActiveMilliseconds = 30L * 1000L;
-    private const int MaximumEntities = 800;
+    private const int MaximumShips = 300;
+    private const int MaximumCarts = 150;
+    private const int MaximumPortals = 500;
+    private const int MaximumTombstones = 200;
+    private const int MaximumWards = 300;
+    private const int MaximumBeds = 500;
     private const float WardRadiusFallback = 32f;
 
     private static readonly Lazy<FieldInfo> RandomEventField = new(
         () => AccessTools.Field(typeof(RandEventSystem), "m_randomEvent") ??
               throw new MissingFieldException(typeof(RandEventSystem).FullName, "m_randomEvent"));
 
+    private static readonly EntityGroupDefinition[] Groups =
+    {
+        new EntityGroupDefinition("ship", MaximumShips),
+        new EntityGroupDefinition("cart", MaximumCarts),
+        new EntityGroupDefinition("portal", MaximumPortals),
+        new EntityGroupDefinition("tombstone", MaximumTombstones),
+        new EntityGroupDefinition("ward", MaximumWards),
+        new EntityGroupDefinition("bed", MaximumBeds),
+    };
+
     private static readonly PrefabDefinition[] Prefabs =
     {
-        new PrefabDefinition("ship", "Raft"),
-        new PrefabDefinition("ship", "Karve"),
-        new PrefabDefinition("ship", "VikingShip"),
-        new PrefabDefinition("ship", "VikingShip_Ashlands"),
-        new PrefabDefinition("cart", "Cart"),
-        new PrefabDefinition("portal", "portal_wood"),
-        new PrefabDefinition("portal", "portal_stone"),
-        new PrefabDefinition("portal", "portal"),
-        new PrefabDefinition("tombstone", "Player_tombstone"),
-        new PrefabDefinition("ward", "guard_stone"),
-        new PrefabDefinition("bed", "bed"),
-        new PrefabDefinition("bed", "piece_bed02"),
-        new PrefabDefinition("bed", "ashwood_bed"),
+        new PrefabDefinition(EntityGroup.Ship, "Raft"),
+        new PrefabDefinition(EntityGroup.Ship, "Karve"),
+        new PrefabDefinition(EntityGroup.Ship, "VikingShip"),
+        new PrefabDefinition(EntityGroup.Ship, "VikingShip_Ashlands"),
+        new PrefabDefinition(EntityGroup.Cart, "Cart"),
+        new PrefabDefinition(EntityGroup.Portal, "portal_wood"),
+        new PrefabDefinition(EntityGroup.Portal, "portal_stone"),
+        new PrefabDefinition(EntityGroup.Portal, "portal"),
+        new PrefabDefinition(EntityGroup.Tombstone, "Player_tombstone"),
+        new PrefabDefinition(EntityGroup.Ward, "guard_stone"),
+        new PrefabDefinition(EntityGroup.Bed, "bed"),
+        new PrefabDefinition(EntityGroup.Bed, "piece_bed02"),
+        new PrefabDefinition(EntityGroup.Bed, "ashwood_bed"),
     };
 
     private readonly LiveMapConfig _config;
@@ -45,11 +60,16 @@ internal sealed class EntityTracker
     private readonly ModLogger _log;
     private readonly List<ZDO> _scanResults = new List<ZDO>();
     private readonly List<TrackedEntitySnapshot> _pendingEntities =
-        new List<TrackedEntitySnapshot>(MaximumEntities);
+        new List<TrackedEntitySnapshot>();
+    private readonly int[] _pendingGroupCounts = new int[Groups.Length];
+    private readonly bool[] _pendingGroupTruncated = new bool[Groups.Length];
     private volatile EntityMapSnapshot _snapshot = EntityMapSnapshot.Empty;
     private EntityFocusRequest _focusRequest = EntityFocusRequest.Empty;
     private volatile EntityFocusSnapshot _focusSnapshot = EntityFocusSnapshot.Empty;
     private TrackedEntitySnapshot[] _entities = Array.Empty<TrackedEntitySnapshot>();
+    private EntityGroupSnapshot[] _entityGroups = CreateGroupSnapshots(
+        new int[Groups.Length],
+        new bool[Groups.Length]);
     private RaidEventSnapshot? _activeEvent;
     private float _nextEntityRefresh;
     private float _nextEventRefresh;
@@ -118,6 +138,9 @@ internal sealed class EntityTracker
             if (_entities.Length != 0)
             {
                 _entities = Array.Empty<TrackedEntitySnapshot>();
+                _entityGroups = CreateGroupSnapshots(
+                    new int[Groups.Length],
+                    new bool[Groups.Length]);
                 publish = true;
             }
         }
@@ -157,6 +180,8 @@ internal sealed class EntityTracker
         ResolveWardRadius();
         _scanResults.Clear();
         _pendingEntities.Clear();
+        Array.Clear(_pendingGroupCounts, 0, _pendingGroupCounts.Length);
+        Array.Clear(_pendingGroupTruncated, 0, _pendingGroupTruncated.Length);
         _prefabIndex = 0;
         _scanIndex = 0;
         _scanWarningLogged = false;
@@ -175,8 +200,12 @@ internal sealed class EntityTracker
         }
 
         PrefabDefinition prefab = Prefabs[_prefabIndex];
+        int groupIndex = (int)prefab.Group;
+        EntityGroupDefinition group = Groups[groupIndex];
         bool complete;
         int pendingCount = _pendingEntities.Count;
+        int pendingGroupCount = _pendingGroupCounts[groupIndex];
+        bool pendingGroupTruncated = _pendingGroupTruncated[groupIndex];
         try
         {
             // Valheim appends results across iterative calls, so retain this list until completion.
@@ -191,7 +220,7 @@ internal sealed class EntityTracker
 
             for (int entityIndex = 0;
                  entityIndex < _scanResults.Count &&
-                 _pendingEntities.Count < MaximumEntities;
+                 _pendingGroupCounts[groupIndex] < group.MaximumEntities;
                  entityIndex++)
             {
                 ZDO? zdo = _scanResults[entityIndex];
@@ -205,21 +234,12 @@ internal sealed class EntityTracker
                 string id = uid.UserID.ToString(CultureInfo.InvariantCulture) + ":" +
                             uid.ID.ToString(CultureInfo.InvariantCulture);
                 float rotationY = zdo.GetRotation().eulerAngles.y;
-                string tag = string.Equals(prefab.Group, "portal", StringComparison.Ordinal)
+                string tag = prefab.Group == EntityGroup.Portal
                     ? zdo.GetString(ZDOVars.s_tag, string.Empty)
                     : string.Empty;
-                bool isTombstone = string.Equals(
-                    prefab.Group,
-                    "tombstone",
-                    StringComparison.Ordinal);
-                bool isWard = string.Equals(
-                    prefab.Group,
-                    "ward",
-                    StringComparison.Ordinal);
-                bool isBed = string.Equals(
-                    prefab.Group,
-                    "bed",
-                    StringComparison.Ordinal);
+                bool isTombstone = prefab.Group == EntityGroup.Tombstone;
+                bool isWard = prefab.Group == EntityGroup.Ward;
+                bool isBed = prefab.Group == EntityGroup.Bed;
                 string owner = isWard
                     ? zdo.GetString(ZDOVars.s_creatorName, string.Empty)
                     : isTombstone || isBed
@@ -244,7 +264,7 @@ internal sealed class EntityTracker
                 }
 
                 _pendingEntities.Add(new TrackedEntitySnapshot(
-                    prefab.Group,
+                    group.Key,
                     prefab.Name,
                     position.x,
                     position.y,
@@ -256,6 +276,12 @@ internal sealed class EntityTracker
                     deathAgeSec,
                     wardEnabled,
                     wardRadius));
+                _pendingGroupCounts[groupIndex]++;
+            }
+
+            if (_pendingGroupCounts[groupIndex] >= group.MaximumEntities)
+            {
+                _pendingGroupTruncated[groupIndex] = true;
             }
         }
         catch (Exception exception)
@@ -266,6 +292,8 @@ internal sealed class EntityTracker
                     pendingCount,
                     _pendingEntities.Count - pendingCount);
             }
+            _pendingGroupCounts[groupIndex] = pendingGroupCount;
+            _pendingGroupTruncated[groupIndex] = pendingGroupTruncated;
 
             if (!_scanWarningLogged)
             {
@@ -279,12 +307,21 @@ internal sealed class EntityTracker
         _scanResults.Clear();
         _scanIndex = 0;
         _prefabIndex++;
-        if (_prefabIndex < Prefabs.Length && _pendingEntities.Count < MaximumEntities)
+        while (_prefabIndex < Prefabs.Length &&
+               _pendingGroupTruncated[(int)Prefabs[_prefabIndex].Group])
+        {
+            _prefabIndex++;
+        }
+
+        if (_prefabIndex < Prefabs.Length)
         {
             return false;
         }
 
         _entities = _pendingEntities.ToArray();
+        _entityGroups = CreateGroupSnapshots(
+            _pendingGroupCounts,
+            _pendingGroupTruncated);
         _lastEntityScanUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         for (int index = 0; index < _entities.Length; index++)
         {
@@ -479,6 +516,8 @@ internal sealed class EntityTracker
     {
         _scanResults.Clear();
         _pendingEntities.Clear();
+        Array.Clear(_pendingGroupCounts, 0, _pendingGroupCounts.Length);
+        Array.Clear(_pendingGroupTruncated, 0, _pendingGroupTruncated.Length);
         _prefabIndex = 0;
         _scanIndex = 0;
         _scanning = false;
@@ -491,8 +530,27 @@ internal sealed class EntityTracker
             _revision,
             DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             _lastEntityScanUnixMs,
+            _entityGroups,
             _entities,
             _activeEvent);
+    }
+
+    private static EntityGroupSnapshot[] CreateGroupSnapshots(
+        int[] counts,
+        bool[] truncated)
+    {
+        var snapshots = new EntityGroupSnapshot[Groups.Length];
+        for (int index = 0; index < Groups.Length; index++)
+        {
+            EntityGroupDefinition group = Groups[index];
+            snapshots[index] = new EntityGroupSnapshot(
+                group.Key,
+                counts[index],
+                group.MaximumEntities,
+                truncated[index]);
+        }
+
+        return snapshots;
     }
 
     private static bool RaidEventsEqual(
@@ -558,15 +616,38 @@ internal sealed class EntityTracker
 
     private sealed class PrefabDefinition
     {
-        public PrefabDefinition(string group, string name)
+        public PrefabDefinition(EntityGroup group, string name)
         {
             Group = group;
             Name = name;
         }
 
-        public string Group { get; }
+        public EntityGroup Group { get; }
 
         public string Name { get; }
+    }
+
+    private sealed class EntityGroupDefinition
+    {
+        public EntityGroupDefinition(string key, int maximumEntities)
+        {
+            Key = key;
+            MaximumEntities = maximumEntities;
+        }
+
+        public string Key { get; }
+
+        public int MaximumEntities { get; }
+    }
+
+    private enum EntityGroup
+    {
+        Ship,
+        Cart,
+        Portal,
+        Tombstone,
+        Ward,
+        Bed,
     }
 
     private sealed class EntityFocusRequest
@@ -592,6 +673,7 @@ internal sealed class EntityMapSnapshot
         0,
         0L,
         0L,
+        Array.Empty<EntityGroupSnapshot>(),
         Array.Empty<TrackedEntitySnapshot>(),
         null);
 
@@ -599,12 +681,14 @@ internal sealed class EntityMapSnapshot
         int revision,
         long unixMs,
         long entitiesUnixMs,
+        EntityGroupSnapshot[] groups,
         TrackedEntitySnapshot[] entities,
         RaidEventSnapshot? activeEvent)
     {
         Revision = revision;
         UnixMs = unixMs;
         EntitiesUnixMs = entitiesUnixMs;
+        Groups = groups;
         Entities = entities;
         Event = activeEvent;
     }
@@ -615,9 +699,30 @@ internal sealed class EntityMapSnapshot
 
     public long EntitiesUnixMs { get; }
 
+    public EntityGroupSnapshot[] Groups { get; }
+
     public TrackedEntitySnapshot[] Entities { get; }
 
     public RaidEventSnapshot? Event { get; }
+}
+
+internal sealed class EntityGroupSnapshot
+{
+    public EntityGroupSnapshot(string key, int count, int cap, bool truncated)
+    {
+        Key = key;
+        Count = count;
+        Cap = cap;
+        Truncated = truncated;
+    }
+
+    public string Key { get; }
+
+    public int Count { get; }
+
+    public int Cap { get; }
+
+    public bool Truncated { get; }
 }
 
 internal sealed class TrackedEntitySnapshot
