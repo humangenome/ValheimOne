@@ -6,6 +6,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Added
 
+- LiveMap search now accepts Valheim `x, z` world-coordinate pairs, flies to valid points with a temporary parchment-gold pulse, and gives a themed notice for coordinates beyond the world edge.
 - LiveMap now keeps a slim parchment-themed metrics strip above the map and console: every view sees server status, day, and uptime, while console-authorized admins also see frame-time and abbreviated ZDO metrics on a 30-second map cadence without duplicate stats requests.
 - Dedicated-server operators can schedule a graceful shutdown with `vo shutdown <seconds> [message]`, cancel it with `vo shutdown cancel`, or use the admin shutdown API; connected players receive shout countdowns, the pending deadline is exposed to the dashboard, and expiry forces a synchronous world save before Valheim's clean application-exit path runs.
 

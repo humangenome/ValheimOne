@@ -35,6 +35,7 @@
     var SHIP_MOVING_SPEED_MPS = 0.3;
     var SHIP_HEADING_LENGTH_M = 30;
     var MAP_PING_LIFETIME_MS = 30000;
+    var COORDINATE_SEARCH_PULSE_MS = 4000;
     var CHAT_BUBBLE_LIFETIME_MS = 8000;
     var CHAT_BUBBLE_LIMIT = 8;
     var SAVED_BADGE_REFRESH_MS = 30000;
@@ -542,6 +543,8 @@
     var searchResultsElement = null;
     var searchResultItems = [];
     var searchResultIndex = -1;
+    var coordinateSearchMarker = null;
+    var coordinateSearchTimer = 0;
     var currentView = null;
     var sagaEvents = [];
     var sagaChatEvents = [];
@@ -4193,9 +4196,14 @@
         if (!Number.isFinite(maximumZoom) || maximumZoom < overviewZoom) {
             maximumZoom = overviewZoom;
         }
+        var worldRadius = Number(statusMap.worldRadius);
+        if (!Number.isFinite(worldRadius) || worldRadius <= 0) {
+            worldRadius = textureSize * pixelSize / 2;
+        }
         return {
             textureSize: textureSize,
             pixelSize: pixelSize,
+            worldRadius: worldRadius,
             overviewZoom: overviewZoom,
             maximumZoom: maximumZoom,
             unitsPerPixel: WORLD_UNITS / textureSize
@@ -4206,7 +4214,8 @@
         if (nextMetrics.maximumZoom === mapMetrics.maximumZoom &&
             nextMetrics.overviewZoom === mapMetrics.baseZoom &&
             nextMetrics.textureSize === mapMetrics.textureSize &&
-            nextMetrics.pixelSize === mapMetrics.pixelSize) {
+            nextMetrics.pixelSize === mapMetrics.pixelSize &&
+            nextMetrics.worldRadius === mapMetrics.worldRadius) {
             return;
         }
 
@@ -4214,6 +4223,7 @@
         var zoom = Math.max(map.getMinZoom(), Math.min(nextMetrics.maximumZoom, map.getZoom()));
         mapMetrics.textureSize = nextMetrics.textureSize;
         mapMetrics.pixelSize = nextMetrics.pixelSize;
+        mapMetrics.worldRadius = nextMetrics.worldRadius;
         mapMetrics.baseZoom = nextMetrics.overviewZoom;
         mapMetrics.maximumZoom = nextMetrics.maximumZoom;
         mapMetrics.unitsPerPixel = nextMetrics.unitsPerPixel;
@@ -4248,6 +4258,7 @@
             baseZoom: overviewZoom,
             textureSize: nextMetrics.textureSize,
             pixelSize: nextMetrics.pixelSize,
+            worldRadius: nextMetrics.worldRadius,
             maximumZoom: maximumZoom,
             unitsPerPixel: nextMetrics.unitsPerPixel
         };
@@ -4424,6 +4435,32 @@
             z: (mapMetrics.textureSize / 2 - (-latLng.lat / mapMetrics.unitsPerPixel)) *
                 mapMetrics.pixelSize
         };
+    }
+
+    function formatMapCoordinates(world) {
+        return Math.round(world.x) + ", " + Math.round(world.z);
+    }
+
+    function parseMapCoordinates(value) {
+        var match = String(value || "").trim().match(
+            /^\(?\s*(-?\d+)[,\s]+(-?\d+)\s*\)?$/
+        );
+        if (!match) {
+            return null;
+        }
+        return {
+            x: parseInt(match[1], 10),
+            z: parseInt(match[2], 10)
+        };
+    }
+
+    function mapCoordinatesInsideWorld(world) {
+        if (!world || !mapMetrics || !Number.isFinite(world.x) ||
+            !Number.isFinite(world.z)) {
+            return false;
+        }
+        return (world.x * world.x) + (world.z * world.z) <=
+            mapMetrics.worldRadius * mapMetrics.worldRadius;
     }
 
     function worldDistanceToMap(distance) {
@@ -5960,6 +5997,44 @@
         return haystack.indexOf(queryText) !== -1 ? 2 : -1;
     }
 
+    function clearCoordinateSearchMarker() {
+        window.clearTimeout(coordinateSearchTimer);
+        coordinateSearchTimer = 0;
+        if (coordinateSearchMarker && map) {
+            map.removeLayer(coordinateSearchMarker);
+        }
+        coordinateSearchMarker = null;
+    }
+
+    function showCoordinateSearchMarker(latLng) {
+        clearCoordinateSearchMarker();
+        coordinateSearchMarker = L.marker(latLng, {
+            icon: L.divIcon({
+                className: "map-search-coordinate-pulse",
+                html: '<span class="map-search-coordinate-pulse-ring"></span>',
+                iconSize: [30, 30],
+                iconAnchor: [15, 15]
+            }),
+            interactive: false,
+            keyboard: false,
+            zIndexOffset: 1100
+        }).addTo(map);
+        coordinateSearchTimer = window.setTimeout(function () {
+            clearCoordinateSearchMarker();
+        }, COORDINATE_SEARCH_PULSE_MS);
+    }
+
+    function goToMapCoordinates(world) {
+        if (!mapCoordinatesInsideWorld(world)) {
+            showNoticeToast("Those coordinates are outside the world");
+            return;
+        }
+        var latLng = worldToLatLng(world.x, world.z);
+        setMapSearchOpen(false, false);
+        focusMapLocation(latLng);
+        showCoordinateSearchMarker(latLng);
+    }
+
     function setMapSearchSelection(nextIndex) {
         var buttons = searchResultsElement
             ? Array.prototype.slice.call(searchResultsElement.querySelectorAll(".map-search-result"))
@@ -5992,7 +6067,9 @@
         if (!searchInput || !searchResultsElement) {
             return;
         }
-        var queryText = searchInput.value.trim().toLocaleLowerCase();
+        var rawQueryText = searchInput.value.trim();
+        var queryText = rawQueryText.toLocaleLowerCase();
+        var coordinates = parseMapCoordinates(rawQueryText);
         searchResultsElement.textContent = "";
         searchResultItems = [];
         searchResultIndex = -1;
@@ -6003,15 +6080,26 @@
             return;
         }
 
-        searchResultItems = mapSearchRegistry().map(function (item) {
-            return { item: item, rank: rankMapSearchItem(item, queryText) };
-        }).filter(function (entry) {
-            return entry.rank >= 0;
-        }).sort(function (left, right) {
-            return left.rank - right.rank || left.item.name.localeCompare(right.item.name);
-        }).slice(0, 12).map(function (entry) {
-            return entry.item;
-        });
+        if (coordinates) {
+            searchResultItems = [{
+                coordinateSearch: true,
+                glyph: "⌖",
+                kind: "World coordinates",
+                name: "Go to " + formatMapCoordinates(coordinates),
+                x: coordinates.x,
+                z: coordinates.z
+            }];
+        } else {
+            searchResultItems = mapSearchRegistry().map(function (item) {
+                return { item: item, rank: rankMapSearchItem(item, queryText) };
+            }).filter(function (entry) {
+                return entry.rank >= 0;
+            }).sort(function (left, right) {
+                return left.rank - right.rank || left.item.name.localeCompare(right.item.name);
+            }).slice(0, 12).map(function (entry) {
+                return entry.item;
+            });
+        }
 
         if (searchResultItems.length === 0) {
             var empty = document.createElement("div");
@@ -6097,6 +6185,10 @@
         if (!item) {
             return;
         }
+        if (item.coordinateSearch) {
+            goToMapCoordinates({ x: item.x, z: item.z });
+            return;
+        }
         if (!layerSettings[item.layerKey]) {
             layerSettings[item.layerKey] = true;
             saveLayerSettings();
@@ -6139,10 +6231,13 @@
                 toggle.setAttribute("aria-expanded", "false");
                 toggle.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="M16 16l4 4"></path></svg>';
                 searchInput.type = "search";
-                searchInput.placeholder = "Search the world";
+                searchInput.placeholder = "Search names or X, Z";
                 searchInput.autocomplete = "off";
                 searchInput.spellcheck = false;
-                searchInput.setAttribute("aria-label", "Search players, pins, and places");
+                searchInput.setAttribute(
+                    "aria-label",
+                    "Search coordinates, players, pins, and places"
+                );
                 searchInput.setAttribute("role", "combobox");
                 searchInput.setAttribute("aria-autocomplete", "list");
                 searchInput.setAttribute("aria-controls", "map-search-results");
@@ -6157,12 +6252,16 @@
                 });
                 searchInput.addEventListener("input", renderMapSearchResults);
                 searchInput.addEventListener("keydown", function (event) {
+                    var coordinates = parseMapCoordinates(searchInput.value);
                     if (event.key === "ArrowDown" && searchResultItems.length > 0) {
                         event.preventDefault();
                         moveMapSearchSelection(1);
                     } else if (event.key === "ArrowUp" && searchResultItems.length > 0) {
                         event.preventDefault();
                         moveMapSearchSelection(-1);
+                    } else if (event.key === "Enter" && coordinates) {
+                        event.preventDefault();
+                        goToMapCoordinates(coordinates);
                     } else if (event.key === "Enter" && searchResultIndex >= 0) {
                         event.preventDefault();
                         selectMapSearchResult(searchResultIndex);
@@ -12495,6 +12594,7 @@
         activePingMarkers.forEach(function (record) {
             window.clearTimeout(record.timer);
         });
+        clearCoordinateSearchMarker();
         if (eventSource) {
             eventSource.close();
         }

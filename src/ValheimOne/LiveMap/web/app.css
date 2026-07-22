@@ -2427,6 +2427,36 @@ input {
     outline-offset: -2px;
 }
 
+.map-search-coordinate-pulse {
+    border: 0;
+    background: transparent;
+    pointer-events: none;
+}
+
+.map-search-coordinate-pulse-ring {
+    display: block;
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+    border: 2px solid var(--accent);
+    border-radius: 50%;
+    background: rgba(217, 177, 104, 0.12);
+    box-shadow: 0 0 12px rgba(217, 177, 104, 0.5);
+    animation: map-search-coordinate-pulse 1.2s ease-out infinite;
+}
+
+@keyframes map-search-coordinate-pulse {
+    0% {
+        opacity: 1;
+        transform: scale(0.42);
+    }
+
+    100% {
+        opacity: 0;
+        transform: scale(1.65);
+    }
+}
+
 .measure-hud {
     position: absolute;
     z-index: 900;
