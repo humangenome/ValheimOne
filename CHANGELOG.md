@@ -12,6 +12,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 ### Changed
 
 - LiveMap player, ship, and cart markers now move smoothly at their live-feed cadence through one shared animation loop; portal hops and respawns snap without drawing a trail across the world, while follow and Cinema Mode stay attached to the moving marker.
+- LiveMap now keeps dense Dungeons, Spawners, Ores & Deposits, Forage, and Structures layers off the map until useful zoom levels, while preserving their checked and collapsed state and keeping layer counts visible with a clear zoom-in hint.
 
 ## [0.10.3] - 2026-07-21
 

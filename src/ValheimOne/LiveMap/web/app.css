@@ -1820,6 +1820,11 @@ input {
     padding-left: 7px;
 }
 
+.poi-category.is-zoom-gated > .poi-category-header,
+.layer-row.is-zoom-gated {
+    opacity: 0.55;
+}
+
 .layer-row.is-display-only {
     cursor: default;
 }

@@ -118,6 +118,7 @@
         {
             key: "dungeons",
             label: "Dungeons",
+            minimumZoom: 2,
             groups: [
                 "dungeon_crypt",
                 "dungeon_sunkencrypt",
@@ -130,6 +131,7 @@
         {
             key: "spawners",
             label: "Spawners",
+            minimumZoom: 3,
             groups: [
                 "spawner_greydwarf",
                 "spawner_bonepile",
@@ -142,6 +144,7 @@
         {
             key: "ores",
             label: "Ores & Deposits",
+            minimumZoom: 4,
             groups: [
                 "ore_copper",
                 "ore_tin",
@@ -155,6 +158,7 @@
         {
             key: "forage",
             label: "Forage",
+            minimumZoom: 5,
             groups: [
                 "forage_berries",
                 "forage_thistle",
@@ -168,6 +172,7 @@
         {
             key: "structures",
             label: "Structures",
+            minimumZoom: 3,
             groups: [
                 "structure_camp",
                 "structure_tarpit",
@@ -522,6 +527,7 @@
     var layersSetCollapsed = null;
     var layersStalenessTimer = 0;
     var legendContent = null;
+    var zoomGatedPoiCategories = new Set();
     var searchControlElement = null;
     var searchInput = null;
     var searchResultsElement = null;
@@ -4173,6 +4179,7 @@
         createMinimapControl();
         applyDensityPreferences();
         applyPoiPreferences();
+        applyPoiZoomGates();
         map.on("dragstart", function () {
             if (cinemaState) {
                 cinemaPauseAmbientForUser();
@@ -4195,6 +4202,7 @@
         });
         overviewClusterRenderZoom = map.getZoom();
         map.on("moveend", renderOverviewClustersAfterMove);
+        map.on("zoomend", applyPoiZoomGates);
         map.on("zoomend", updateRegionLayerVisibility);
         map.on("moveend zoomend", scheduleHashUpdate);
         syncLayerVisibility();
@@ -6478,6 +6486,7 @@
         appendLayerPreferences();
         appendLegendBlock();
         updateLayerCounts();
+        updatePoiZoomGateRows();
         updateFeedStalenessDots();
     }
 
@@ -7094,12 +7103,19 @@
         return match;
     }
 
-    function focusMapLocation(latLng, markerResolver) {
+    function focusMapLocation(latLng, markerResolver, minimumZoom) {
         if (!map || !latLng) {
             return;
         }
         clearFollow();
-        var targetZoom = Math.min(map.getMaxZoom(), Math.max(map.getZoom(), 4));
+        var requestedZoom = Number(minimumZoom);
+        if (!Number.isFinite(requestedZoom)) {
+            requestedZoom = 0;
+        }
+        var targetZoom = Math.min(
+            map.getMaxZoom(),
+            Math.max(map.getZoom(), 4, requestedZoom)
+        );
         var popupOpened = false;
         function openPopup() {
             if (popupOpened || typeof markerResolver !== "function") {
@@ -7122,7 +7138,7 @@
         var shouldOpen = layerSettings[record.group] === true;
         focusMapLocation(record.latLng, shouldOpen ? function () {
             return findMarkerNearLayer(poiLayers.get(record.group), record.latLng);
-        } : null);
+        } : null, poiGroupMinimumZoom(record.group));
     }
 
     function jumpToTombstone(id) {
@@ -7429,7 +7445,8 @@
             appendLegendItem("╌", "Portal network", "portal-network");
         }
         POI_GROUP_ORDER.forEach(function (group) {
-            if (availablePoiGroups.has(group) && layerSettings[group]) {
+            if (availablePoiGroups.has(group) && layerSettings[group] &&
+                !isPoiGroupZoomGated(group)) {
                 appendLegendItem(
                     POI_GROUPS[group].glyph,
                     POI_GROUPS[group].label + " · " + layerCountValue(group),
@@ -7468,6 +7485,87 @@
         }
     }
 
+    function poiCategoryDefinition(categoryKey) {
+        for (var index = 0; index < POI_CATEGORIES.length; index++) {
+            if (POI_CATEGORIES[index].key === categoryKey) {
+                return POI_CATEGORIES[index];
+            }
+        }
+        return null;
+    }
+
+    function poiGroupMinimumZoom(group) {
+        var definition = POI_GROUPS[group];
+        var category = definition
+            ? poiCategoryDefinition(definition.category)
+            : null;
+        return category && Number.isFinite(category.minimumZoom)
+            ? category.minimumZoom
+            : 0;
+    }
+
+    function poiGroupHasZoomGate(group) {
+        return poiGroupMinimumZoom(group) > 0;
+    }
+
+    function isPoiGroupZoomGated(group) {
+        var definition = POI_GROUPS[group];
+        return Boolean(definition &&
+            zoomGatedPoiCategories.has(definition.category));
+    }
+
+    function updatePoiZoomGateRows() {
+        if (!layersRows) {
+            return;
+        }
+
+        layersRows.querySelectorAll("[data-poi-category]").forEach(function (section) {
+            var gated = zoomGatedPoiCategories.has(section.dataset.poiCategory);
+            var header = section.querySelector(".poi-category-header");
+            section.classList.toggle("is-zoom-gated", gated);
+            if (header) {
+                if (gated) {
+                    header.title = "Zoom in to show";
+                } else {
+                    header.removeAttribute("title");
+                }
+            }
+            section.querySelectorAll(".layer-row").forEach(function (row) {
+                row.classList.toggle("is-zoom-gated", gated);
+                if (gated) {
+                    row.title = "Zoom in to show";
+                } else {
+                    row.removeAttribute("title");
+                }
+            });
+        });
+    }
+
+    function applyPoiZoomGates() {
+        if (!map) {
+            return;
+        }
+
+        var zoom = map.getZoom();
+        var previouslyGated = new Set(zoomGatedPoiCategories);
+        zoomGatedPoiCategories.clear();
+        POI_CATEGORIES.forEach(function (category) {
+            if (Number.isFinite(category.minimumZoom) &&
+                zoom < category.minimumZoom) {
+                zoomGatedPoiCategories.add(category.key);
+            }
+        });
+        POI_GROUP_ORDER.forEach(function (group) {
+            var definition = POI_GROUPS[group];
+            if (definition && previouslyGated.has(definition.category) &&
+                !zoomGatedPoiCategories.has(definition.category)) {
+                renderPoiGroup(group, false);
+            }
+        });
+        updatePoiZoomGateRows();
+        syncLayerVisibility();
+    }
+
     function syncLayerVisibility() {
         if (!map) {
             return;
@@ -7482,7 +7580,8 @@
         POI_GROUP_ORDER.forEach(function (group) {
             setLayerVisible(
                 poiLayers.get(group),
-                availablePoiGroups.has(group) && layerSettings[group]
+                availablePoiGroups.has(group) && layerSettings[group] &&
+                    !isPoiGroupZoomGated(group)
             );
         });
         setLayerVisible(fogOverlay, fogAvailable && layerSettings.fog);
@@ -9976,7 +10075,10 @@
 
         var useClusters = map.getZoom() < OVERVIEW_CLUSTER_ZOOM;
         POI_GROUP_ORDER.forEach(function (group) {
-            renderPoiGroup(group, useClusters);
+            if (isPoiGroupZoomGated(group)) {
+                return;
+            }
+            renderPoiGroup(group, useClusters && !poiGroupHasZoomGate(group));
         });
     }
 
@@ -9986,7 +10088,11 @@
         }
 
         var zoom = map.getZoom();
-        if (zoom >= OVERVIEW_CLUSTER_ZOOM && zoom === overviewClusterRenderZoom) {
+        var usedClusters = overviewClusterRenderZoom !== null &&
+            overviewClusterRenderZoom < OVERVIEW_CLUSTER_ZOOM;
+        var useClusters = zoom < OVERVIEW_CLUSTER_ZOOM;
+        if (!useClusters && !usedClusters) {
+            overviewClusterRenderZoom = zoom;
             return;
         }
         overviewClusterRenderZoom = zoom;
@@ -10015,6 +10121,7 @@
     function lazyPoiLoadingAllowed(group) {
         var metadata = poiGroupMeta.get(group);
         return Boolean(map && layerSettings[group] &&
+            !isPoiGroupZoomGated(group) &&
             availablePoiGroups.has(group) &&
             metadata && metadata.inline === false);
     }
@@ -10168,7 +10275,11 @@
             }
             feedLastUpdated.pois = Date.now();
             setFeedState("pois", true);
-            renderPoiGroup(group, map.getZoom() < OVERVIEW_CLUSTER_ZOOM);
+            renderPoiGroup(
+                group,
+                map.getZoom() < OVERVIEW_CLUSTER_ZOOM &&
+                    !poiGroupHasZoomGate(group)
+            );
             syncLayerVisibility();
             if (searchControlElement && searchControlElement.classList.contains("is-open")) {
                 renderMapSearchResults();
