@@ -2,6 +2,7 @@
     "use strict";
 
     var POLL_INTERVAL_MS = 2000;
+    var POLL_FAILURE_LIMIT = 3;
     var PINS_POLL_INTERVAL_MS = 60000;
     var ENTITIES_POLL_INTERVAL_MS = 10000;
     var CONSOLE_LOG_POLL_INTERVAL_MS = 2000;
@@ -21,6 +22,7 @@
     var OVERVIEW_CLUSTER_GRID_PX = 64;
     var RESOURCE_POI_POLL_INTERVAL_MS = 5000;
     var RESOURCE_POI_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
+    var MAP_LOADING_TIMEOUT_MS = 15000;
     var SSE_RETRY_INITIAL_MS = 5000;
     var SSE_RETRY_MAX_MS = 60000;
     var TRAIL_MAX_AGE_MS = 30 * 60 * 1000;
@@ -386,6 +388,9 @@
     var token = query.get("token") || "";
     var failedFeeds = new Set();
     var consecutiveStatusFailures = 0;
+    var pollFailureCounts = Object.create(null);
+    var pollCircuitOpen = false;
+    var recurringPollTimers = new Set();
     var markerRecords = new Map();
     var markerTweens = new Map();
     var markerTweenFrame = 0;
@@ -510,6 +515,9 @@
     var displayedMapStyle = "default";
     var mapStyleProbeRequested = "";
     var renderStatusFailureTimer = 0;
+    var mapLoadingTimeoutTimer = 0;
+    var initialMapLoadingComplete = false;
+    var initialMapLoadingTimedOut = false;
     var lastSavedUnixMs = 0;
     var savedBadgeTimer = 0;
     var dayToastTimer = 0;
@@ -561,6 +569,7 @@
     var activeTab = "map";
     var consoleAvailable = false;
     var consolePollingStarted = false;
+    var consoleLogPollTimer = 0;
     var statsPollingStarted = false;
     var statsPollTimer = 0;
     var consoleLogRequestPending = false;
@@ -1897,6 +1906,7 @@
 
     async function pollConsoleLog() {
         if (!consoleIsActive() || !consoleHistoryLoaded || consoleLogRequestPending ||
+            document.hidden || pollCircuitOpen ||
             (eventSourceOpen && eventSourceLogFlowing)) {
             return;
         }
@@ -1908,10 +1918,13 @@
                 "/api/console/log?cursor=" + encodeURIComponent(consoleCursor) + "&max=250"
             );
             if (!logStreamWasFlowing && eventSourceLogFlowing) {
+                recordPollSuccess("console-log");
                 return;
             }
             handleConsoleLogPayload(payload);
+            recordPollSuccess("console-log");
         } catch (error) {
+            recordPollFailure("console-log");
             reportConsoleFailure("log", "Console log", error);
         } finally {
             consoleLogRequestPending = false;
@@ -1997,13 +2010,14 @@
     }
 
     async function pollStats(reportFailure) {
-        if (!consoleAvailable || statsRequestPending || document.hidden) {
+        if (!consoleAvailable || statsRequestPending || document.hidden || pollCircuitOpen) {
             return;
         }
 
         statsRequestPending = true;
         try {
             var payload = await fetchConsoleJson("/api/stats");
+            recordPollSuccess("stats");
             updateMapMetricsFromStats(payload);
             elements.statUptime.textContent = formatUptime(payload && payload.uptimeSeconds);
             elements.statPlayers.textContent = formatInteger(payload && payload.players);
@@ -2016,6 +2030,7 @@
             elements.statFrameMax.textContent = formatDecimal(payload && payload.frameMaxMs, " ms");
             clearConsoleFailure("stats");
         } catch (error) {
+            recordPollFailure("stats");
             if (reportFailure) {
                 reportConsoleFailure("stats", "Server stats", error);
             }
@@ -2039,7 +2054,7 @@
     }
 
     function scheduleStatsPolling(delay) {
-        if (!statsPollingStarted) {
+        if (!statsPollingStarted || pollCircuitOpen) {
             return;
         }
         window.clearTimeout(statsPollTimer);
@@ -2360,10 +2375,20 @@
         }
 
         consolePollingStarted = true;
-        window.setTimeout(async function pollLogLoop() {
+        scheduleConsoleLogPolling(CONSOLE_LOG_POLL_INTERVAL_MS);
+    }
+
+    function scheduleConsoleLogPolling(delay) {
+        window.clearTimeout(consoleLogPollTimer);
+        consoleLogPollTimer = 0;
+        if (!consolePollingStarted || pollCircuitOpen) {
+            return;
+        }
+        consoleLogPollTimer = window.setTimeout(async function () {
+            consoleLogPollTimer = 0;
             await pollConsoleLog();
-            window.setTimeout(pollLogLoop, CONSOLE_LOG_POLL_INTERVAL_MS);
-        }, CONSOLE_LOG_POLL_INTERVAL_MS);
+            scheduleConsoleLogPolling(CONSOLE_LOG_POLL_INTERVAL_MS);
+        }, delay);
     }
 
     function bindConsoleEvents() {
@@ -2442,6 +2467,69 @@
         });
     }
 
+    function showConnectionLostState() {
+        elements.mapStatus.hidden = false;
+        elements.mapStatus.querySelector(".spinner").hidden = true;
+        elements.mapStatusText.textContent = "Connection lost — reload to reconnect";
+        elements.offlineBadge.textContent = "Connection lost — reload to reconnect";
+        elements.offlineBadge.hidden = false;
+    }
+
+    function clearRecurringPollTimers() {
+        recurringPollTimers.forEach(function (timer) {
+            window.clearTimeout(timer);
+        });
+        recurringPollTimers.clear();
+        window.clearTimeout(consoleLogPollTimer);
+        consoleLogPollTimer = 0;
+        window.clearTimeout(statsPollTimer);
+        statsPollTimer = 0;
+        window.clearTimeout(entityPollTimer);
+        entityPollTimer = 0;
+        window.clearTimeout(entityFocusPollTimer);
+        entityFocusPollTimer = 0;
+        stopAllLazyPoiPolling();
+    }
+
+    function recordPollSuccess(pollKey) {
+        if (pollCircuitOpen) {
+            return;
+        }
+        if (pollKey === "status") {
+            consecutiveStatusFailures = 0;
+        } else {
+            pollFailureCounts[pollKey] = 0;
+        }
+    }
+
+    function recordPollFailure(pollKey) {
+        if (document.hidden || pollCircuitOpen) {
+            return;
+        }
+
+        var failures;
+        if (pollKey === "status") {
+            consecutiveStatusFailures++;
+            failures = consecutiveStatusFailures;
+        } else {
+            failures = (pollFailureCounts[pollKey] || 0) + 1;
+            pollFailureCounts[pollKey] = failures;
+        }
+        if (failures < POLL_FAILURE_LIMIT) {
+            return;
+        }
+
+        pollCircuitOpen = true;
+        window.clearTimeout(mapLoadingTimeoutTimer);
+        mapLoadingTimeoutTimer = 0;
+        clearRecurringPollTimers();
+        failedFeeds.add("status");
+        showConnectionLostState();
+        updateMapMetricStatus();
+        updateFeedStalenessDots();
+        appendConsoleError("Connection lost — reload to reconnect");
+    }
+
     function setFeedState(feed, isOnline) {
         if (isOnline) {
             failedFeeds.delete(feed);
@@ -2449,15 +2537,14 @@
             failedFeeds.add(feed);
         }
 
-        if (feed === "status") {
-            consecutiveStatusFailures = isOnline ? 0 : consecutiveStatusFailures + 1;
-            if (consecutiveStatusFailures >= 3 && !elements.mapStatus.hidden) {
-                elements.mapStatusText.textContent = "Server offline — waiting to reconnect";
-                elements.mapStatus.querySelector(".spinner").hidden = true;
-            }
+        if (pollCircuitOpen) {
+            failedFeeds.add("status");
+            showConnectionLostState();
+        } else {
+            elements.offlineBadge.textContent = "Offline";
+            elements.offlineBadge.hidden = failedFeeds.size === 0;
         }
 
-        elements.offlineBadge.hidden = failedFeeds.size === 0;
         updateMapMetricStatus();
         updateFeedStalenessDots();
     }
@@ -3243,6 +3330,7 @@
             }
             return;
         }
+        refreshPollingAfterVisibility();
         scheduleMarkerTweenFrame();
     }
 
@@ -4016,13 +4104,24 @@
     }
 
     function updateRenderStatus(mapStatus) {
+        if (pollCircuitOpen) {
+            showConnectionLostState();
+            return;
+        }
         if (renderStatusFailureTimer) {
             return;
         }
-        if (consecutiveStatusFailures >= 3) {
+        if (!initialMapLoadingComplete && mapStatus &&
+            (mapStatus.state === "ready" || mapStatus.state === "failed")) {
+            initialMapLoadingComplete = true;
+            initialMapLoadingTimedOut = false;
+            window.clearTimeout(mapLoadingTimeoutTimer);
+            mapLoadingTimeoutTimer = 0;
+        }
+        if (initialMapLoadingTimedOut && !initialMapLoadingComplete) {
             elements.mapStatus.hidden = false;
-            elements.mapStatusText.textContent = "Server offline — waiting to reconnect";
             elements.mapStatus.querySelector(".spinner").hidden = true;
+            elements.mapStatusText.textContent = "World map loading timed out — reload to retry";
             return;
         }
         if (mapStatus && mapStatus.state === "ready") {
@@ -4060,6 +4159,18 @@
             ? Math.round(Math.max(0, Math.min(1, progress)) * 100)
             : 0;
         elements.mapStatusText.textContent = "Rendering world map — " + percentage + "%";
+    }
+
+    function startMapLoadingTimeout() {
+        window.clearTimeout(mapLoadingTimeoutTimer);
+        mapLoadingTimeoutTimer = window.setTimeout(function () {
+            mapLoadingTimeoutTimer = 0;
+            if (initialMapLoadingComplete || pollCircuitOpen) {
+                return;
+            }
+            initialMapLoadingTimedOut = true;
+            updateRenderStatus(latestMapStatus);
+        }, MAP_LOADING_TIMEOUT_MS);
     }
 
     function calculateMaximumZoom(textureSize) {
@@ -10198,7 +10309,7 @@
         var state = getLazyPoiState(group);
         window.clearTimeout(state.timer);
         state.timer = 0;
-        if (!lazyPoiLoadingAllowed(group)) {
+        if (!lazyPoiLoadingAllowed(group) || document.hidden || pollCircuitOpen) {
             return;
         }
         state.timer = window.setTimeout(function () {
@@ -10239,7 +10350,7 @@
     }
 
     async function loadLazyPoiGroup(group) {
-        if (!lazyPoiLoadingAllowed(group)) {
+        if (!lazyPoiLoadingAllowed(group) || document.hidden || pollCircuitOpen) {
             stopLazyPoiPolling(group);
             return;
         }
@@ -10258,6 +10369,7 @@
         var nextDelay = RESOURCE_POI_POLL_INTERVAL_MS;
         try {
             var payload = await fetchJson("/api/pois?group=" + encodeURIComponent(group));
+            recordPollSuccess("poi-" + group);
             if (lazyPoiStates.get(group) !== state ||
                 normalizePoiGroup(payload && payload.group) !== group) {
                 return;
@@ -10331,6 +10443,7 @@
                 renderMapSearchResults();
             }
         } catch (error) {
+            recordPollFailure("poi-" + group);
             state.scanning = resource && !state.loaded;
         } finally {
             state.requestPending = false;
@@ -10827,7 +10940,8 @@
     function updateEntityPolling(immediate) {
         window.clearTimeout(entityPollTimer);
         entityPollTimer = 0;
-        if (!map || !hasLiveAccess() || entityAvailability === "unavailable" ||
+        if (!map || !hasLiveAccess() || document.hidden || pollCircuitOpen ||
+            entityAvailability === "unavailable" ||
             entityRequestPending || !entityDataIsNeeded()) {
             return;
         }
@@ -10839,7 +10953,8 @@
     }
 
     async function pollEntities() {
-        if (!map || !hasLiveAccess() || entityRequestPending ||
+        if (!map || !hasLiveAccess() || document.hidden || pollCircuitOpen ||
+            entityRequestPending ||
             entityAvailability === "unavailable") {
             return;
         }
@@ -10851,6 +10966,7 @@
                 credentials: "same-origin"
             });
             if (response.status === 404) {
+                recordPollSuccess("entities");
                 entityAvailability = "unavailable";
                 clearEntityLayers();
                 setFeedState("entities", true);
@@ -10863,6 +10979,7 @@
             }
 
             var payload = await response.json();
+            recordPollSuccess("entities");
             if (entityAvailability === "unavailable") {
                 return;
             }
@@ -10892,6 +11009,7 @@
             syncLayerVisibility();
             renderTrails();
         } catch (error) {
+            recordPollFailure("entities");
             setFeedState("entities", false);
         } finally {
             entityRequestPending = false;
@@ -10902,7 +11020,8 @@
     function updateEntityFocusPolling(immediate) {
         window.clearTimeout(entityFocusPollTimer);
         entityFocusPollTimer = 0;
-        if (!map || !hasLiveAccess() || entityAvailability === "unavailable" ||
+        if (!map || !hasLiveAccess() || document.hidden || pollCircuitOpen ||
+            entityAvailability === "unavailable" ||
             entityFocusRequestPending || !followTarget ||
             (followTarget.kind !== "ship" && followTarget.kind !== "cart")) {
             return;
@@ -10920,7 +11039,7 @@
     }
 
     async function pollEntityFocus() {
-        if (!followTarget ||
+        if (document.hidden || pollCircuitOpen || !followTarget ||
             (followTarget.kind !== "ship" && followTarget.kind !== "cart")) {
             return;
         }
@@ -10936,6 +11055,7 @@
             var payload = await fetchJson(
                 "/api/entities?focus=" + encodeURIComponent(record.entity.id)
             );
+            recordPollSuccess("entity-focus");
             if (!isFollowing(record.entity.group, targetKey) ||
                 !payload || !payload.focus || payload.focus.found !== true) {
                 return;
@@ -10971,6 +11091,7 @@
             renderTrails();
             refreshOpenPopupContent();
         } catch (error) {
+            recordPollFailure("entity-focus");
             setFeedState("entities", false);
         } finally {
             entityFocusRequestPending = false;
@@ -11261,6 +11382,9 @@
     }
 
     async function fetchWebPins() {
+        if (document.hidden || pollCircuitOpen) {
+            return;
+        }
         if (webPinsFetchPending) {
             webPinsFetchQueued = true;
             return;
@@ -11272,6 +11396,7 @@
         try {
             var payload = await fetchJson("/api/webpins");
             if (requestView !== currentView) {
+                recordPollSuccess("webpins");
                 webPinsFetchQueued = true;
                 return;
             }
@@ -11279,6 +11404,7 @@
                 !Number.isFinite(Number(payload.revision))) {
                 throw new Error("Invalid web pin response");
             }
+            recordPollSuccess("webpins");
             var nextPins = [];
             payload.pins.forEach(function (pin) {
                 var normalized = normalizeWebPin(pin);
@@ -11306,6 +11432,7 @@
                 return;
             }
             if (error && (error.status === 401 || error.status === 403)) {
+                recordPollSuccess("webpins");
                 latestWebPins = [];
                 webPinsRevision = null;
                 webPinsAvailable = false;
@@ -11318,6 +11445,7 @@
                     renderLayerRows();
                 }
             } else {
+                recordPollFailure("webpins");
                 setFeedState("webpins", false);
             }
         } finally {
@@ -11349,7 +11477,8 @@
     }
 
     async function pollWebPins() {
-        if (!map || !webPinLayer || (eventSourceOpen && webPinsProbed)) {
+        if (!map || !webPinLayer || document.hidden || pollCircuitOpen ||
+            (eventSourceOpen && webPinsProbed)) {
             return;
         }
         requestWebPinsFetch();
@@ -11454,7 +11583,7 @@
     }
 
     async function pollPins() {
-        if (!map || !pinLayer) {
+        if (!map || !pinLayer || document.hidden || pollCircuitOpen) {
             return;
         }
 
@@ -11479,6 +11608,7 @@
                 nextPins.push(pinRecord);
             });
             latestPins = nextPins;
+            recordPollSuccess("pins");
             renderPins();
             feedLastUpdated.pins = Date.now();
             setFeedState("pins", true);
@@ -11488,6 +11618,7 @@
                 renderLayerRows();
             }
         } catch (error) {
+            recordPollFailure("pins");
             setFeedState("pins", false);
         }
     }
@@ -11752,10 +11883,12 @@
             return;
         }
         handleActivityPayload(payload, false);
+        recordPollSuccess("saga");
     }
 
     async function loadSagaActivity(cursor, replace) {
-        if (sagaRequestPending || currentView === "public") {
+        if (sagaRequestPending || currentView === "public" ||
+            document.hidden || pollCircuitOpen) {
             return;
         }
 
@@ -11767,11 +11900,14 @@
         try {
             var payload = await fetchJson("/api/activity?cursor=" + encodeURIComponent(cursor));
             if (sequence !== sagaRequestSequence || currentView === "public") {
+                recordPollSuccess("saga");
                 return;
             }
             handleActivityPayload(payload, replace);
+            recordPollSuccess("saga");
             flushPendingSagaPayloads();
         } catch (error) {
+            recordPollFailure("saga");
             if (sequence !== sagaRequestSequence || currentView === "public") {
                 return;
             }
@@ -11793,7 +11929,8 @@
     }
 
     async function pollSagaActivity() {
-        if (eventSourceOpen || currentView === "public" || sagaRequestPending) {
+        if (eventSourceOpen || currentView === "public" || sagaRequestPending ||
+            document.hidden || pollCircuitOpen) {
             return;
         }
         if (!sagaLoaded) {
@@ -12053,6 +12190,7 @@
         applyRaidEvent(status.event);
         renderCinemaHud();
         tryBootCinemaFromHash();
+        recordPollSuccess("status");
     }
 
     function updateJoinCode(joinCode) {
@@ -12127,28 +12265,31 @@
             renderCommandSuggestions();
         }
         tryBootCinemaFromHash();
+        recordPollSuccess("players");
     }
 
     async function pollStatus() {
-        if (eventSourceOpen) {
+        if (eventSourceOpen || document.hidden || pollCircuitOpen) {
             return;
         }
 
         try {
             handleStatusPayload(await fetchJson("/api/status"));
         } catch (error) {
+            recordPollFailure("status");
             setFeedState("status", false);
         }
     }
 
     async function pollPlayers() {
-        if (eventSourceOpen) {
+        if (eventSourceOpen || document.hidden || pollCircuitOpen) {
             return;
         }
 
         try {
             handlePlayersPayload(await fetchJson("/api/players"));
         } catch (error) {
+            recordPollFailure("players");
             setFeedState("players", false);
         }
     }
@@ -12161,6 +12302,24 @@
         if (consoleIsActive()) {
             pollConsoleLog();
         }
+    }
+
+    function refreshPollingAfterVisibility() {
+        if (document.hidden || pollCircuitOpen) {
+            return;
+        }
+
+        resumePollingAfterEventStream();
+        pollPins();
+        scheduleStatsPolling(0);
+        updateEntityPolling(true);
+        updateEntityFocusPolling(true);
+        POI_GROUP_ORDER.forEach(function (group) {
+            var state = getLazyPoiState(group);
+            if (lazyPoiLoadingAllowed(group) && !state.requestPending) {
+                scheduleLazyPoiPoll(group, 0);
+            }
+        });
     }
 
     function scheduleEventStreamRetry() {
@@ -12252,6 +12411,7 @@
             readEventStreamPayload(source, event, function (payload) {
                 eventSourceLogFlowing = true;
                 handleConsoleLogPayload(payload, true);
+                recordPollSuccess("console-log");
             });
         });
         source.addEventListener("error", function () {
@@ -12260,9 +12420,25 @@
     }
 
     function startPolling(task, interval) {
+        function schedule() {
+            if (pollCircuitOpen) {
+                return;
+            }
+            var timer = window.setTimeout(function () {
+                recurringPollTimers.delete(timer);
+                run();
+            }, interval);
+            recurringPollTimers.add(timer);
+        }
+
         async function run() {
-            await task();
-            window.setTimeout(run, interval);
+            if (pollCircuitOpen) {
+                return;
+            }
+            if (!document.hidden) {
+                await task();
+            }
+            schedule();
         }
 
         run();
@@ -12287,6 +12463,7 @@
     });
     renderPlayerCount(latestPlayerCount);
     renderConsolePlayers();
+    startMapLoadingTimeout();
     savedBadgeTimer = window.setInterval(renderSavedBadge, SAVED_BADGE_REFRESH_MS);
     sagaRelativeTimer = window.setInterval(renderSagaRelativeTimes, 30000);
     startPolling(pollStatus, POLL_INTERVAL_MS);
@@ -12300,9 +12477,9 @@
         }
         window.clearTimeout(eventSourceRetryTimer);
         window.clearTimeout(hashUpdateTimer);
-        window.clearTimeout(entityFocusPollTimer);
         window.clearTimeout(renderStatusFailureTimer);
-        window.clearTimeout(statsPollTimer);
+        window.clearTimeout(mapLoadingTimeoutTimer);
+        clearRecurringPollTimers();
         window.clearInterval(sagaRelativeTimer);
         stopAllLazyPoiPolling();
         window.clearInterval(popupRefreshTimer);

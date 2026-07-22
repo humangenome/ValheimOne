@@ -15,6 +15,10 @@ All notable changes to ValheimOne will be documented in this file. This project 
 - LiveMap now keeps dense Dungeons, Spawners, Ores & Deposits, Forage, and Structures layers off the map until useful zoom levels, while preserving their checked and collapsed state and keeping layer counts visible with a clear zoom-in hint.
 - The LiveMap web console now completes `vo` commands from bare subcommand prefixes, gives kick, ban, and shutdown confirmations terse recovery guidance, and replays the latest 30 command-journal entries behind a clear live-feed divider on first open.
 
+### Fixed
+
+- LiveMap recurring requests now pause in hidden tabs, refresh immediately when visible, and stop after three consecutive failures with reload guidance; the initial map shade also times out instead of spinning forever.
+
 ## [0.10.3] - 2026-07-21
 
 ### Fixed
