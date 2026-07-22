@@ -9,6 +9,7 @@
     var MAP_STATS_POLL_INTERVAL_MS = 30000;
     var ACTIVITY_POLL_INTERVAL_MS = 5000;
     var CONSOLE_LOG_LIMIT = 1000;
+    var CONSOLE_HISTORY_REPLAY_LIMIT = 30;
     var SAGA_EVENT_LIMIT = 100;
     var COMMAND_HISTORY_LIMIT = 50;
     var MARKER_TELEPORT_DISTANCE_M = 40;
@@ -1005,9 +1006,11 @@
         }
 
         scheduleStatsPolling(0);
-        startConsolePolling();
         loadConsoleMeta();
-        loadConsoleHistory().then(pollConsoleLog);
+        loadConsoleHistory().then(function () {
+            startConsolePolling();
+            pollConsoleLog();
+        });
         loadBanList();
         renderConsolePlayers();
         if (persist) {
@@ -1029,7 +1032,6 @@
         }
 
         startStatsPolling();
-        loadConsoleHistory();
         setActiveTab(requestedTab, false);
     }
 
@@ -1124,6 +1126,13 @@
             return line;
         }
 
+        if (entry.kind === "live-divider") {
+            line.classList.add("is-live-divider");
+            line.setAttribute("role", "separator");
+            line.textContent = entry.text == null ? "--- live ---" : String(entry.text);
+            return line;
+        }
+
         if (entry.kind === "help-separator") {
             line.classList.add("is-help-separator");
             line.setAttribute("role", "separator");
@@ -1165,6 +1174,19 @@
         var content = document.createElement("span");
         content.className = "console-log-text";
         content.textContent = entry.text == null ? "" : String(entry.text);
+        if (entry.history === true) {
+            line.classList.add("is-history");
+            if (entry.time != null) {
+                var historyTimestamp = document.createElement("span");
+                historyTimestamp.className = "console-log-timestamp";
+                historyTimestamp.textContent = "[" + formatConsoleTime(entry.time) + "]";
+                line.appendChild(historyTimestamp);
+                line.appendChild(document.createTextNode(" "));
+            }
+            if (entry.historyDetail === true) {
+                line.classList.add("is-history-detail");
+            }
+        }
         if (entry.kind === "command") {
             line.classList.add("is-command");
         } else if (entry.kind === "error") {
@@ -1499,11 +1521,15 @@
 
     function findCommandSuggestions(query) {
         var lowerQuery = query.toLowerCase();
+        var bareQuery = lowerQuery.replace(/^vo\s+/, "");
         return consoleCommands.map(function (command) {
             var lowerName = command.name.toLowerCase();
+            var bareName = lowerName.replace(/^vo\s+/, "");
             var lowerDescription = command.description.toLowerCase();
-            var rank = lowerName.indexOf(lowerQuery) === 0 ? 0 :
-                (lowerName.indexOf(lowerQuery) !== -1 ? 1 :
+            var rank = lowerName.indexOf(lowerQuery) === 0 ||
+                bareName.indexOf(bareQuery) === 0 ? 0 :
+                (lowerName.indexOf(lowerQuery) !== -1 ||
+                    bareName.indexOf(bareQuery) !== -1 ? 1 :
                     (lowerDescription.indexOf(lowerQuery) !== -1 ? 2 : -1));
             return { kind: "command", command: command, rank: rank };
         }).filter(function (suggestion) {
@@ -1799,7 +1825,8 @@
     }
 
     function renderConsoleHistory(payload) {
-        var entries = payload && Array.isArray(payload.entries) ? payload.entries : [];
+        var allEntries = payload && Array.isArray(payload.entries) ? payload.entries : [];
+        var entries = allEntries.slice(-CONSOLE_HISTORY_REPLAY_LIMIT);
         var recalled = [];
         entries.forEach(function (entry) {
             var operatorName = entry && typeof entry.operator === "string" && entry.operator.trim()
@@ -1812,19 +1839,23 @@
 
             recalled.push({
                 kind: "command",
+                history: true,
+                time: entry && entry.t,
                 text: "[" + operatorName + "] " + command
             });
             var output = entry && typeof entry.output === "string" ? entry.output : "";
             if (output) {
                 recalled.push({
                     kind: entry.status === "error" ? "error" : "output",
+                    history: true,
+                    historyDetail: true,
                     text: entry.status === "error" ? "! " + output : output
                 });
             }
         });
         appendConsoleEntries(recalled);
 
-        commandHistory = entries.map(function (entry) {
+        commandHistory = allEntries.map(function (entry) {
             return entry && typeof entry.command === "string" ? entry.command : "";
         }).filter(function (command) {
             return Boolean(command);
@@ -1848,6 +1879,10 @@
             } catch (error) {
                 reportConsoleFailure("history", "Console history", error);
             } finally {
+                appendConsoleEntries([{ kind: "live-divider", text: "--- live ---" }]);
+                consoleFollowLog = true;
+                elements.consoleLog.scrollTop = elements.consoleLog.scrollHeight;
+                elements.consoleResume.hidden = true;
                 consoleHistoryLoaded = true;
                 consoleHistoryPromise = null;
                 var pending = pendingConsoleLogPayloads;
@@ -2136,10 +2171,10 @@
             name.textContent = player.displayName;
             actions.className = "console-admin-actions";
             actions.appendChild(createActionButton("Kick", "", function () {
-                openConfirmDialog("kick", player.name);
+                openConfirmDialog("kick", player.name, player.id);
             }, cannotManage));
             actions.appendChild(createActionButton("Ban", "is-danger", function () {
-                openConfirmDialog("ban", player.name);
+                openConfirmDialog("ban", player.name, player.id);
             }, cannotManage));
             item.appendChild(name);
             item.appendChild(actions);
@@ -2147,13 +2182,24 @@
         });
     }
 
-    function openConfirmDialog(action, player) {
+    function openConfirmDialog(action, player, playerId) {
         if (!player) {
             return;
         }
 
         confirmAction = { action: action, player: player };
-        elements.confirmMessage.textContent = action.charAt(0).toUpperCase() + action.slice(1) + " " + player + "?";
+        if (action === "kick") {
+            elements.confirmMessage.textContent = "Kick " + player + "? The player can rejoin.";
+        } else if (action === "ban") {
+            var undoTarget = playerId == null || String(playerId).trim() === ""
+                ? "<id>"
+                : String(playerId).trim();
+            elements.confirmMessage.textContent = "Ban " + player +
+                "? Banned players can be restored with vo unban " + undoTarget + ".";
+        } else {
+            elements.confirmMessage.textContent = action.charAt(0).toUpperCase() +
+                action.slice(1) + " " + player + "?";
+        }
         elements.confirmBackdrop.hidden = false;
         elements.confirmCancel.focus();
     }
@@ -2178,7 +2224,7 @@
     function openShutdownConfirmDialog(command, details) {
         confirmAction = { action: "console-command", command: command };
         elements.confirmMessage.textContent = "Shut down the server in " + details.seconds +
-            "s? Everyone is disconnected after the world saves. Cancel later with " +
+            "s? Everyone will disconnect after the world saves. Cancel with " +
             "vo shutdown cancel.";
         elements.confirmBackdrop.hidden = false;
         elements.confirmCancel.focus();

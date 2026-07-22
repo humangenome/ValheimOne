@@ -4422,6 +4422,34 @@ body.is-dropping-webpin #map .leaflet-overlay-pane path {
     color: #b4a68f;
 }
 
+.console-log-line.is-history {
+    opacity: 0.68;
+}
+
+.console-log-line.is-history-detail {
+    padding-left: 11ch;
+}
+
+.console-log-line.is-live-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 10px 0;
+    color: var(--secondary);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.console-log-line.is-live-divider::before,
+.console-log-line.is-live-divider::after {
+    height: 1px;
+    flex: 1;
+    background: var(--border-strong);
+    content: "";
+}
+
 .console-log-line.is-help-separator {
     min-height: 9px;
     margin: 8px 0;
