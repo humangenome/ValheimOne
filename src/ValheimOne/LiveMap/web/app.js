@@ -13,8 +13,8 @@
     var MOVE_DURATION_MS = 400;
     var TILE_SIZE = 256;
     var WORLD_UNITS = 256;
-    var POI_CLUSTER_ZOOM = 2;
-    var POI_CLUSTER_GRID_PX = 64;
+    var OVERVIEW_CLUSTER_ZOOM = 2;
+    var OVERVIEW_CLUSTER_GRID_PX = 64;
     var RESOURCE_POI_POLL_INTERVAL_MS = 5000;
     var RESOURCE_POI_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
     var SSE_RETRY_INITIAL_MS = 5000;
@@ -488,6 +488,7 @@
     var currentTimeOfDay = null;
     var currentStatusDay = null;
     var renderRevision = "0";
+    var overviewClusterRenderZoom = null;
     var latestMapStatus = null;
     var displayedMapStyle = "default";
     var mapStyleProbeRequested = "";
@@ -3840,7 +3841,8 @@
                 cinemaPauseAmbientForUser();
             }
         });
-        map.on("zoomend", renderPoiLayers);
+        overviewClusterRenderZoom = map.getZoom();
+        map.on("moveend", renderOverviewClustersAfterMove);
         map.on("zoomend", updateRegionLayerVisibility);
         map.on("moveend zoomend", scheduleHashUpdate);
         syncLayerVisibility();
@@ -9404,6 +9406,63 @@
         });
     }
 
+    function bucketRecordsOnGrid(records, weightForRecord, accumulateRecord) {
+        var buckets = Object.create(null);
+        records.forEach(function (record) {
+            var point = map.latLngToContainerPoint(record.latLng);
+            var cell = Math.floor(point.x / OVERVIEW_CLUSTER_GRID_PX) + ":" +
+                Math.floor(point.y / OVERVIEW_CLUSTER_GRID_PX);
+            var weight = typeof weightForRecord === "function"
+                ? Number(weightForRecord(record))
+                : 1;
+            if (!Number.isFinite(weight) || weight <= 0) {
+                weight = 1;
+            }
+            if (!buckets[cell]) {
+                buckets[cell] = {
+                    count: 0,
+                    latitude: 0,
+                    longitude: 0,
+                    records: [],
+                    weight: 0
+                };
+            }
+            var bucket = buckets[cell];
+            bucket.count += weight;
+            bucket.latitude += record.latLng.lat * weight;
+            bucket.longitude += record.latLng.lng * weight;
+            bucket.records.push(record);
+            bucket.weight += weight;
+            if (typeof accumulateRecord === "function") {
+                accumulateRecord(bucket, record, weight);
+            }
+        });
+        return Object.keys(buckets).map(function (cell) {
+            return buckets[cell];
+        });
+    }
+
+    function clusterBucketCenter(bucket) {
+        return L.latLng(
+            bucket.latitude / bucket.weight,
+            bucket.longitude / bucket.weight
+        );
+    }
+
+    function bindClusterZoom(marker) {
+        marker.on("click", function () {
+            if (!map) {
+                return;
+            }
+            var targetZoom = Math.min(
+                map.getMaxZoom(),
+                Math.max(OVERVIEW_CLUSTER_ZOOM, map.getZoom() + 1)
+            );
+            map.setView(marker.getLatLng(), targetZoom, { animate: true });
+        });
+        return marker;
+    }
+
     function createPoiMarker(record) {
         if (record.group === "ghosts") {
             return createGhostMarker(record);
@@ -9494,7 +9553,7 @@
     }
 
     function createPoiClusterMarker(group, bucket) {
-        var center = L.latLng(bucket.latitude / bucket.weight, bucket.longitude / bucket.weight);
+        var center = clusterBucketCenter(bucket);
         var count = bucket.count;
         var unavailable = bucket.activeWeight === 0;
         var clusterIconKey = bucket.records.length > 0
@@ -9534,7 +9593,7 @@
             offset: [0, -11],
             opacity: 1
         });
-        return marker;
+        return bindClusterZoom(marker);
     }
 
     function renderPoiGroup(group, useClusters) {
@@ -9555,37 +9614,21 @@
             return;
         }
 
-        var buckets = Object.create(null);
-        records.forEach(function (record) {
-            var point = map.latLngToContainerPoint(record.latLng);
-            var cell = Math.floor(point.x / POI_CLUSTER_GRID_PX) + ":" +
-                Math.floor(point.y / POI_CLUSTER_GRID_PX);
+        var buckets = bucketRecordsOnGrid(records, function (record) {
             var weight = record.memberCount || 1;
-            if (!buckets[cell]) {
-                buckets[cell] = {
-                    activeWeight: 0,
-                    count: 0,
-                    exploredWeight: 0,
-                    latitude: 0,
-                    longitude: 0,
-                    records: [],
-                    weight: 0
-                };
-            }
-            buckets[cell].count += weight;
+            return weight;
+        }, function (bucket, record, weight) {
+            bucket.activeWeight = bucket.activeWeight || 0;
+            bucket.exploredWeight = bucket.exploredWeight || 0;
             if (record.explored) {
-                buckets[cell].exploredWeight += weight;
+                bucket.exploredWeight += weight;
             }
             if (!resourcePoiIsDimmed(record)) {
-                buckets[cell].activeWeight += weight;
+                bucket.activeWeight += weight;
             }
-            buckets[cell].latitude += record.latLng.lat * weight;
-            buckets[cell].longitude += record.latLng.lng * weight;
-            buckets[cell].records.push(record);
-            buckets[cell].weight += weight;
         });
-        Object.keys(buckets).forEach(function (cell) {
-            createPoiClusterMarker(group, buckets[cell]).addTo(layer);
+        buckets.forEach(function (bucket) {
+            createPoiClusterMarker(group, bucket).addTo(layer);
         });
     }
 
@@ -9594,10 +9637,24 @@
             return;
         }
 
-        var useClusters = map.getZoom() < POI_CLUSTER_ZOOM;
+        var useClusters = map.getZoom() < OVERVIEW_CLUSTER_ZOOM;
         POI_GROUP_ORDER.forEach(function (group) {
             renderPoiGroup(group, useClusters);
         });
+    }
+
+    function renderOverviewClustersAfterMove() {
+        if (!map) {
+            return;
+        }
+
+        var zoom = map.getZoom();
+        if (zoom >= OVERVIEW_CLUSTER_ZOOM && zoom === overviewClusterRenderZoom) {
+            return;
+        }
+        overviewClusterRenderZoom = zoom;
+        renderPoiLayers();
+        renderPins();
     }
 
     function getLazyPoiState(group) {
@@ -9774,7 +9831,7 @@
             }
             feedLastUpdated.pois = Date.now();
             setFeedState("pois", true);
-            renderPoiGroup(group, map.getZoom() < POI_CLUSTER_ZOOM);
+            renderPoiGroup(group, map.getZoom() < OVERVIEW_CLUSTER_ZOOM);
             syncLayerVisibility();
             if (searchControlElement && searchControlElement.classList.contains("is-open")) {
                 renderMapSearchResults();
@@ -10777,6 +10834,96 @@
         startPolling(pollWebPins, PINS_POLL_INTERVAL_MS);
     }
 
+    function createPinMarker(pin) {
+        var isChecked = pin.checked === true;
+        var icon = L.divIcon({
+            className: "pin-div-icon" + (isChecked ? " is-checked" : ""),
+            html: '<span class="pin-marker-shell"><span class="pin-marker-glyph">' +
+                iconMarkup(isChecked ? "pin_checked" : "pin", isChecked ? "✓" : "•") +
+                "</span></span>",
+            iconAnchor: [10, 19],
+            iconSize: [20, 20]
+        });
+        var marker = L.marker(pin.latLng, {
+            icon: icon,
+            title: pin.name
+        });
+        bindMarkerTooltip(marker, createPinTooltip(pin), {
+            fallbackGlyph: isChecked ? "✓" : "•",
+            iconKey: isChecked ? "pin_checked" : "pin",
+            title: pin.name
+        }, {
+            className: "map-tooltip pin-tooltip",
+            direction: "top",
+            offset: [0, -17],
+            opacity: 1
+        });
+        bindMapPopup(marker, function () {
+            return buildPinPopup(pin);
+        }, { kind: "pin" });
+        pin.marker = marker;
+        return marker;
+    }
+
+    function createPinClusterMarker(bucket) {
+        var allChecked = bucket.checkedWeight === bucket.weight;
+        var count = bucket.count;
+        var label = count + " cartography " + (count === 1 ? "pin" : "pins");
+        var iconKey = allChecked ? "pin_checked" : "pin";
+        var icon = L.divIcon({
+            className: "pin-div-icon pin-cluster-icon" +
+                (allChecked ? " is-checked" : ""),
+            html: '<span class="pin-cluster-shell" aria-hidden="true">' +
+                '<span class="pin-cluster-mark">' +
+                iconMarkup(iconKey, allChecked ? "✓" : "•") +
+                '</span><strong>' + count + "</strong></span>",
+            iconAnchor: [24, 12],
+            iconSize: [48, 24]
+        });
+        var marker = L.marker(clusterBucketCenter(bucket), {
+            icon: icon,
+            opacity: 1 - (0.22 * bucket.checkedWeight / bucket.weight),
+            title: label
+        });
+        var tooltipContent = document.createElement("span");
+        tooltipContent.textContent = label;
+        bindMarkerTooltip(marker, tooltipContent, {
+            fallbackGlyph: allChecked ? "✓" : "•",
+            iconKey: iconKey,
+            title: label
+        }, {
+            className: "map-tooltip pin-tooltip",
+            direction: "top",
+            offset: [0, -11],
+            opacity: 1
+        });
+        return bindClusterZoom(marker);
+    }
+
+    function renderPins() {
+        if (!map || !pinLayer) {
+            return;
+        }
+
+        pinLayer.clearLayers();
+        latestPins.forEach(function (pin) {
+            pin.marker = null;
+        });
+        if (map.getZoom() >= OVERVIEW_CLUSTER_ZOOM) {
+            latestPins.forEach(function (pin) {
+                createPinMarker(pin).addTo(pinLayer);
+            });
+            return;
+        }
+
+        var buckets = bucketRecordsOnGrid(latestPins, null, function (bucket, pin) {
+            bucket.checkedWeight = (bucket.checkedWeight || 0) + (pin.checked ? 1 : 0);
+        });
+        buckets.forEach(function (bucket) {
+            createPinClusterMarker(bucket).addTo(pinLayer);
+        });
+    }
+
     async function pollPins() {
         if (!map || !pinLayer) {
             return;
@@ -10787,51 +10934,23 @@
             var pins = payload && Array.isArray(payload.pins) ? payload.pins : [];
             var nextPins = [];
             var pinsWereLoaded = feedLastUpdated.pins > 0;
-            pinLayer.clearLayers();
             pins.forEach(function (pin) {
                 if (!pin || !Number.isFinite(Number(pin.x)) || !Number.isFinite(Number(pin.z))) {
                     return;
                 }
 
-                var isChecked = pin.checked === true;
                 var pinRecord = {
                     author: typeof pin.author === "string" ? pin.author.trim() : "",
-                    checked: isChecked,
+                    checked: pin.checked === true,
+                    latLng: worldToLatLng(Number(pin.x), Number(pin.z)),
                     name: typeof pin.name === "string" && pin.name.trim() ? pin.name.trim() : "Pin",
                     x: Number(pin.x),
                     z: Number(pin.z)
                 };
-                var icon = L.divIcon({
-                    className: "pin-div-icon" + (isChecked ? " is-checked" : ""),
-                    html: '<span class="pin-marker-shell"><span class="pin-marker-glyph">' +
-                        iconMarkup(isChecked ? "pin_checked" : "pin", isChecked ? "✓" : "•") +
-                        "</span></span>",
-                    iconAnchor: [10, 19],
-                    iconSize: [20, 20]
-                });
-                var marker = L.marker(worldToLatLng(pinRecord.x, pinRecord.z), {
-                    icon: icon,
-                    title: pinRecord.name
-                });
-                bindMarkerTooltip(marker, createPinTooltip(pinRecord), {
-                    fallbackGlyph: isChecked ? "✓" : "•",
-                    iconKey: isChecked ? "pin_checked" : "pin",
-                    title: pinRecord.name
-                }, {
-                    className: "map-tooltip pin-tooltip",
-                    direction: "top",
-                    offset: [0, -17],
-                    opacity: 1
-                });
-                bindMapPopup(marker, function () {
-                    return buildPinPopup(pinRecord);
-                }, { kind: "pin" });
-                marker.addTo(pinLayer);
-                pinRecord.latLng = marker.getLatLng();
-                pinRecord.marker = marker;
                 nextPins.push(pinRecord);
             });
             latestPins = nextPins;
+            renderPins();
             feedLastUpdated.pins = Date.now();
             setFeedState("pins", true);
             if (pinsWereLoaded) {

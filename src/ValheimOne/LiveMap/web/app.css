@@ -3001,6 +3001,11 @@ body.is-dropping-webpin #map .leaflet-overlay-pane path {
     background: transparent;
 }
 
+.poi-cluster-icon,
+.pin-cluster-icon {
+    cursor: zoom-in;
+}
+
 .ghost-marker-shell {
     display: grid;
     width: 22px;
@@ -3114,7 +3119,8 @@ body.is-dropping-webpin #map .leaflet-overlay-pane path {
     color: var(--poi-cat-structures, #a99679);
 }
 
-.poi-cluster-shell {
+.poi-cluster-shell,
+.pin-cluster-shell {
     display: flex;
     width: 36px;
     height: 24px;
@@ -3149,7 +3155,8 @@ body.is-dropping-webpin #map .leaflet-overlay-pane path {
     height: 14px;
 }
 
-.poi-cluster-shell > strong {
+.poi-cluster-shell > strong,
+.pin-cluster-shell > strong {
     display: grid;
     min-width: 13px;
     height: 13px;
@@ -3437,6 +3444,49 @@ body.is-dropping-webpin #map .leaflet-overlay-pane path {
     background: #675845;
     color: var(--text);
     opacity: 0.78;
+}
+
+.pin-cluster-shell {
+    width: auto;
+    min-width: 42px;
+    padding: 0 4px;
+    box-sizing: border-box;
+    border-color: rgba(217, 177, 104, 0.78);
+    color: var(--accent);
+}
+
+.pin-cluster-mark {
+    display: grid;
+    width: 16px;
+    height: 16px;
+    place-items: center;
+    border: 1px solid var(--accent);
+    border-radius: 50% 50% 50% 0;
+    background: #b77a2f;
+    color: #120e0a;
+    transform: rotate(-45deg);
+}
+
+.pin-cluster-mark > svg {
+    display: block;
+    width: 12px;
+    height: 12px;
+    transform: rotate(45deg);
+}
+
+.pin-cluster-shell > strong {
+    background: rgba(217, 177, 104, 0.16);
+}
+
+.pin-div-icon.is-checked .pin-cluster-shell {
+    border-color: rgba(155, 139, 114, 0.82);
+    color: var(--text);
+}
+
+.pin-div-icon.is-checked .pin-cluster-mark {
+    border-color: #9b8b72;
+    background: #675845;
+    color: var(--text);
 }
 
 .webpin-marker-shell {
