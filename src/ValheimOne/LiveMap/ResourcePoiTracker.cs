@@ -62,6 +62,8 @@ internal sealed class ResourcePoiTracker
     private readonly List<ZDO> _scanResults = new List<ZDO>();
     private readonly Dictionary<string, List<ResourcePoiEntry>> _pendingGroups =
         CreatePendingGroups();
+    private readonly HashSet<string> _pendingTruncatedGroups =
+        new HashSet<string>(StringComparer.Ordinal);
     private readonly Dictionary<string, ResourceHealthDefinition> _healthDefinitions =
         new Dictionary<string, ResourceHealthDefinition>(StringComparer.Ordinal);
     private volatile ResourcePoiMapSnapshot _snapshot = ResourcePoiMapSnapshot.Empty;
@@ -132,6 +134,7 @@ internal sealed class ResourcePoiTracker
         {
             entries.Clear();
         }
+        _pendingTruncatedGroups.Clear();
 
         _prefabIndex = 0;
         _scanIndex = 0;
@@ -179,6 +182,11 @@ internal sealed class ResourcePoiTracker
                 {
                     pending.Add(ReadResourcePoi(prefab, zdo, healthDefinition));
                 }
+            }
+
+            if (!prefab.Cluster && pending.Count >= MaximumEntriesPerGroup)
+            {
+                _pendingTruncatedGroups.Add(prefab.Group);
             }
         }
         catch (Exception exception)
@@ -434,7 +442,10 @@ internal sealed class ResourcePoiTracker
             groups.Add(new ResourcePoiGroupSnapshot(
                 definition.Key,
                 entries,
-                rawEntries.Count));
+                rawEntries.Count,
+                _pendingTruncatedGroups.Contains(definition.Key)
+                    ? MaximumEntriesPerGroup
+                    : 0));
         }
 
         return new ResourcePoiMapSnapshot(
@@ -489,6 +500,7 @@ internal sealed class ResourcePoiTracker
         {
             entries.Clear();
         }
+        _pendingTruncatedGroups.Clear();
 
         _prefabIndex = 0;
         _scanIndex = 0;
@@ -638,6 +650,7 @@ internal sealed class ResourcePoiMapSnapshot
                 groups.Add(new ResourcePoiGroupSnapshot(
                     definition.Key,
                     Array.Empty<ResourcePoiEntry>(),
+                    0,
                     0));
             }
         }
@@ -648,11 +661,16 @@ internal sealed class ResourcePoiMapSnapshot
 
 internal sealed class ResourcePoiGroupSnapshot
 {
-    public ResourcePoiGroupSnapshot(string key, ResourcePoiEntry[] entries, int count)
+    public ResourcePoiGroupSnapshot(
+        string key,
+        ResourcePoiEntry[] entries,
+        int count,
+        int cap)
     {
         Key = key;
         Entries = entries;
         Count = count;
+        Cap = cap;
     }
 
     public string Key { get; }
@@ -660,6 +678,10 @@ internal sealed class ResourcePoiGroupSnapshot
     public ResourcePoiEntry[] Entries { get; }
 
     public int Count { get; }
+
+    public int Cap { get; }
+
+    public bool Truncated => Cap > 0;
 }
 
 internal sealed class ResourcePoiEntry

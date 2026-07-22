@@ -2128,6 +2128,8 @@ internal sealed class LiveMapHttpServer
             }
 
             int count = catalog.GetCount(definition.Key);
+            int cap = 0;
+            bool truncated = false;
             if (string.Equals(definition.Key, "ghosts", StringComparison.Ordinal))
             {
                 count = visibleGhosts?.Count ?? 0;
@@ -2139,6 +2141,8 @@ internal sealed class LiveMapHttpServer
                 resourceGroup != null)
             {
                 count = resourceGroup.Count;
+                cap = resourceGroup.Cap;
+                truncated = resourceGroup.Truncated;
             }
 
             bool inline = !string.Equals(
@@ -2157,6 +2161,11 @@ internal sealed class LiveMapHttpServer
             json.Append(",\"label\":").Append(JsonWriter.Quote(definition.Label));
             json.Append(",\"category\":").Append(JsonWriter.Quote(definition.Category));
             json.Append(",\"count\":").Append(count.ToString(CultureInfo.InvariantCulture));
+            if (truncated)
+            {
+                json.Append(",\"cap\":").Append(cap.ToString(CultureInfo.InvariantCulture));
+                json.Append(",\"truncated\":true");
+            }
             json.Append(",\"inline\":").Append(inline ? "true" : "false");
             json.Append(",\"resource\":").Append(definition.Resource ? "true" : "false");
             if (definition.Resource)
@@ -2365,6 +2374,12 @@ internal sealed class LiveMapHttpServer
         json.Append("{\"group\":").Append(JsonWriter.Quote(definition.Key));
         json.Append(",\"label\":").Append(JsonWriter.Quote(definition.Label));
         json.Append(",\"count\":").Append(count.ToString(CultureInfo.InvariantCulture));
+        if (group != null && group.Truncated)
+        {
+            json.Append(",\"cap\":").Append(
+                group.Cap.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"truncated\":true");
+        }
         json.Append(",\"resource\":true");
         json.Append(",\"scanUnixMs\":").Append(
             snapshot.LastScanUnixMs.ToString(CultureInfo.InvariantCulture));

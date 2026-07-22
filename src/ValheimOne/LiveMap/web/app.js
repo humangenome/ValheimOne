@@ -6072,6 +6072,7 @@
                     POI_GROUPS[group].glyph,
                     group
                 );
+                appendPoiTruncationNote(categoryBody, group);
             });
         });
         if (feedLastUpdated.pins === 0) {
@@ -6438,6 +6439,14 @@
         parent.appendChild(status);
     }
 
+    function appendPoiTruncationNote(parent, group) {
+        var note = document.createElement("div");
+        note.className = "layer-section-status";
+        note.dataset.poiTruncationNote = group;
+        note.hidden = true;
+        parent.appendChild(note);
+    }
+
     function layerCountValue(key) {
         if (key === "players") {
             return latestPlayers.length;
@@ -6456,7 +6465,8 @@
         }
         if (Object.prototype.hasOwnProperty.call(POI_GROUPS, key)) {
             var metadata = poiGroupMeta.get(key);
-            return metadata ? metadata.count : (poiRecords.get(key) || []).length;
+            var count = metadata ? metadata.count : (poiRecords.get(key) || []).length;
+            return formatTruncatedGroupCount(metadata, count);
         }
         if (Object.prototype.hasOwnProperty.call(ENTITY_GROUPS, key)) {
             var groupMetadata = entityGroupMeta.get(key);
@@ -6465,13 +6475,12 @@
                 : latestEntities.filter(function (entity) {
                     return entity.group === key;
                 }).length;
-            return formatEntityGroupCount(key, count);
+            return formatTruncatedGroupCount(groupMetadata, count);
         }
         return "";
     }
 
-    function formatEntityGroupCount(group, count) {
-        var metadata = entityGroupMeta.get(group);
+    function formatTruncatedGroupCount(metadata, count) {
         if (!metadata || !metadata.truncated) {
             return String(count);
         }
@@ -6494,6 +6503,14 @@
                 ? "Surveying…"
                 : loading ? "Loading…" : String(layerCountValue(key));
             badge.classList.toggle("is-surveying", Boolean(surveying || loading));
+        });
+        layersRows.querySelectorAll("[data-poi-truncation-note]").forEach(function (note) {
+            var metadata = poiGroupMeta.get(note.dataset.poiTruncationNote);
+            var truncated = metadata && metadata.truncated === true;
+            note.hidden = !truncated;
+            note.textContent = truncated
+                ? "Showing first " + formatInteger(metadata.cap) + " — world has more"
+                : "";
         });
         layersRows.querySelectorAll(".layer-section").forEach(function (section) {
             var inputs = Array.prototype.slice.call(
@@ -7043,7 +7060,11 @@
         }
         POI_GROUP_ORDER.forEach(function (group) {
             if (availablePoiGroups.has(group) && layerSettings[group]) {
-                appendLegendItem(POI_GROUPS[group].glyph, POI_GROUPS[group].label, group);
+                appendLegendItem(
+                    POI_GROUPS[group].glyph,
+                    POI_GROUPS[group].label + " · " + layerCountValue(group),
+                    group
+                );
             }
         });
         if (fogAvailable && layerSettings.fog) {
@@ -9682,6 +9703,7 @@
             availablePoiGroups.add(group);
             var metadata = poiGroupMeta.get(group);
             var count = Math.floor(Number(payload.count));
+            var cap = Math.floor(Number(payload.cap));
             var scanUnixMs = Math.floor(Number(payload.scanUnixMs));
             if (!Number.isFinite(count) || count < 0) {
                 count = pois.reduce(function (total, poi) {
@@ -9696,6 +9718,8 @@
             }
             if (metadata) {
                 metadata.count = count;
+                metadata.cap = Number.isFinite(cap) && cap > 0 ? cap : count;
+                metadata.truncated = payload && payload.truncated === true;
                 if (resource) {
                     metadata.scanUnixMs = scanUnixMs;
                 }
@@ -9757,8 +9781,12 @@
                 }
 
                 var count = Math.floor(Number(entry.count));
+                var cap = Math.floor(Number(entry.cap));
                 var scanUnixMs = Math.floor(Number(entry.scanUnixMs));
                 var metadata = {
+                    cap: Number.isFinite(cap) && cap > 0
+                        ? cap
+                        : Number.isFinite(count) && count >= 0 ? count : 0,
                     category: typeof entry.category === "string" ? entry.category : "",
                     count: Number.isFinite(count) && count >= 0 ? count : 0,
                     inline: entry.inline !== false,
@@ -9769,7 +9797,8 @@
                     resource: entry.resource === true,
                     scanUnixMs: Number.isFinite(scanUnixMs) && scanUnixMs >= 0
                         ? scanUnixMs
-                        : 0
+                        : 0,
+                    truncated: entry.truncated === true
                 };
                 poiGroupMeta.set(group, metadata);
                 availablePoiGroups.add(group);
@@ -9794,13 +9823,15 @@
                     var count = (poiRecords.get(group) || []).length;
                     if (count > 0) {
                         poiGroupMeta.set(group, {
+                            cap: count,
                             category: POI_GROUPS[group].category,
                             count: count,
                             inline: true,
                             key: group,
                             label: POI_GROUPS[group].label,
                             resource: POI_GROUPS[group].resource === true,
-                            scanUnixMs: 0
+                            scanUnixMs: 0,
+                            truncated: false
                         });
                     }
                 });
