@@ -499,6 +499,10 @@
     var pingControlElement = null;
     var pingArmed = false;
     var pingRequestPending = false;
+    var towState = null;
+    var towRequestPending = false;
+    var towBanner = null;
+    var pendingShipTowTweenIds = new Set();
     var pingLayer = null;
     var pendingMapPings = [];
     var activePingMarkers = new Set();
@@ -1051,6 +1055,10 @@
         elements.mapPane.setAttribute("aria-hidden", String(showConsole));
         document.body.classList.toggle("is-console-active", showConsole);
 
+        if (showConsole) {
+            disarmShipTow();
+        }
+
         if (!showConsole) {
             closeSuggestions();
             closeConfirmDialog();
@@ -1108,7 +1116,10 @@
 
         if (!response.ok) {
             var message = payload && typeof payload.error === "string" ? payload.error : "HTTP " + response.status;
-            throw new Error(message);
+            var requestError = new Error(message);
+            requestError.reason = payload && typeof payload.reason === "string" ? payload.reason : "";
+            requestError.status = response.status;
+            throw requestError;
         }
 
         return payload;
@@ -2263,6 +2274,8 @@
             elements.confirmMessage.textContent = action.charAt(0).toUpperCase() +
                 action.slice(1) + " " + player + "?";
         }
+        elements.confirmSubmit.textContent = "Confirm";
+        elements.confirmSubmit.classList.add("is-danger");
         elements.confirmBackdrop.hidden = false;
         elements.confirmCancel.focus();
     }
@@ -2289,6 +2302,8 @@
         elements.confirmMessage.textContent = "Shut down the server in " + details.seconds +
             "s? Everyone will disconnect after the world saves. Cancel with " +
             "vo shutdown cancel.";
+        elements.confirmSubmit.textContent = "Confirm";
+        elements.confirmSubmit.classList.add("is-danger");
         elements.confirmBackdrop.hidden = false;
         elements.confirmCancel.focus();
     }
@@ -2309,6 +2324,10 @@
         closeConfirmDialog();
         if (action === "console-command") {
             await submitConsoleCommand(pendingAction.command);
+            return;
+        }
+        if (action === "tow") {
+            await submitShipTow(pendingAction);
             return;
         }
 
@@ -3185,6 +3204,11 @@
                 }
             } else if (action === "trail") {
                 toggleSelectedTrail(kind, key);
+            } else if (action === "tow" && kind === "ship" && currentView === "admin") {
+                var ship = shipTowEntityById(key);
+                if (ship) {
+                    armShipTow(ship);
+                }
             } else if (action === "watch" && kind === "player") {
                 enterCinema(key);
             } else if (action === "jump-tombstone") {
@@ -3336,7 +3360,7 @@
         var distance = currentWorld && targetWorld
             ? worldDistance(currentWorld.x, currentWorld.z, targetWorld.x, targetWorld.z)
             : 0;
-        if (distance > MARKER_TELEPORT_DISTANCE_M) {
+        if (distance > MARKER_TELEPORT_DISTANCE_M && !options.allowTeleportTween) {
             cancelMarkerTween(key);
             marker.setLatLng(target);
             resetTrailBuffer(
@@ -4388,6 +4412,7 @@
         createScaleBarControl();
         createMeasureControl();
         createPingControl();
+        bindShipTowInteraction();
         createFullscreenControl();
         createSearchControl();
         createCoordinateControl();
@@ -4944,6 +4969,7 @@
 
         disarmWebPinPlacement();
         disarmMapPing();
+        disarmShipTow();
         if (measureModeEnabled) {
             clearMeasurement();
         }
@@ -5075,6 +5101,7 @@
         if (!map || !canCreateWebPin()) {
             return;
         }
+        disarmShipTow();
         disarmMapPing();
         if (measureModeEnabled) {
             clearMeasurement();
@@ -5179,6 +5206,7 @@
     }
 
     function startMeasurement(initialPoint) {
+        disarmShipTow();
         disarmMapPing();
         disarmWebPinPlacement();
         measureModeEnabled = true;
@@ -5313,6 +5341,162 @@
         }
     }
 
+    function shipTowEntityById(shipId) {
+        return latestEntities.find(function (entity) {
+            return entity.group === "ship" && entity.id === shipId;
+        }) || null;
+    }
+
+    function ensureTowBanner() {
+        if (towBanner) {
+            return towBanner;
+        }
+
+        towBanner = document.createElement("div");
+        towBanner.className = "tow-armed-banner";
+        towBanner.setAttribute("role", "status");
+        towBanner.setAttribute("aria-live", "polite");
+        towBanner.hidden = true;
+        elements.mapPane.appendChild(towBanner);
+        return towBanner;
+    }
+
+    function disarmShipTow() {
+        towState = null;
+        document.body.classList.remove("is-towing");
+        if (towBanner) {
+            towBanner.hidden = true;
+            towBanner.textContent = "";
+        }
+    }
+
+    function armShipTow(entity) {
+        if (!map || currentView !== "admin" || towRequestPending || !entity ||
+            entity.group !== "ship" || !entity.id) {
+            return;
+        }
+
+        disarmMapPing();
+        disarmWebPinPlacement();
+        if (measureModeEnabled) {
+            clearMeasurement();
+        }
+        dismissMapContextMenu();
+        var shipName = shipDisplayName(entity.prefab);
+        towState = {
+            shipId: entity.id,
+            shipName: shipName,
+            x: entity.x,
+            z: entity.z
+        };
+        document.body.classList.add("is-towing");
+        var banner = ensureTowBanner();
+        banner.textContent = "Click map to tow " + shipName;
+        banner.hidden = false;
+        if (map._popup) {
+            map.closePopup();
+        }
+    }
+
+    function openShipTowConfirm(state, target) {
+        var latestShip = shipTowEntityById(state.shipId);
+        var fromX = latestShip ? latestShip.x : state.x;
+        var fromZ = latestShip ? latestShip.z : state.z;
+        var distance = worldDistance(fromX, fromZ, target.x, target.z);
+        confirmAction = {
+            action: "tow",
+            distance: distance,
+            shipId: state.shipId,
+            shipName: state.shipName,
+            target: { x: target.x, z: target.z }
+        };
+        elements.confirmMessage.textContent = "Tow " + state.shipName + " ~" +
+            Math.round(distance).toLocaleString("en-US") + " m to (" +
+            Math.round(target.x).toLocaleString("en-US") + ", " +
+            Math.round(target.z).toLocaleString("en-US") + ")?";
+        elements.confirmSubmit.textContent = "Tow";
+        elements.confirmSubmit.classList.remove("is-danger");
+        elements.confirmBackdrop.hidden = false;
+        elements.confirmCancel.focus();
+    }
+
+    function shipTowRefusalMessage(error) {
+        if (error && error.reason === "players_aboard") {
+            return "Players are aboard or nearby";
+        }
+        if (error && error.reason === "too_far") {
+            return "Too far — 5 km limit";
+        }
+        return error && error.message ? error.message : "Tow request failed";
+    }
+
+    async function submitShipTow(action) {
+        if (towRequestPending || currentView !== "admin") {
+            return;
+        }
+
+        towRequestPending = true;
+        try {
+            var payload = await fetchConsoleJson("/api/admin/tow", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-Operator": webPinOperatorAuthor()
+                },
+                body: JSON.stringify({
+                    shipId: action.shipId,
+                    x: action.target.x,
+                    z: action.target.z
+                })
+            });
+            if (!payload || payload.ok !== true) {
+                var rejection = new Error(payload && payload.message
+                    ? payload.message
+                    : "Tow request rejected");
+                rejection.reason = payload && payload.reason ? payload.reason : "";
+                throw rejection;
+            }
+
+            var moved = Number(payload.moved);
+            showNoticeToast(
+                "Towed " + action.shipName +
+                (Number.isFinite(moved)
+                    ? " " + Math.round(moved).toLocaleString("en-US") + " m"
+                    : "")
+            );
+            pendingShipTowTweenIds.add(action.shipId);
+            updateEntityPolling(true);
+        } catch (error) {
+            showNoticeToast(shipTowRefusalMessage(error));
+        } finally {
+            towRequestPending = false;
+        }
+    }
+
+    function bindShipTowInteraction() {
+        ensureTowBanner();
+        map.on("click", function (event) {
+            if (!towState ||
+                (event.originalEvent && typeof event.originalEvent.button === "number" &&
+                    event.originalEvent.button !== 0)) {
+                return;
+            }
+
+            var state = towState;
+            var world = latLngToWorld(event.latlng);
+            disarmShipTow();
+            if (world) {
+                openShipTowConfirm(state, world);
+            }
+        });
+        document.addEventListener("keydown", function (event) {
+            if (event.key === "Escape" && towState) {
+                event.preventDefault();
+                disarmShipTow();
+            }
+        });
+    }
+
     function disarmMapPing() {
         pingArmed = false;
         document.body.classList.remove("is-pinging");
@@ -5329,6 +5513,7 @@
         if (!map || currentView !== "admin" || pingRequestPending) {
             return;
         }
+        disarmShipTow();
         disarmWebPinPlacement();
         if (measureModeEnabled) {
             clearMeasurement();
@@ -8886,6 +9071,7 @@
             finishMeasurement();
         }
         disarmMapPing();
+        disarmShipTow();
         if (map._popup) {
             map.closePopup();
         }
@@ -9802,19 +9988,28 @@
         rows.push({ label: "Crew", value: crew.length > 0 ? crew.join(", ") : "None nearby" });
 
         var trailSelected = trailIsSelected("ship", entity.trailKey);
+        var actions = [{
+            action: "follow",
+            key: entity.trailKey,
+            kind: "ship",
+            label: isFollowing("ship", entity.trailKey) ? "Unfollow" : "Follow"
+        }, {
+            action: "trail",
+            active: trailSelected,
+            key: entity.trailKey,
+            kind: "ship",
+            label: trailSelected ? "Hide trail" : "Trail 15m"
+        }];
+        if (currentView === "admin" && entity.id) {
+            actions.push({
+                action: "tow",
+                key: entity.id,
+                kind: "ship",
+                label: "Tow"
+            });
+        }
         return popupShell({
-            actions: [{
-                action: "follow",
-                key: entity.trailKey,
-                kind: "ship",
-                label: isFollowing("ship", entity.trailKey) ? "Unfollow" : "Follow"
-            }, {
-                action: "trail",
-                active: trailSelected,
-                key: entity.trailKey,
-                kind: "ship",
-                label: trailSelected ? "Hide trail" : "Trail 15m"
-            }],
+            actions: actions,
             feed: "entities",
             glyph: ENTITY_GROUPS.ship.glyph,
             kicker: "SHIP",
@@ -11118,7 +11313,16 @@
     }
 
     function tweenEntityMarker(record, target, duration) {
+        var currentWorld = latLngToWorld(record.marker.getLatLng());
+        var targetWorld = latLngToWorld(target);
+        var allowTeleportTween = pendingShipTowTweenIds.has(record.entity.id) &&
+            currentWorld && targetWorld &&
+            worldDistance(currentWorld.x, currentWorld.z, targetWorld.x, targetWorld.z) > 0.01;
+        if (allowTeleportTween) {
+            pendingShipTowTweenIds.delete(record.entity.id);
+        }
         tweenMarker(record.animationKey, record.marker, target, duration, {
+            allowTeleportTween: allowTeleportTween,
             onMove: function (latLng) {
                 moveEntityMarker(record, latLng);
             },
@@ -12277,6 +12481,9 @@
 
     function updateView(view) {
         var nextView = view === "admin" || view === "shared" ? view : "public";
+        if (nextView !== "admin") {
+            disarmShipTow();
+        }
         elements.publicViewBadge.hidden = nextView === "admin";
         elements.publicViewBadge.textContent = nextView === "shared"
             ? "Shared view"

@@ -2549,6 +2549,44 @@ body.is-pinging #map .leaflet-overlay-pane path {
     pointer-events: none !important;
 }
 
+body.is-towing #map.leaflet-container,
+body.is-towing #map .leaflet-grab,
+body.is-towing #map .leaflet-dragging {
+    cursor: crosshair;
+}
+
+body.is-towing #map .leaflet-marker-pane,
+body.is-towing #map .leaflet-poi-pane,
+body.is-towing #map .leaflet-popup-pane,
+body.is-towing #map .leaflet-overlay-pane path {
+    pointer-events: none !important;
+}
+
+.tow-armed-banner {
+    position: absolute;
+    z-index: 1000;
+    top: 14px;
+    left: 50%;
+    max-width: calc(100% - 180px);
+    padding: 8px 14px;
+    border: 1px solid rgba(217, 177, 104, 0.72);
+    border-radius: 7px;
+    background: rgba(37, 28, 19, 0.94);
+    box-shadow: 0 8px 24px rgba(8, 6, 4, 0.36);
+    color: #ead3a4;
+    font-family: var(--font-display);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.035em;
+    text-align: center;
+    transform: translateX(-50%);
+    pointer-events: none;
+}
+
+.tow-armed-banner[hidden] {
+    display: none;
+}
+
 body.is-dropping-webpin #map.leaflet-container,
 body.is-dropping-webpin #map .leaflet-grab,
 body.is-dropping-webpin #map .leaflet-dragging {
@@ -5214,7 +5252,8 @@ body.is-cinema #map-metrics,
 body.is-cinema #render-status,
 body.is-cinema #map > .leaflet-control-container,
 body.is-cinema #map > .measure-hud,
-body.is-cinema #map > .follow-pill {
+body.is-cinema #map > .follow-pill,
+body.is-cinema #map > .tow-armed-banner {
     display: none !important;
 }
 

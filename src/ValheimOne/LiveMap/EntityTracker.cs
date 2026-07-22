@@ -676,6 +676,21 @@ internal sealed class EntityTracker
                    out objectId);
     }
 
+    internal static bool IsTrackedShipPrefab(int prefabHash)
+    {
+        for (int index = 0; index < CorePrefabs.Length; index++)
+        {
+            PrefabDefinition prefab = CorePrefabs[index];
+            if (prefab.Group == EntityGroup.Ship &&
+                prefab.Name.GetStableHashCode() == prefabHash)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private void ResetScan()
     {
         _scanResults.Clear();

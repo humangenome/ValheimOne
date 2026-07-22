@@ -319,7 +319,9 @@ internal sealed class LiveMapHttpServer
                     return;
                 }
 
-                if (!_config.ConsoleEnabled || _consoleBridge == null || _logRingBuffer == null)
+                bool isTowPath = string.Equals(path, "/api/admin/tow", StringComparison.Ordinal);
+                if (_consoleBridge == null ||
+                    (!isTowPath && (!_config.ConsoleEnabled || _logRingBuffer == null)))
                 {
                     WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
                     return;
@@ -467,6 +469,10 @@ internal sealed class LiveMapHttpServer
             else if (isPost && path == "/api/admin/shutdown")
             {
                 ServeShutdown(request, response);
+            }
+            else if (isPost && path == "/api/admin/tow")
+            {
+                ServeTow(request, response);
             }
             else if (isGet && path == "/api/stats")
             {
@@ -1498,6 +1504,101 @@ internal sealed class LiveMapHttpServer
         WriteJson(response, HttpStatusCode.OK, json);
     }
 
+    private void ServeTow(HttpListenerRequest request, HttpListenerResponse response)
+    {
+        ReadAuditIdentity(request, out string operatorName, out string source);
+        if (!TryReadTowRequest(
+                request,
+                response,
+                out string shipId,
+                out float x,
+                out float z,
+                out string requestError))
+        {
+            _activityLog.RecordAdminAction(
+                operatorName,
+                "tow",
+                null,
+                "error",
+                requestError,
+                source);
+            return;
+        }
+
+        ShipTowResult result = _consoleBridge!.TowShip(shipId, x, z);
+        string auditReason = result.Ok
+            ? string.Format(
+                CultureInfo.InvariantCulture,
+                "moved {0:0.0}m from ({1:0.0}, {2:0.0}) to ({3:0.0}, {4:0.0}, {5:0.0})",
+                result.Distance,
+                result.From.x,
+                result.From.z,
+                result.Target.x,
+                result.Target.y,
+                result.Target.z)
+            : !string.IsNullOrEmpty(result.Reason) ? result.Reason : result.Message;
+        _activityLog.RecordAdminAction(
+            operatorName,
+            "tow",
+            shipId,
+            result.Ok ? "ok" : "error",
+            auditReason,
+            source);
+
+        if (result.Ok)
+        {
+            _log.Info(string.Format(
+                CultureInfo.InvariantCulture,
+                "[LiveMap] ship tow by {0}: {1} ({2:0.0}, {3:0.0}, {4:0.0}) -> " +
+                "({5:0.0}, {6:0.0}, {7:0.0}), {8:0.0}m",
+                SanitizeLogValue(string.IsNullOrWhiteSpace(operatorName) ? source : operatorName),
+                shipId,
+                result.From.x,
+                result.From.y,
+                result.From.z,
+                result.Target.x,
+                result.Target.y,
+                result.Target.z,
+                result.Distance));
+
+            var json = new StringBuilder(128);
+            json.Append("{\"ok\":true,\"moved\":").Append(JsonWriter.Number(result.Distance));
+            json.Append(",\"target\":{");
+            json.Append("\"x\":").Append(JsonWriter.Number(result.Target.x));
+            json.Append(",\"y\":").Append(JsonWriter.Number(result.Target.y));
+            json.Append(",\"z\":").Append(JsonWriter.Number(result.Target.z));
+            json.Append("}}");
+            WriteJson(response, HttpStatusCode.OK, json.ToString());
+            return;
+        }
+
+        if (result.Outcome == ShipTowOutcome.NotFound)
+        {
+            WriteJson(
+                response,
+                HttpStatusCode.NotFound,
+                "{\"ok\":false,\"error\":\"Ship not found\",\"message\":\"Ship not found\"}");
+            return;
+        }
+
+        if (result.Outcome == ShipTowOutcome.Conflict)
+        {
+            WriteJson(
+                response,
+                HttpStatusCode.Conflict,
+                "{\"ok\":false,\"reason\":" + JsonWriter.Quote(result.Reason) +
+                ",\"error\":" + JsonWriter.Quote(result.Message) +
+                ",\"message\":" + JsonWriter.Quote(result.Message) + "}");
+            return;
+        }
+
+        WriteJson(
+            response,
+            HttpStatusCode.ServiceUnavailable,
+            "{\"ok\":false,\"error\":" + JsonWriter.Quote(result.Message) +
+            ",\"message\":" + JsonWriter.Quote(result.Message) + "}");
+    }
+
     private void ServeShutdown(HttpListenerRequest request, HttpListenerResponse response)
     {
         ReadAuditIdentity(request, out string operatorName, out string source);
@@ -1704,6 +1805,50 @@ internal sealed class LiveMapHttpServer
         {
             error = "invalid message";
             WriteJson(response, HttpStatusCode.BadRequest, "{\"ok\":false,\"error\":\"invalid message\"}");
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryReadTowRequest(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        out string shipId,
+        out float x,
+        out float z,
+        out string error)
+    {
+        shipId = string.Empty;
+        x = 0f;
+        z = 0f;
+        error = "invalid request";
+        if (!TryReadRequestBody(request, out string json, out bool tooLarge))
+        {
+            error = tooLarge ? "payload too large" : "invalid request";
+            WriteJson(
+                response,
+                tooLarge ? HttpStatusCode.RequestEntityTooLarge : HttpStatusCode.BadRequest,
+                "{\"ok\":false,\"error\":" + JsonWriter.Quote(error) + "}");
+            return false;
+        }
+
+        if (!TryParseTowJson(json, out shipId, out x, out z) ||
+            shipId.Length == 0 || shipId.Length > 64 ||
+            float.IsNaN(x) || float.IsInfinity(x) ||
+            float.IsNaN(z) || float.IsInfinity(z) ||
+            Math.Abs(x) > 100000f || Math.Abs(z) > 100000f ||
+            !EntityTracker.TryParseEntityId(shipId, out long userId, out uint objectId) ||
+            !string.Equals(
+                shipId,
+                userId.ToString(CultureInfo.InvariantCulture) + ":" +
+                objectId.ToString(CultureInfo.InvariantCulture),
+                StringComparison.Ordinal))
+        {
+            WriteJson(
+                response,
+                HttpStatusCode.BadRequest,
+                "{\"ok\":false,\"error\":\"invalid request\"}");
             return false;
         }
 
@@ -3636,6 +3781,258 @@ internal sealed class LiveMapHttpServer
         return true;
     }
 
+    private static bool TryParseTowJson(
+        string json,
+        out string shipId,
+        out float x,
+        out float z)
+    {
+        shipId = string.Empty;
+        x = 0f;
+        z = 0f;
+        bool hasShipId = false;
+        bool hasX = false;
+        bool hasZ = false;
+        int index = 0;
+        SkipJsonWhitespace(json, ref index);
+        if (index >= json.Length || json[index++] != '{')
+        {
+            return false;
+        }
+
+        SkipJsonWhitespace(json, ref index);
+        if (index < json.Length && json[index] == '}')
+        {
+            return false;
+        }
+
+        while (index < json.Length)
+        {
+            if (!TryParseStrictJsonString(json, ref index, out string propertyName))
+            {
+                return false;
+            }
+
+            SkipJsonWhitespace(json, ref index);
+            if (index >= json.Length || json[index++] != ':')
+            {
+                return false;
+            }
+
+            SkipJsonWhitespace(json, ref index);
+            switch (propertyName)
+            {
+                case "shipId":
+                    if (hasShipId || !TryParseStrictJsonString(json, ref index, out shipId))
+                    {
+                        return false;
+                    }
+                    hasShipId = true;
+                    break;
+                case "x":
+                    if (hasX || !TryParseStrictJsonNumber(json, ref index, out x))
+                    {
+                        return false;
+                    }
+                    hasX = true;
+                    break;
+                case "z":
+                    if (hasZ || !TryParseStrictJsonNumber(json, ref index, out z))
+                    {
+                        return false;
+                    }
+                    hasZ = true;
+                    break;
+                default:
+                    return false;
+            }
+
+            SkipJsonWhitespace(json, ref index);
+            if (index >= json.Length)
+            {
+                return false;
+            }
+
+            char separator = json[index++];
+            if (separator == '}')
+            {
+                SkipJsonWhitespace(json, ref index);
+                return index == json.Length && hasShipId && hasX && hasZ;
+            }
+            if (separator != ',')
+            {
+                return false;
+            }
+
+            SkipJsonWhitespace(json, ref index);
+        }
+
+        return false;
+    }
+
+    private static bool TryParseStrictJsonNumber(
+        string json,
+        ref int index,
+        out float value)
+    {
+        value = 0f;
+        int start = index;
+        if (index < json.Length && json[index] == '-')
+        {
+            index++;
+        }
+
+        if (index >= json.Length)
+        {
+            return false;
+        }
+
+        if (json[index] == '0')
+        {
+            index++;
+            if (index < json.Length && json[index] >= '0' && json[index] <= '9')
+            {
+                return false;
+            }
+        }
+        else if (json[index] >= '1' && json[index] <= '9')
+        {
+            do
+            {
+                index++;
+            }
+            while (index < json.Length && json[index] >= '0' && json[index] <= '9');
+        }
+        else
+        {
+            return false;
+        }
+
+        if (index < json.Length && json[index] == '.')
+        {
+            index++;
+            int fractionStart = index;
+            while (index < json.Length && json[index] >= '0' && json[index] <= '9')
+            {
+                index++;
+            }
+            if (fractionStart == index)
+            {
+                return false;
+            }
+        }
+
+        if (index < json.Length && (json[index] == 'e' || json[index] == 'E'))
+        {
+            index++;
+            if (index < json.Length && (json[index] == '+' || json[index] == '-'))
+            {
+                index++;
+            }
+            int exponentStart = index;
+            while (index < json.Length && json[index] >= '0' && json[index] <= '9')
+            {
+                index++;
+            }
+            if (exponentStart == index)
+            {
+                return false;
+            }
+        }
+
+        if (!double.TryParse(
+                json.Substring(start, index - start),
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out double parsed) ||
+            double.IsNaN(parsed) || double.IsInfinity(parsed) ||
+            parsed < -float.MaxValue || parsed > float.MaxValue)
+        {
+            return false;
+        }
+
+        value = (float)parsed;
+        return !float.IsNaN(value) && !float.IsInfinity(value);
+    }
+
+    private static bool TryParseStrictJsonString(
+        string json,
+        ref int index,
+        out string value)
+    {
+        value = string.Empty;
+        if (index >= json.Length || json[index++] != '"')
+        {
+            return false;
+        }
+
+        var output = new StringBuilder();
+        while (index < json.Length)
+        {
+            char character = json[index++];
+            if (character == '"')
+            {
+                value = output.ToString();
+                return true;
+            }
+            if (character < 0x20)
+            {
+                return false;
+            }
+            if (character != '\\')
+            {
+                output.Append(character);
+                continue;
+            }
+
+            if (index >= json.Length)
+            {
+                return false;
+            }
+
+            switch (json[index++])
+            {
+                case '"':
+                    output.Append('"');
+                    break;
+                case '\\':
+                    output.Append('\\');
+                    break;
+                case '/':
+                    output.Append('/');
+                    break;
+                case 'b':
+                    output.Append('\b');
+                    break;
+                case 'f':
+                    output.Append('\f');
+                    break;
+                case 'n':
+                    output.Append('\n');
+                    break;
+                case 'r':
+                    output.Append('\r');
+                    break;
+                case 't':
+                    output.Append('\t');
+                    break;
+                case 'u':
+                    if (index + 4 > json.Length ||
+                        !TryParseHexCharacter(json, index, out char escapedCharacter))
+                    {
+                        return false;
+                    }
+                    output.Append(escapedCharacter);
+                    index += 4;
+                    break;
+                default:
+                    return false;
+            }
+        }
+
+        return false;
+    }
+
     private static bool TryFindJsonPropertyValue(
         string json,
         string propertyName,
@@ -3891,6 +4288,16 @@ internal sealed class LiveMapHttpServer
         return long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsed)
             ? parsed
             : fallback;
+    }
+
+    private static string SanitizeLogValue(string value)
+    {
+        string sanitized = (value ?? string.Empty)
+            .Replace('\r', ' ')
+            .Replace('\n', ' ')
+            .Replace('\t', ' ')
+            .Trim();
+        return sanitized.Length <= 64 ? sanitized : sanitized.Substring(0, 64);
     }
 
     private static bool TryParseWorldCoordinate(string? value, out float coordinate)

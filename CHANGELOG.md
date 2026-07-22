@@ -6,6 +6,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Added
 
+- LiveMap admins can tow unattended ships from their map popup, with moves blocked when players are within 12 meters or the destination is more than 5 kilometers away.
 - LiveMap admin and shared views now include a default-off Bases layer that surveys player-built structures, groups nearby pieces into base areas, and shows approximate structure counts without exposing settlements to the public view.
 - LiveMap admin and shared views now include a default-off Creatures layer for active bosses, serpents, and raid mobs inside the event area, with live counts, creature-specific map art, smooth movement, star levels, and position details.
 

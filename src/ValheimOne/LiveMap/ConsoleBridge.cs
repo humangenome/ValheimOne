@@ -17,6 +17,8 @@ internal sealed class ConsoleBridge
     private const float IdleStatsRefreshSeconds = 30f;
     private const float CommandsRefreshSeconds = 60f;
     private const int MaximumCommandOutputLines = 50;
+    private const float MaximumShipTowDistance = 5000f;
+    private const float ShipPlayerGuardDistance = 12f;
     private const string TimeoutError = "timed out waiting for main thread";
 
     private static readonly Lazy<FieldInfo> CommandsField = new(
@@ -106,6 +108,13 @@ internal sealed class ConsoleBridge
         return Submit(
             () => SaveOnMainThread(_log),
             error => ConsoleSaveResult.Failure(error));
+    }
+
+    public ShipTowResult TowShip(string shipId, float x, float z)
+    {
+        return Submit(
+            () => TowShipOnMainThread(shipId, x, z, _log),
+            error => ShipTowResult.Failure(error));
     }
 
     public ShutdownActionResult ArmShutdown(int seconds, string message)
@@ -424,6 +433,159 @@ internal sealed class ConsoleBridge
         }
     }
 
+    internal static ShipTowResult TowShipOnMainThread(
+        string shipId,
+        float x,
+        float z,
+        ModLogger? log)
+    {
+        ZNet? network = ZNet.instance;
+        ZDOMan? manager = ZDOMan.instance;
+        ZoneSystem? zoneSystem = ZoneSystem.instance;
+        if (network == null || manager == null || zoneSystem == null || !network.IsServer())
+        {
+            return ShipTowResult.Failure("server unavailable");
+        }
+
+        if (!EntityTracker.TryParseEntityId(shipId, out long userId, out uint objectId))
+        {
+            return ShipTowResult.NotFound();
+        }
+
+        try
+        {
+            var shipZdoId = new ZDOID(userId, objectId);
+            ZDO? zdo = manager.GetZDO(shipZdoId);
+            if (zdo == null)
+            {
+                return ShipTowResult.NotFound();
+            }
+
+            if (!EntityTracker.IsTrackedShipPrefab(zdo.GetPrefab()))
+            {
+                return ShipTowResult.NotFound();
+            }
+
+            Vector3 from = zdo.GetPosition();
+            List<ZNetPeer>? peers = network.GetPeers();
+            if (peers != null)
+            {
+                float playerGuardDistanceSquared =
+                    ShipPlayerGuardDistance * ShipPlayerGuardDistance;
+                for (int index = 0; index < peers.Count; index++)
+                {
+                    ZNetPeer? peer = peers[index];
+                    if (peer == null || !peer.IsReady() || peer.m_characterID.IsNone())
+                    {
+                        continue;
+                    }
+
+                    if ((peer.GetRefPos() - from).sqrMagnitude <= playerGuardDistanceSquared)
+                    {
+                        return ShipTowResult.Conflict(
+                            "players_aboard",
+                            "Players are aboard or nearby");
+                    }
+                }
+            }
+
+            double deltaX = x - from.x;
+            double deltaZ = z - from.z;
+            double distanceSquared = (deltaX * deltaX) + (deltaZ * deltaZ);
+            if (distanceSquared > (double)MaximumShipTowDistance * MaximumShipTowDistance)
+            {
+                return ShipTowResult.Conflict(
+                    "too_far",
+                    "Too far — 5 km limit");
+            }
+
+            if (!LiveMapBehaviour.TryGetGroundHeight(x, z, out float groundHeight) ||
+                float.IsNaN(groundHeight) || float.IsInfinity(groundHeight))
+            {
+                return ShipTowResult.Failure("target height unavailable");
+            }
+
+            float waterLevel = zoneSystem.m_waterLevel;
+            if (float.IsNaN(waterLevel) || float.IsInfinity(waterLevel))
+            {
+                waterLevel = MapShading.WaterLevel;
+            }
+
+            var target = new Vector3(x, Math.Max(groundHeight, waterLevel), z);
+            zdo.SetOwner(ZDOMan.GetSessionID());
+            ResetShipVelocityFields(zdo, log);
+            RepositionLoadedShip(zdo, target, log);
+            zdo.SetPosition(target);
+            manager.ForceSendZDO(shipZdoId);
+
+            return ShipTowResult.Success(
+                from,
+                target,
+                (float)Math.Sqrt(distanceSquared));
+        }
+        catch (Exception exception)
+        {
+            LogException(log, "ship tow failed", exception);
+            return ShipTowResult.Failure(GetExceptionMessage(exception));
+        }
+    }
+
+    private static void ResetShipVelocityFields(ZDO zdo, ModLogger? log)
+    {
+        ResetShipVelocityField(zdo, ZDOVars.s_velHash, "velocity", log);
+        ResetShipVelocityField(zdo, ZDOVars.s_bodyVelHash, "body velocity", log);
+        ResetShipVelocityField(zdo, ZDOVars.s_bodyAVelHash, "body angular velocity", log);
+    }
+
+    private static void ResetShipVelocityField(
+        ZDO zdo,
+        int fieldHash,
+        string fieldName,
+        ModLogger? log)
+    {
+        try
+        {
+            if (zdo.GetVec3(fieldHash, out _))
+            {
+                zdo.Set(fieldHash, Vector3.zero);
+            }
+        }
+        catch (Exception exception)
+        {
+            LogException(log, "could not reset ship " + fieldName, exception);
+        }
+    }
+
+    private static void RepositionLoadedShip(ZDO zdo, Vector3 target, ModLogger? log)
+    {
+        try
+        {
+            ZNetView? networkView = ZNetScene.instance?.FindInstance(zdo);
+            if (networkView == null)
+            {
+                return;
+            }
+
+            Rigidbody? body = networkView.GetComponent<Rigidbody>();
+            if (body != null)
+            {
+                body.position = target;
+                body.linearVelocity = Vector3.zero;
+                body.angularVelocity = Vector3.zero;
+            }
+            else
+            {
+                networkView.transform.position = target;
+            }
+
+            Physics.SyncTransforms();
+        }
+        catch (Exception exception)
+        {
+            LogException(log, "could not synchronize loaded ship after tow", exception);
+        }
+    }
+
     private void AccumulateFrameSample()
     {
         float delta = Time.deltaTime;
@@ -661,6 +823,91 @@ internal sealed class ConsoleActionResult
     public static ConsoleActionResult Failure(string error)
     {
         return new ConsoleActionResult(false, error);
+    }
+}
+
+internal enum ShipTowOutcome
+{
+    Success,
+    NotFound,
+    Conflict,
+    Failure,
+}
+
+internal sealed class ShipTowResult
+{
+    private ShipTowResult(
+        ShipTowOutcome outcome,
+        string reason,
+        string message,
+        Vector3 from,
+        Vector3 target,
+        float distance)
+    {
+        Outcome = outcome;
+        Reason = reason;
+        Message = message;
+        From = from;
+        Target = target;
+        Distance = distance;
+    }
+
+    public bool Ok => Outcome == ShipTowOutcome.Success;
+
+    public ShipTowOutcome Outcome { get; }
+
+    public string Reason { get; }
+
+    public string Message { get; }
+
+    public Vector3 From { get; }
+
+    public Vector3 Target { get; }
+
+    public float Distance { get; }
+
+    public static ShipTowResult Success(Vector3 from, Vector3 target, float distance)
+    {
+        return new ShipTowResult(
+            ShipTowOutcome.Success,
+            string.Empty,
+            string.Empty,
+            from,
+            target,
+            distance);
+    }
+
+    public static ShipTowResult NotFound()
+    {
+        return new ShipTowResult(
+            ShipTowOutcome.NotFound,
+            string.Empty,
+            "Ship not found",
+            Vector3.zero,
+            Vector3.zero,
+            0f);
+    }
+
+    public static ShipTowResult Conflict(string reason, string message)
+    {
+        return new ShipTowResult(
+            ShipTowOutcome.Conflict,
+            reason,
+            message,
+            Vector3.zero,
+            Vector3.zero,
+            0f);
+    }
+
+    public static ShipTowResult Failure(string message)
+    {
+        return new ShipTowResult(
+            ShipTowOutcome.Failure,
+            string.Empty,
+            message,
+            Vector3.zero,
+            Vector3.zero,
+            0f);
     }
 }
 
