@@ -46,7 +46,7 @@ internal sealed class LiveMapHttpServer
     private readonly Func<WebPinStore?> _getWebPinStore;
     private readonly Func<EntityMapSnapshot> _getEntitySnapshot;
     private readonly Func<EntityFocusSnapshot> _getEntityFocusSnapshot;
-    private readonly Action _noteEntitiesRequested;
+    private readonly Action<bool, bool> _noteEntitiesRequested;
     private readonly Action<string> _noteEntityFocusRequested;
     private readonly PositionHistory _positionHistory;
     private readonly Func<string> _getFogMode;
@@ -95,7 +95,7 @@ internal sealed class LiveMapHttpServer
         Func<WebPinStore?> getWebPinStore,
         Func<EntityMapSnapshot> getEntitySnapshot,
         Func<EntityFocusSnapshot> getEntityFocusSnapshot,
-        Action noteEntitiesRequested,
+        Action<bool, bool> noteEntitiesRequested,
         Action<string> noteEntityFocusRequested,
         PositionHistory positionHistory,
         Func<string> getFogMode,
@@ -2131,7 +2131,24 @@ internal sealed class LiveMapHttpServer
             return;
         }
 
-        _noteEntitiesRequested();
+        string requestedGroups = (request.QueryString["groups"] ?? string.Empty).Trim();
+        bool entitiesRequested = string.IsNullOrEmpty(requestedGroups);
+        bool creaturesRequested = false;
+        string[] groups = requestedGroups.Split(',');
+        for (int index = 0; index < groups.Length; index++)
+        {
+            string group = groups[index].Trim();
+            if (string.Equals(group, "creatures", StringComparison.OrdinalIgnoreCase))
+            {
+                creaturesRequested = true;
+            }
+            else if (!string.IsNullOrEmpty(group))
+            {
+                entitiesRequested = true;
+            }
+        }
+
+        _noteEntitiesRequested(entitiesRequested, creaturesRequested);
         EntityMapSnapshot snapshot = _getEntitySnapshot();
         var json = new StringBuilder(64 + (snapshot.Entities.Length * 112));
         json.Append("{\"revision\":");
@@ -2202,6 +2219,18 @@ internal sealed class LiveMapHttpServer
             else if (string.Equals(entity.Group, "bed", StringComparison.Ordinal))
             {
                 json.Append(",\"owner\":").Append(JsonWriter.Quote(entity.Owner));
+            }
+            else if (string.Equals(entity.Group, "creatures", StringComparison.Ordinal))
+            {
+                json.Append(",\"name\":").Append(JsonWriter.Quote(entity.Name));
+                if (entity.Level.HasValue)
+                {
+                    int level = Math.Max(1, entity.Level.Value);
+                    json.Append(",\"level\":").Append(
+                        level.ToString(CultureInfo.InvariantCulture));
+                    json.Append(",\"stars\":").Append(
+                        Math.Max(0, level - 1).ToString(CultureInfo.InvariantCulture));
+                }
             }
 
             json.Append('}');

@@ -13,6 +13,7 @@ internal sealed class EntityTracker
 {
     private const float EventRefreshIntervalSeconds = 5f;
     private const float EntityRefreshIntervalSeconds = 30f;
+    private const float CreatureRefreshIntervalSeconds = 10f;
     private const float FocusRefreshIntervalSeconds = 2f;
     private const long RequestActiveMilliseconds = 2L * 60L * 1000L;
     private const long FocusRequestActiveMilliseconds = 30L * 1000L;
@@ -22,6 +23,8 @@ internal sealed class EntityTracker
     private const int MaximumTombstones = 200;
     private const int MaximumWards = 300;
     private const int MaximumBeds = 500;
+    private const int MaximumCreatures = 150;
+    private const int MaximumRaidCreaturePrefabs = 24;
     private const float WardRadiusFallback = 32f;
 
     private static readonly Lazy<FieldInfo> RandomEventField = new(
@@ -36,9 +39,10 @@ internal sealed class EntityTracker
         new EntityGroupDefinition("tombstone", MaximumTombstones),
         new EntityGroupDefinition("ward", MaximumWards),
         new EntityGroupDefinition("bed", MaximumBeds),
+        new EntityGroupDefinition("creatures", MaximumCreatures),
     };
 
-    private static readonly PrefabDefinition[] Prefabs =
+    private static readonly PrefabDefinition[] CorePrefabs =
     {
         new PrefabDefinition(EntityGroup.Ship, "Raft"),
         new PrefabDefinition(EntityGroup.Ship, "Karve"),
@@ -55,14 +59,28 @@ internal sealed class EntityTracker
         new PrefabDefinition(EntityGroup.Bed, "ashwood_bed"),
     };
 
+    private static readonly PrefabDefinition[] CreaturePrefabs =
+    {
+        new PrefabDefinition(EntityGroup.Creature, "Eikthyr", "Eikthyr"),
+        new PrefabDefinition(EntityGroup.Creature, "gd_king", "The Elder"),
+        new PrefabDefinition(EntityGroup.Creature, "Bonemass", "Bonemass"),
+        new PrefabDefinition(EntityGroup.Creature, "Dragon", "Moder"),
+        new PrefabDefinition(EntityGroup.Creature, "GoblinKing", "Yagluth"),
+        new PrefabDefinition(EntityGroup.Creature, "SeekerQueen", "The Queen"),
+        new PrefabDefinition(EntityGroup.Creature, "Fader", "Fader"),
+        new PrefabDefinition(EntityGroup.Creature, "Serpent", "Serpent"),
+    };
+
     private readonly LiveMapConfig _config;
     private readonly PositionHistory _positionHistory;
     private readonly ModLogger _log;
     private readonly List<ZDO> _scanResults = new List<ZDO>();
     private readonly List<TrackedEntitySnapshot> _pendingEntities =
         new List<TrackedEntitySnapshot>();
+    private readonly List<PrefabDefinition> _scanPrefabs = new List<PrefabDefinition>();
     private readonly int[] _pendingGroupCounts = new int[Groups.Length];
     private readonly bool[] _pendingGroupTruncated = new bool[Groups.Length];
+    private readonly bool[] _scanGroups = new bool[Groups.Length];
     private volatile EntityMapSnapshot _snapshot = EntityMapSnapshot.Empty;
     private EntityFocusRequest _focusRequest = EntityFocusRequest.Empty;
     private volatile EntityFocusSnapshot _focusSnapshot = EntityFocusSnapshot.Empty;
@@ -71,10 +89,14 @@ internal sealed class EntityTracker
         new int[Groups.Length],
         new bool[Groups.Length]);
     private RaidEventSnapshot? _activeEvent;
+    private string[] _activeRaidCreaturePrefabs = Array.Empty<string>();
+    private RaidEventSnapshot? _scanEvent;
     private float _nextEntityRefresh;
+    private float _nextCreatureRefresh;
     private float _nextEventRefresh;
     private float _nextFocusRefresh;
     private long _lastEntitiesRequestUnixMs;
+    private long _lastCreaturesRequestUnixMs;
     private long _lastEntityScanUnixMs;
     private int _prefabIndex;
     private int _scanIndex;
@@ -103,9 +125,20 @@ internal sealed class EntityTracker
 
     public void NoteEntitiesRequested()
     {
-        Interlocked.Exchange(
-            ref _lastEntitiesRequestUnixMs,
-            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        NoteEntitiesRequested(true, true);
+    }
+
+    public void NoteEntitiesRequested(bool entitiesRequested, bool creaturesRequested)
+    {
+        long unixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (entitiesRequested)
+        {
+            Interlocked.Exchange(ref _lastEntitiesRequestUnixMs, unixMs);
+        }
+        if (creaturesRequested)
+        {
+            Interlocked.Exchange(ref _lastCreaturesRequestUnixMs, unixMs);
+        }
     }
 
     public void NoteFocusRequested(string id)
@@ -148,10 +181,19 @@ internal sealed class EntityTracker
         {
             publish |= ContinueScan(now);
         }
-        else if (now >= _nextEntityRefresh && EntitiesWereRecentlyRequested())
+        else
         {
-            StartScan(now);
-            publish |= ContinueScan(now);
+            bool scanEntities = now >= _nextEntityRefresh &&
+                                EntitiesWereRecentlyRequested(Interlocked.Read(
+                                    ref _lastEntitiesRequestUnixMs));
+            bool scanCreatures = now >= _nextCreatureRefresh &&
+                                 EntitiesWereRecentlyRequested(Interlocked.Read(
+                                     ref _lastCreaturesRequestUnixMs));
+            if (scanEntities || scanCreatures)
+            {
+                StartScan(now, scanEntities, scanCreatures);
+                publish |= ContinueScan(now);
+            }
         }
 
         if (!publish && _snapshot.Revision != 0)
@@ -162,9 +204,8 @@ internal sealed class EntityTracker
         PublishSnapshot();
     }
 
-    private bool EntitiesWereRecentlyRequested()
+    private static bool EntitiesWereRecentlyRequested(long requestedUnixMs)
     {
-        long requestedUnixMs = Interlocked.Read(ref _lastEntitiesRequestUnixMs);
         if (requestedUnixMs == 0L)
         {
             return false;
@@ -175,18 +216,73 @@ internal sealed class EntityTracker
         return elapsedMilliseconds >= 0L && elapsedMilliseconds <= RequestActiveMilliseconds;
     }
 
-    private void StartScan(float now)
+    private void StartScan(float now, bool scanEntities, bool scanCreatures)
     {
         ResolveWardRadius();
         _scanResults.Clear();
         _pendingEntities.Clear();
+        _scanPrefabs.Clear();
         Array.Clear(_pendingGroupCounts, 0, _pendingGroupCounts.Length);
         Array.Clear(_pendingGroupTruncated, 0, _pendingGroupTruncated.Length);
+        Array.Clear(_scanGroups, 0, _scanGroups.Length);
+        for (int index = 0; index < Groups.Length; index++)
+        {
+            _scanGroups[index] = scanEntities && index != (int)EntityGroup.Creature ||
+                                 scanCreatures && index == (int)EntityGroup.Creature;
+            if (!_scanGroups[index])
+            {
+                _pendingGroupCounts[index] = _entityGroups[index].Count;
+                _pendingGroupTruncated[index] = _entityGroups[index].Truncated;
+            }
+        }
+
+        for (int index = 0; index < _entities.Length; index++)
+        {
+            TrackedEntitySnapshot entity = _entities[index];
+            if (!TryGetGroupIndex(entity.Group, out int groupIndex) ||
+                !_scanGroups[groupIndex])
+            {
+                _pendingEntities.Add(entity);
+            }
+        }
+
+        if (scanEntities)
+        {
+            _scanPrefabs.AddRange(CorePrefabs);
+            _nextEntityRefresh = now + EntityRefreshIntervalSeconds;
+        }
+        if (scanCreatures)
+        {
+            _scanPrefabs.AddRange(CreaturePrefabs);
+            _scanEvent = _activeEvent;
+            var seenPrefabs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (int index = 0; index < CreaturePrefabs.Length; index++)
+            {
+                seenPrefabs.Add(CreaturePrefabs[index].Name);
+            }
+            for (int index = 0; index < _activeRaidCreaturePrefabs.Length; index++)
+            {
+                string prefabName = _activeRaidCreaturePrefabs[index];
+                if (seenPrefabs.Add(prefabName))
+                {
+                    _scanPrefabs.Add(new PrefabDefinition(
+                        EntityGroup.Creature,
+                        prefabName,
+                        ResolveCreatureDisplayName(prefabName),
+                        true));
+                }
+            }
+            _nextCreatureRefresh = now + CreatureRefreshIntervalSeconds;
+        }
+        else
+        {
+            _scanEvent = null;
+        }
+
         _prefabIndex = 0;
         _scanIndex = 0;
         _scanWarningLogged = false;
         _scanning = true;
-        _nextEntityRefresh = now + EntityRefreshIntervalSeconds;
     }
 
     private bool ContinueScan(float now)
@@ -199,7 +295,7 @@ internal sealed class EntityTracker
             return false;
         }
 
-        PrefabDefinition prefab = Prefabs[_prefabIndex];
+        PrefabDefinition prefab = _scanPrefabs[_prefabIndex];
         int groupIndex = (int)prefab.Group;
         EntityGroupDefinition group = Groups[groupIndex];
         bool complete;
@@ -230,6 +326,15 @@ internal sealed class EntityTracker
                 }
 
                 Vector3 position = zdo.GetPosition();
+                if (prefab.RaidOnly && !IsInsideEvent(position, _scanEvent))
+                {
+                    continue;
+                }
+                if (prefab.Group == EntityGroup.Creature &&
+                    zdo.GetBool(ZDOVars.s_dead, false))
+                {
+                    continue;
+                }
                 ZDOID uid = zdo.m_uid;
                 string id = uid.UserID.ToString(CultureInfo.InvariantCulture) + ":" +
                             uid.ID.ToString(CultureInfo.InvariantCulture);
@@ -250,6 +355,12 @@ internal sealed class EntityTracker
                     : null;
                 float? wardRadius = isWard ? _wardRadius : null;
                 double? deathAgeSec = null;
+                int? level = null;
+                if (prefab.Group == EntityGroup.Creature &&
+                    zdo.GetInt(ZDOVars.s_level, out int creatureLevel))
+                {
+                    level = Math.Max(1, creatureLevel);
+                }
                 if (isTombstone)
                 {
                     long timeOfDeath = zdo.GetLong(ZDOVars.s_timeOfDeath, 0L);
@@ -275,7 +386,9 @@ internal sealed class EntityTracker
                     owner,
                     deathAgeSec,
                     wardEnabled,
-                    wardRadius));
+                    wardRadius,
+                    prefab.DisplayName,
+                    level));
                 _pendingGroupCounts[groupIndex]++;
             }
 
@@ -307,13 +420,13 @@ internal sealed class EntityTracker
         _scanResults.Clear();
         _scanIndex = 0;
         _prefabIndex++;
-        while (_prefabIndex < Prefabs.Length &&
-               _pendingGroupTruncated[(int)Prefabs[_prefabIndex].Group])
+        while (_prefabIndex < _scanPrefabs.Count &&
+               _pendingGroupTruncated[(int)_scanPrefabs[_prefabIndex].Group])
         {
             _prefabIndex++;
         }
 
-        if (_prefabIndex < Prefabs.Length)
+        if (_prefabIndex < _scanPrefabs.Count)
         {
             return false;
         }
@@ -488,7 +601,58 @@ internal sealed class EntityTracker
     private static bool IsTrailEntity(TrackedEntitySnapshot entity)
     {
         return string.Equals(entity.Group, "ship", StringComparison.Ordinal) ||
-               string.Equals(entity.Group, "cart", StringComparison.Ordinal);
+               string.Equals(entity.Group, "cart", StringComparison.Ordinal) ||
+               string.Equals(entity.Group, "creatures", StringComparison.Ordinal);
+    }
+
+    private static bool TryGetGroupIndex(string key, out int groupIndex)
+    {
+        for (int index = 0; index < Groups.Length; index++)
+        {
+            if (string.Equals(Groups[index].Key, key, StringComparison.Ordinal))
+            {
+                groupIndex = index;
+                return true;
+            }
+        }
+
+        groupIndex = -1;
+        return false;
+    }
+
+    private static bool IsInsideEvent(Vector3 position, RaidEventSnapshot? activeEvent)
+    {
+        if (activeEvent == null || activeEvent.Radius <= 0f)
+        {
+            return false;
+        }
+
+        float deltaX = position.x - activeEvent.X;
+        float deltaZ = position.z - activeEvent.Z;
+        return (deltaX * deltaX) + (deltaZ * deltaZ) <=
+               activeEvent.Radius * activeEvent.Radius;
+    }
+
+    private static string ResolveCreatureDisplayName(string prefabName)
+    {
+        try
+        {
+            GameObject? prefab = ZNetScene.instance?.GetPrefab(prefabName);
+            Character? character = prefab?.GetComponent<Character>();
+            string localized = character == null
+                ? string.Empty
+                : Localization.instance.Localize(character.m_name ?? string.Empty).Trim();
+            if (!string.IsNullOrEmpty(localized) && localized[0] != '$')
+            {
+                return localized;
+            }
+        }
+        catch (Exception)
+        {
+            // Prefab names remain a safe display fallback if localization is unavailable.
+        }
+
+        return prefabName;
     }
 
     internal static bool TryParseEntityId(
@@ -516,8 +680,11 @@ internal sealed class EntityTracker
     {
         _scanResults.Clear();
         _pendingEntities.Clear();
+        _scanPrefabs.Clear();
         Array.Clear(_pendingGroupCounts, 0, _pendingGroupCounts.Length);
         Array.Clear(_pendingGroupTruncated, 0, _pendingGroupTruncated.Length);
+        Array.Clear(_scanGroups, 0, _scanGroups.Length);
+        _scanEvent = null;
         _prefabIndex = 0;
         _scanIndex = 0;
         _scanning = false;
@@ -580,6 +747,7 @@ internal sealed class EntityTracker
         RandEventSystem? eventSystem = RandEventSystem.instance;
         if (eventSystem == null)
         {
+            _activeRaidCreaturePrefabs = Array.Empty<string>();
             return null;
         }
 
@@ -588,9 +756,11 @@ internal sealed class EntityTracker
             var activeEvent = RandomEventField.Value.GetValue(eventSystem) as RandomEvent;
             if (activeEvent == null)
             {
+                _activeRaidCreaturePrefabs = Array.Empty<string>();
                 return null;
             }
 
+            _activeRaidCreaturePrefabs = ReadRaidCreaturePrefabs(activeEvent);
             Vector3 position = activeEvent.m_pos;
             return new RaidEventSnapshot(
                 activeEvent.m_name ?? string.Empty,
@@ -602,6 +772,7 @@ internal sealed class EntityTracker
         }
         catch (Exception exception)
         {
+            _activeRaidCreaturePrefabs = Array.Empty<string>();
             if (!_eventWarningLogged)
             {
                 _eventWarningLogged = true;
@@ -614,17 +785,54 @@ internal sealed class EntityTracker
         }
     }
 
+    private static string[] ReadRaidCreaturePrefabs(RandomEvent activeEvent)
+    {
+        var names = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Event spawn lists are normally single-digit. Cap unique prefabs so a modded event
+        // cannot turn one requested creature refresh into an unbounded series of ZDO queries.
+        for (int index = 0;
+             index < activeEvent.m_spawn.Count && names.Count < MaximumRaidCreaturePrefabs;
+             index++)
+        {
+            SpawnSystem.SpawnData? spawner = activeEvent.m_spawn[index];
+            GameObject? prefab = spawner?.m_prefab;
+            if (spawner == null || !spawner.m_enabled || prefab == null)
+            {
+                continue;
+            }
+
+            string name = prefab.name?.Trim() ?? string.Empty;
+            if (!string.IsNullOrEmpty(name) && seen.Add(name))
+            {
+                names.Add(name);
+            }
+        }
+
+        return names.ToArray();
+    }
+
     private sealed class PrefabDefinition
     {
-        public PrefabDefinition(EntityGroup group, string name)
+        public PrefabDefinition(
+            EntityGroup group,
+            string name,
+            string displayName = "",
+            bool raidOnly = false)
         {
             Group = group;
             Name = name;
+            DisplayName = displayName;
+            RaidOnly = raidOnly;
         }
 
         public EntityGroup Group { get; }
 
         public string Name { get; }
+
+        public string DisplayName { get; }
+
+        public bool RaidOnly { get; }
     }
 
     private sealed class EntityGroupDefinition
@@ -648,6 +856,7 @@ internal sealed class EntityTracker
         Tombstone,
         Ward,
         Bed,
+        Creature,
     }
 
     private sealed class EntityFocusRequest
@@ -739,7 +948,9 @@ internal sealed class TrackedEntitySnapshot
         string owner,
         double? deathAgeSec,
         bool? wardEnabled,
-        float? wardRadius)
+        float? wardRadius,
+        string name,
+        int? level)
     {
         Group = group;
         Prefab = prefab;
@@ -753,6 +964,8 @@ internal sealed class TrackedEntitySnapshot
         DeathAgeSec = deathAgeSec;
         WardEnabled = wardEnabled;
         WardRadius = wardRadius;
+        Name = name;
+        Level = level;
     }
 
     public string Group { get; }
@@ -778,6 +991,10 @@ internal sealed class TrackedEntitySnapshot
     public bool? WardEnabled { get; }
 
     public float? WardRadius { get; }
+
+    public string Name { get; }
+
+    public int? Level { get; }
 }
 
 internal sealed class EntityFocusSnapshot

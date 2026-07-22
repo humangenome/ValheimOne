@@ -12,6 +12,12 @@
             'aria-hidden="true" focusable="false">' + content + "</svg>";
     }
 
+    var hostileCreature = svg(
+        '<path d="M5 9 3 4l5 3m11 2 2-5-5 3"/>' +
+        '<path d="M6 8c1.5-2 3.5-3 6-3s4.5 1 6 3l1 5c0 4-3 7-7 7s-7-3-7-7l1-5Z"/>' +
+        '<path d="m8.5 12 2 1m5-1-2 1M9 17l3-2 3 2M12 15v4"/>'
+    );
+
     window.VO_ICONS = {
         spawn: svg(
             '<path d="M3.5 20.5h17"/>' +
@@ -248,6 +254,14 @@
         tombstone: svg(
             '<path d="M6 21V9a6 6 0 0 1 12 0v12H6Z"/>' +
             '<path d="M9 10h6m-3-3v10m-2-3 2 3 2-3M4 21h16"/>'
+        ),
+        creatures: hostileCreature,
+        creature_hostile: hostileCreature,
+        creature_serpent: svg(
+            '<path d="M4 6c3-3 7-2 8 1s-3 4-2 7 5 4 9 1"/>' +
+            '<path d="M17 12c3 0 4 2 3 4-1 3-5 5-9 4-5-1-7-5-5-8"/>' +
+            '<path d="m4 6 1-3 2 3M18 14l3-2-1 4"/>' +
+            '<circle cx="6.8" cy="6.7" r=".7" fill="currentColor" stroke="none"/>'
         ),
         player: svg(
             '<path d="m12 2 3.2 6.8L22 12l-6.8 3.2L12 22l-3.2-6.8L2 12l6.8-3.2L12 2Z"/>' +

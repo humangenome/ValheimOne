@@ -274,8 +274,11 @@
     });
     POI_GROUP_ORDER.push("ghosts");
 
-    var ENTITY_GROUP_ORDER = ["ship", "cart", "portal", "ward", "bed", "tombstone"];
+    var ENTITY_GROUP_ORDER = [
+        "creatures", "ship", "cart", "portal", "ward", "bed", "tombstone"
+    ];
     var ENTITY_GROUPS = {
+        creatures: { label: "Creatures", glyph: "☠" },
         ship: { label: "Ships", glyph: "⛵" },
         cart: { label: "Carts", glyph: "▣" },
         portal: { label: "Portals", glyph: "◊" },
@@ -304,6 +307,41 @@
     function bossIconKey(record) {
         var iconKey = poiIconKey(record);
         return iconKey.indexOf("boss_") === 0 ? iconKey : "";
+    }
+
+    function creatureIconKey(entity) {
+        var prefab = entity && typeof entity.prefab === "string"
+            ? entity.prefab.replace(/[^a-z0-9]/gi, "").toLowerCase()
+            : "";
+        if (prefab === "eikthyr") {
+            return "boss_eikthyr";
+        }
+        if (prefab === "gdking") {
+            return "boss_elder";
+        }
+        if (prefab === "bonemass") {
+            return "boss_bonemass";
+        }
+        if (prefab === "dragon") {
+            return "boss_moder";
+        }
+        if (prefab === "goblinking") {
+            return "boss_yagluth";
+        }
+        if (prefab === "seekerqueen") {
+            return "boss_queen";
+        }
+        if (prefab === "fader") {
+            return "boss_fader";
+        }
+        if (prefab === "serpent") {
+            return "creature_serpent";
+        }
+        return "creature_hostile";
+    }
+
+    function movingEntityGroup(group) {
+        return group === "ship" || group === "cart" || group === "creatures";
     }
 
     function layerIconKey(key) {
@@ -363,6 +401,7 @@
         regions: true,
         tint: true,
         minimap: false,
+        creatures: false,
         ship: true,
         cart: true,
         portal: true,
@@ -3639,7 +3678,7 @@
     function recordEntityTrails(entities) {
         var timestamp = Date.now();
         entities.forEach(function (entity) {
-            if ((entity.group === "ship" || entity.group === "cart") && entity.trailKey) {
+            if (movingEntityGroup(entity.group) && entity.trailKey) {
                 appendTrailSample(entity.trailKey, entity.group, entity.x, entity.z, timestamp);
             }
         });
@@ -9675,6 +9714,12 @@
         return prettifyEntityName(prefab);
     }
 
+    function creatureDisplayName(entity) {
+        var name = entity && entity.name ? entity.name : entity.prefab;
+        name = typeof name === "string" ? name.replace(/^\$enemy_/i, "") : "";
+        return prettifyEntityName(name || "Creature");
+    }
+
     function nearbyPlayers(x, z, radius) {
         return latestPlayers.filter(function (player) {
             return worldDistance(x, z, player.x, player.z) <= radius;
@@ -9872,7 +9917,29 @@
         });
     }
 
+    function buildCreaturePopup(entity) {
+        var iconKey = creatureIconKey(entity);
+        var rows = [];
+        if (entity.stars !== null && entity.stars > 0) {
+            rows.push({ label: "Level", value: entity.stars + "★" });
+        }
+        rows.push(positionPopupRow(entity.x, entity.z));
+        return popupShell({
+            feed: "entities",
+            glyph: ENTITY_GROUPS.creatures.glyph,
+            iconKey: iconKey,
+            kicker: iconKey.indexOf("boss_") === 0
+                ? "BOSS"
+                : iconKey === "creature_serpent" ? "SEA CREATURE" : "RAID CREATURE",
+            rows: rows,
+            title: creatureDisplayName(entity)
+        });
+    }
+
     function buildEntityPopup(entity) {
+        if (entity.group === "creatures") {
+            return buildCreaturePopup(entity);
+        }
         if (entity.group === "ship") {
             return buildShipPopup(entity);
         }
@@ -10754,6 +10821,20 @@
             if (previous && previous.deathAgeSec === deathAgeSec) {
                 deathAgeSampledAt = previous.deathAgeSampledAt;
             }
+            var creatureLevel = group === "creatures"
+                ? finiteNumberOrNull(entity.level)
+                : null;
+            if (creatureLevel !== null) {
+                creatureLevel = Math.max(1, Math.floor(creatureLevel));
+            }
+            var creatureStars = group === "creatures"
+                ? finiteNumberOrNull(entity.stars)
+                : null;
+            if (creatureStars === null && creatureLevel !== null) {
+                creatureStars = Math.max(0, creatureLevel - 1);
+            } else if (creatureStars !== null) {
+                creatureStars = Math.max(0, Math.floor(creatureStars));
+            }
             normalized.push({
                 deathAgeSampledAt: deathAgeSampledAt,
                 deathAgeSec: deathAgeSec,
@@ -10762,9 +10843,12 @@
                 isNewestDeath: false,
                 owner: typeof entity.owner === "string" ? entity.owner.trim() : "",
                 prefab: prefab,
+                name: typeof entity.name === "string" ? entity.name.trim() : "",
+                level: creatureLevel,
                 rotYDeg: finiteNumberOrNull(entity.rotYDeg),
+                stars: creatureStars,
                 tag: typeof entity.tag === "string" ? entity.tag.trim() : "",
-                trailKey: (group === "ship" || group === "cart") && entityId
+                trailKey: movingEntityGroup(group) && entityId
                     ? "entity:" + entityId
                     : "",
                 wardEnabled: group === "ward" ? entity.wardEnabled === true : null,
@@ -10860,6 +10944,12 @@
     }
 
     function entityMarkerTitle(entity) {
+        if (entity.group === "creatures") {
+            return creatureDisplayName(entity) +
+                (entity.stars !== null && entity.stars > 0
+                    ? " · " + entity.stars + "★"
+                    : "");
+        }
         if (entity.group === "tombstone" && entity.owner) {
             return entity.owner + " · Tombstone";
         }
@@ -10924,7 +11014,7 @@
     function renderEntityPayload(entities, tweenDuration) {
         var popupSource = map && map._popup ? map._popup._source : null;
         var reopenEntityKey = popupSource &&
-            (popupSource._voPopupKind === "ship" || popupSource._voPopupKind === "cart")
+            movingEntityGroup(popupSource._voPopupKind)
             ? popupSource._voTrailKey
             : "";
         var reopenEntityId = popupSource ? popupSource._voEntityId : "";
@@ -10936,8 +11026,11 @@
         var reopenMarker = null;
         entities.forEach(function (entity) {
             renderWardRadius(entity);
+            var markerIconKey = entity.group === "creatures"
+                ? creatureIconKey(entity)
+                : entity.group;
             var markerMarkup = iconMarkup(
-                entity.group,
+                markerIconKey,
                 ENTITY_GROUPS[entity.group].glyph
             );
             var icon = L.divIcon({
@@ -10964,7 +11057,7 @@
             tooltipContent.textContent = markerTitle;
             bindMarkerTooltip(marker, tooltipContent, {
                 fallbackGlyph: ENTITY_GROUPS[entity.group].glyph,
-                iconKey: entity.group,
+                iconKey: markerIconKey,
                 title: markerTitle
             }, {
                 className: "map-tooltip entity-tooltip",
@@ -10983,15 +11076,13 @@
                 entityId: entity.id,
                 kind: entity.group,
                 trailKey: entity.trailKey,
-                trailKind: entity.group === "ship" || entity.group === "cart"
-                    ? entity.group
-                    : ""
+                trailKind: movingEntityGroup(entity.group) ? entity.group : ""
             });
             marker.addTo(entityLayers.get(entity.group));
             if (entity.group === "portal" && entity.id) {
                 portalMarkerRecords.set(entity.id, record);
             }
-            if ((entity.group === "ship" || entity.group === "cart") && entity.trailKey) {
+            if (movingEntityGroup(entity.group) && entity.trailKey) {
                 entityMarkerRecords.set(entity.trailKey, record);
                 if (start) {
                     tweenEntityMarker(record, target, tweenDuration || entityTweenDurationMs);
@@ -11023,7 +11114,7 @@
 
     function updateEntityMarkerRecords(entities) {
         entities.forEach(function (entity) {
-            if ((entity.group === "ship" || entity.group === "cart") &&
+            if (movingEntityGroup(entity.group) &&
                 entityMarkerRecords.has(entity.trailKey)) {
                 entityMarkerRecords.get(entity.trailKey).entity = entity;
             }
@@ -11051,6 +11142,18 @@
         );
     }
 
+    function entityRequestPath() {
+        var groups = ENTITY_GROUP_ORDER.filter(function (group) {
+            return layerSettings[group] === true;
+        });
+        if (layerSettings.portalNetwork && groups.indexOf("portal") === -1) {
+            groups.push("portal");
+        }
+        return groups.length > 0
+            ? "/api/entities?groups=" + encodeURIComponent(groups.join(","))
+            : "/api/entities";
+    }
+
     async function pollEntities() {
         if (!map || !hasLiveAccess() || document.hidden || pollCircuitOpen ||
             entityRequestPending ||
@@ -11060,7 +11163,7 @@
 
         entityRequestPending = true;
         try {
-            var response = await fetch(authorizedUrl("/api/entities"), {
+            var response = await fetch(authorizedUrl(entityRequestPath()), {
                 cache: "no-store",
                 credentials: "same-origin"
             });
