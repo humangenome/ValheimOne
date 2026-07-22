@@ -9,6 +9,10 @@ All notable changes to ValheimOne will be documented in this file. This project 
 - LiveMap now keeps a slim parchment-themed metrics strip above the map and console: every view sees server status, day, and uptime, while console-authorized admins also see frame-time and abbreviated ZDO metrics on a 30-second map cadence without duplicate stats requests.
 - Dedicated-server operators can schedule a graceful shutdown with `vo shutdown <seconds> [message]`, cancel it with `vo shutdown cancel`, or use the admin shutdown API; connected players receive shout countdowns, the pending deadline is exposed to the dashboard, and expiry forces a synchronous world save before Valheim's clean application-exit path runs.
 
+### Changed
+
+- LiveMap player, ship, and cart markers now move smoothly at their live-feed cadence through one shared animation loop; portal hops and respawns snap without drawing a trail across the world, while follow and Cinema Mode stay attached to the moving marker.
+
 ## [0.10.3] - 2026-07-21
 
 ### Fixed

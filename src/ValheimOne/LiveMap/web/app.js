@@ -11,7 +11,9 @@
     var CONSOLE_LOG_LIMIT = 1000;
     var SAGA_EVENT_LIMIT = 100;
     var COMMAND_HISTORY_LIMIT = 50;
-    var MOVE_DURATION_MS = 400;
+    var MARKER_TELEPORT_DISTANCE_M = 40;
+    var MARKER_TWEEN_MIN_DURATION_MS = 250;
+    var MARKER_TWEEN_MAX_DURATION_MS = 30000;
     var TILE_SIZE = 256;
     var WORLD_UNITS = 256;
     var OVERVIEW_CLUSTER_ZOOM = 2;
@@ -379,6 +381,10 @@
     var failedFeeds = new Set();
     var consecutiveStatusFailures = 0;
     var markerRecords = new Map();
+    var markerTweens = new Map();
+    var markerTweenFrame = 0;
+    var playerTweenDurationMs = POLL_INTERVAL_MS;
+    var lastPlayerSnapshotUnixMs = 0;
     var latestPlayers = [];
     var latestEntities = [];
     var entityGroupMeta = new Map();
@@ -477,6 +483,10 @@
     var entityFocusPollTimer = 0;
     var entityFocusRequestPending = false;
     var entityRevision = null;
+    var entityTweenDurationMs = ENTITIES_POLL_INTERVAL_MS;
+    var lastEntityRevisionUnixMs = 0;
+    var entityFocusTweenDurationMs = POLL_INTERVAL_MS;
+    var lastEntityFocusUnixMs = 0;
     var entityMarkerRecords = new Map();
     var portalMarkerRecords = new Map();
     var portalPairs = [];
@@ -3026,6 +3036,164 @@
         return Math.sqrt((deltaX * deltaX) + (deltaZ * deltaZ));
     }
 
+    function measuredTweenDuration(previousUnixMs, nextUnixMs, fallbackMs) {
+        var elapsed = nextUnixMs - previousUnixMs;
+        if (!Number.isFinite(elapsed) || elapsed <= 0) {
+            return fallbackMs;
+        }
+        return Math.max(
+            MARKER_TWEEN_MIN_DURATION_MS,
+            Math.min(MARKER_TWEEN_MAX_DURATION_MS, elapsed)
+        );
+    }
+
+    function playerPayloadTweenDuration(payload) {
+        var snapshotUnixMs = Number(payload && payload.unixMs);
+        if (!Number.isFinite(snapshotUnixMs) || snapshotUnixMs <= 0) {
+            return playerTweenDurationMs;
+        }
+        if (lastPlayerSnapshotUnixMs > 0 && snapshotUnixMs > lastPlayerSnapshotUnixMs) {
+            playerTweenDurationMs = measuredTweenDuration(
+                lastPlayerSnapshotUnixMs,
+                snapshotUnixMs,
+                POLL_INTERVAL_MS
+            );
+        }
+        lastPlayerSnapshotUnixMs = Math.max(lastPlayerSnapshotUnixMs, snapshotUnixMs);
+        return playerTweenDurationMs;
+    }
+
+    function entityPayloadTweenDuration(payload, nextRevision) {
+        var snapshotUnixMs = Number(payload && payload.time);
+        if (nextRevision === entityRevision ||
+            !Number.isFinite(snapshotUnixMs) || snapshotUnixMs <= 0) {
+            return entityTweenDurationMs;
+        }
+        if (lastEntityRevisionUnixMs > 0 && snapshotUnixMs > lastEntityRevisionUnixMs) {
+            entityTweenDurationMs = measuredTweenDuration(
+                lastEntityRevisionUnixMs,
+                snapshotUnixMs,
+                ENTITIES_POLL_INTERVAL_MS
+            );
+        }
+        lastEntityRevisionUnixMs = Math.max(lastEntityRevisionUnixMs, snapshotUnixMs);
+        return entityTweenDurationMs;
+    }
+
+    function entityFocusPayloadTweenDuration(payload) {
+        var snapshotUnixMs = Number(payload && payload.focus && payload.focus.unixMs);
+        if (!Number.isFinite(snapshotUnixMs) || snapshotUnixMs <= 0) {
+            return entityFocusTweenDurationMs;
+        }
+        if (lastEntityFocusUnixMs > 0 && snapshotUnixMs > lastEntityFocusUnixMs) {
+            entityFocusTweenDurationMs = measuredTweenDuration(
+                lastEntityFocusUnixMs,
+                snapshotUnixMs,
+                POLL_INTERVAL_MS
+            );
+        }
+        lastEntityFocusUnixMs = Math.max(lastEntityFocusUnixMs, snapshotUnixMs);
+        return entityFocusTweenDurationMs;
+    }
+
+    function stopMarkerTweenFrameWhenIdle() {
+        if (markerTweens.size !== 0 || !markerTweenFrame) {
+            return;
+        }
+        window.cancelAnimationFrame(markerTweenFrame);
+        markerTweenFrame = 0;
+    }
+
+    function cancelMarkerTween(key) {
+        markerTweens.delete(key);
+        stopMarkerTweenFrameWhenIdle();
+    }
+
+    function scheduleMarkerTweenFrame() {
+        if (markerTweenFrame || markerTweens.size === 0 || document.hidden) {
+            return;
+        }
+        markerTweenFrame = window.requestAnimationFrame(markerTweenTick);
+    }
+
+    function markerTweenTick(now) {
+        markerTweenFrame = 0;
+        if (document.hidden) {
+            return;
+        }
+
+        markerTweens.forEach(function (tween, key) {
+            var amount = Math.min(1, Math.max(0, (now - tween.startedAt) / tween.duration));
+            var current = L.latLng(
+                tween.from.lat + ((tween.to.lat - tween.from.lat) * amount),
+                tween.from.lng + ((tween.to.lng - tween.from.lng) * amount)
+            );
+            tween.marker.setLatLng(current);
+            tween.onMove(current);
+            if (amount >= 1) {
+                markerTweens.delete(key);
+            }
+        });
+        scheduleMarkerTweenFrame();
+    }
+
+    function tweenMarker(key, marker, target, duration, options) {
+        var tweenDuration = Number.isFinite(duration) ? duration : POLL_INTERVAL_MS;
+        var existing = markerTweens.get(key);
+        if (existing && existing.to.lat === target.lat && existing.to.lng === target.lng) {
+            return;
+        }
+        var current = marker.getLatLng();
+        var currentWorld = latLngToWorld(current);
+        var targetWorld = latLngToWorld(target);
+        var distance = currentWorld && targetWorld
+            ? worldDistance(currentWorld.x, currentWorld.z, targetWorld.x, targetWorld.z)
+            : 0;
+        if (distance > MARKER_TELEPORT_DISTANCE_M) {
+            cancelMarkerTween(key);
+            marker.setLatLng(target);
+            resetTrailBuffer(
+                options.trailKey,
+                options.trailKind,
+                targetWorld.x,
+                targetWorld.z,
+                Date.now()
+            );
+            options.onMove(target);
+            return;
+        }
+        if (distance <= 0.01 || document.hidden) {
+            cancelMarkerTween(key);
+            marker.setLatLng(target);
+            options.onMove(target);
+            return;
+        }
+
+        markerTweens.set(key, {
+            duration: Math.max(
+                MARKER_TWEEN_MIN_DURATION_MS,
+                Math.min(MARKER_TWEEN_MAX_DURATION_MS, tweenDuration)
+            ),
+            from: L.latLng(current.lat, current.lng),
+            marker: marker,
+            onMove: options.onMove,
+            startedAt: performance.now(),
+            to: L.latLng(target.lat, target.lng)
+        });
+        scheduleMarkerTweenFrame();
+    }
+
+    function handleMarkerTweenVisibility() {
+        if (document.hidden) {
+            if (markerTweenFrame) {
+                window.cancelAnimationFrame(markerTweenFrame);
+                markerTweenFrame = 0;
+            }
+            return;
+        }
+        scheduleMarkerTweenFrame();
+    }
+
     function calculateDerivedMotion(samples) {
         if (!samples || samples.length < 2) {
             return null;
@@ -3064,6 +3232,7 @@
         var buffer = trailBuffers.get(key);
         if (!buffer) {
             buffer = {
+                historyFloor: 0,
                 kind: kind,
                 lastMovedAt: 0,
                 lastSeen: timestamp,
@@ -3078,10 +3247,25 @@
         return buffer;
     }
 
+    function resetTrailBuffer(key, kind, x, z, timestamp) {
+        if (!key) {
+            return;
+        }
+        var buffer = ensureTrailBuffer(key, kind, timestamp);
+        buffer.historyFloor = Math.max(buffer.historyFloor || 0, timestamp);
+        buffer.lastMovedAt = 0;
+        buffer.motion = null;
+        buffer.samples = [{ t: timestamp, x: x, z: z }];
+    }
+
     function appendTrailSample(key, kind, x, z, timestamp) {
         var buffer = ensureTrailBuffer(key, kind, timestamp);
         var last = buffer.samples.length > 0 ? buffer.samples[buffer.samples.length - 1] : null;
         var distance = last ? worldDistance(last.x, last.z, x, z) : 0;
+        if (last && distance > MARKER_TELEPORT_DISTANCE_M) {
+            resetTrailBuffer(key, kind, x, z, timestamp);
+            return buffer;
+        }
         if (!last || distance > 0.5 || timestamp - last.t > 5000) {
             buffer.samples.push({ t: timestamp, x: x, z: z });
             if (last && distance > 0.5) {
@@ -3118,6 +3302,7 @@
             var oldestBufferedTimestamp = buffer.samples.length > 0
                 ? buffer.samples[0].t
                 : Number.POSITIVE_INFINITY;
+            var historyFloor = buffer.historyFloor || 0;
             var seenTimestamps = new Set();
             var prepend = points.filter(function (point) {
                 var pointTimestamp = Number(point && point.t);
@@ -3125,6 +3310,7 @@
                     !Number.isFinite(Number(point.x)) ||
                     !Number.isFinite(Number(point.z)) ||
                     pointTimestamp >= oldestBufferedTimestamp ||
+                    pointTimestamp < historyFloor ||
                     timestamp - pointTimestamp > TRAIL_MAX_AGE_MS ||
                     seenTimestamps.has(pointTimestamp)) {
                     return false;
@@ -3139,6 +3325,21 @@
 
             if (prepend.length > 0) {
                 buffer.samples = prepend.concat(buffer.samples);
+                for (var sampleIndex = buffer.samples.length - 1; sampleIndex > 0; sampleIndex--) {
+                    if (worldDistance(
+                        buffer.samples[sampleIndex - 1].x,
+                        buffer.samples[sampleIndex - 1].z,
+                        buffer.samples[sampleIndex].x,
+                        buffer.samples[sampleIndex].z
+                    ) > MARKER_TELEPORT_DISTANCE_M) {
+                        buffer.historyFloor = Math.max(
+                            buffer.historyFloor || 0,
+                            buffer.samples[sampleIndex].t
+                        );
+                        buffer.samples.splice(0, sampleIndex);
+                        break;
+                    }
+                }
                 if (buffer.samples.length > TRAIL_MAX_POINTS) {
                     buffer.samples.splice(0, buffer.samples.length - TRAIL_MAX_POINTS);
                 }
@@ -3219,7 +3420,7 @@
         shipHeadingLines.clear();
     }
 
-    function updateShipHeadingLine(entity) {
+    function updateShipHeadingLine(entity, originLatLng) {
         if (!shipHeadingLayer || !entity || entity.group !== "ship" ||
             !entity.trailKey) {
             return;
@@ -3235,11 +3436,14 @@
         }
 
         var headingRadians = motion.headingDeg * Math.PI / 180;
+        var originWorld = originLatLng ? latLngToWorld(originLatLng) : null;
+        var originX = originWorld ? originWorld.x : entity.x;
+        var originZ = originWorld ? originWorld.z : entity.z;
         var points = [
-            worldToLatLng(entity.x, entity.z),
+            originLatLng || worldToLatLng(originX, originZ),
             worldToLatLng(
-                entity.x + Math.sin(headingRadians) * SHIP_HEADING_LENGTH_M,
-                entity.z + Math.cos(headingRadians) * SHIP_HEADING_LENGTH_M
+                originX + Math.sin(headingRadians) * SHIP_HEADING_LENGTH_M,
+                originZ + Math.cos(headingRadians) * SHIP_HEADING_LENGTH_M
             )
         ];
         var line = shipHeadingLines.get(entity.trailKey);
@@ -3271,7 +3475,8 @@
                 return;
             }
             seenKeys.add(entity.trailKey);
-            updateShipHeadingLine(entity);
+            var record = entityMarkerRecords.get(entity.trailKey);
+            updateShipHeadingLine(entity, record ? record.marker.getLatLng() : null);
         });
         shipHeadingLines.forEach(function (line, key) {
             if (!seenKeys.has(key)) {
@@ -7394,7 +7599,7 @@
             title: player.displayName
         }).addTo(playerLayer);
         var record = {
-            animationFrame: 0,
+            animationKey: "player-marker:" + player.key,
             marker: marker,
             player: player
         };
@@ -7427,7 +7632,7 @@
         return record;
     }
 
-    function updatePlayerMarkers(players) {
+    function updatePlayerMarkers(players, tweenDuration) {
         if (!map || !mapMetrics || !playerLayer) {
             return;
         }
@@ -7443,7 +7648,7 @@
                 markerRecords.set(player.key, record);
             } else {
                 record.player = player;
-                animateMarker(record, target);
+                tweenPlayerMarker(record, target, tweenDuration || playerTweenDurationMs);
             }
             record.marker.setTooltipContent(buildPlayerTooltip(player));
             updatePlayerMarkerMotion(record);
@@ -7454,7 +7659,7 @@
                 return;
             }
 
-            cancelAnimationFrame(record.animationFrame);
+            cancelMarkerTween(record.animationKey);
             playerLayer.removeLayer(record.marker);
             markerRecords.delete(key);
             if (isFollowing("player", key)) {
@@ -7506,39 +7711,22 @@
         });
     }
 
-    function animateMarker(record, target) {
-        cancelAnimationFrame(record.animationFrame);
-        if (document.hidden) {
-            record.marker.setLatLng(target);
-            updateChatBubblesForPlayer(record.player.key, target);
-            record.animationFrame = 0;
-            return;
+    function movePlayerMarker(record, latLng) {
+        updateChatBubblesForPlayer(record.player.key, latLng);
+        if (isFollowing("player", record.player.key) &&
+            (!cinemaState || !cinemaState.raidJumpActive)) {
+            map.panTo(latLng, { animate: false });
         }
-        var start = record.marker.getLatLng();
-        var startedAt = performance.now();
+    }
 
-        function step(now) {
-            var amount = Math.min(1, (now - startedAt) / MOVE_DURATION_MS);
-            var eased = 1 - Math.pow(1 - amount, 3);
-            var current = L.latLng(
-                start.lat + ((target.lat - start.lat) * eased),
-                start.lng + ((target.lng - start.lng) * eased)
-            );
-            record.marker.setLatLng(current);
-            updateChatBubblesForPlayer(record.player.key, current);
-            if (isFollowing("player", record.player.key) &&
-                (!cinemaState || !cinemaState.raidJumpActive)) {
-                map.panTo(current, { animate: false });
-            }
-
-            if (amount < 1) {
-                record.animationFrame = requestAnimationFrame(step);
-            } else {
-                record.animationFrame = 0;
-            }
-        }
-
-        record.animationFrame = requestAnimationFrame(step);
+    function tweenPlayerMarker(record, target, duration) {
+        tweenMarker(record.animationKey, record.marker, target, duration, {
+            onMove: function (latLng) {
+                movePlayerMarker(record, latLng);
+            },
+            trailKey: record.player.trailKey,
+            trailKind: "player"
+        });
     }
 
     function followPlayer(key, options) {
@@ -7594,6 +7782,8 @@
             kind: kind,
             trailKey: record.entity.trailKey
         };
+        entityFocusTweenDurationMs = POLL_INTERVAL_MS;
+        lastEntityFocusUnixMs = 0;
         requestTrailBackfill(kind, record.entity.trailKey, 1800);
         updateFollowStyles();
         updateFollowPill();
@@ -10106,6 +10296,9 @@
     }
 
     function clearEntityLayers(preserveState) {
+        entityMarkerRecords.forEach(function (record) {
+            cancelMarkerTween(record.animationKey);
+        });
         entityLayers.forEach(function (layer) {
             layer.clearLayers();
         });
@@ -10340,13 +10533,36 @@
         }).addTo(wardRadiusLayer);
     }
 
-    function renderEntityPayload(entities) {
+    function moveEntityMarker(record, latLng) {
+        if (record.entity.group === "ship") {
+            updateShipHeadingLine(record.entity, latLng);
+        }
+        if (isFollowing(record.entity.group, record.entity.trailKey)) {
+            map.panTo(latLng, { animate: false });
+        }
+    }
+
+    function tweenEntityMarker(record, target, duration) {
+        tweenMarker(record.animationKey, record.marker, target, duration, {
+            onMove: function (latLng) {
+                moveEntityMarker(record, latLng);
+            },
+            trailKey: record.entity.trailKey,
+            trailKind: record.entity.group
+        });
+    }
+
+    function renderEntityPayload(entities, tweenDuration) {
         var popupSource = map && map._popup ? map._popup._source : null;
         var reopenEntityKey = popupSource &&
             (popupSource._voPopupKind === "ship" || popupSource._voPopupKind === "cart")
             ? popupSource._voTrailKey
             : "";
         var reopenEntityId = popupSource ? popupSource._voEntityId : "";
+        var movingStarts = new Map();
+        entityMarkerRecords.forEach(function (record, key) {
+            movingStarts.set(key, record.marker.getLatLng());
+        });
         clearEntityLayers(true);
         var reopenMarker = null;
         entities.forEach(function (entity) {
@@ -10369,7 +10585,9 @@
                 icon.options.className += " is-inactive";
             }
             var markerTitle = entityMarkerTitle(entity);
-            var marker = L.marker(worldToLatLng(entity.x, entity.z), {
+            var target = worldToLatLng(entity.x, entity.z);
+            var start = entity.trailKey ? movingStarts.get(entity.trailKey) : null;
+            var marker = L.marker(start || target, {
                 icon: icon,
                 title: markerTitle
             });
@@ -10385,7 +10603,11 @@
                 offset: [0, -11],
                 opacity: 1
             });
-            var record = { entity: entity, marker: marker };
+            var record = {
+                animationKey: "entity-marker:" + entity.trailKey,
+                entity: entity,
+                marker: marker
+            };
             bindMapPopup(marker, function () {
                 return buildEntityPopup(record.entity);
             }, {
@@ -10402,6 +10624,9 @@
             }
             if ((entity.group === "ship" || entity.group === "cart") && entity.trailKey) {
                 entityMarkerRecords.set(entity.trailKey, record);
+                if (start) {
+                    tweenEntityMarker(record, target, tweenDuration || entityTweenDurationMs);
+                }
                 if (entity.trailKey === reopenEntityKey) {
                     reopenMarker = marker;
                 }
@@ -10489,16 +10714,17 @@
             feedLastUpdated.entities = Date.now();
             setFeedState("entities", true);
             var entities = normalizeEntityPayload(payload);
+            var nextRevision = payload && payload.revision != null
+                ? String(payload.revision)
+                : "";
+            var tweenDuration = entityPayloadTweenDuration(payload, nextRevision);
             updateEntityGroupMetadata(payload);
             recordEntityTrails(entities);
             latestEntities = entities;
             derivePortalPairs(latestEntities);
             updateLayerCounts();
-            var nextRevision = payload && payload.revision != null
-                ? String(payload.revision)
-                : "";
             if (nextRevision !== entityRevision) {
-                renderEntityPayload(entities);
+                renderEntityPayload(entities, tweenDuration);
                 entityRevision = nextRevision;
             } else {
                 updateEntityMarkerRecords(entities);
@@ -10567,7 +10793,7 @@
             entity.trailKey = targetKey;
             record.entity = entity;
             var target = worldToLatLng(entity.x, entity.z);
-            record.marker.setLatLng(target);
+            var tweenDuration = entityFocusPayloadTweenDuration(payload);
             var timestamp = Number(payload.focus.unixMs);
             appendTrailSample(
                 targetKey,
@@ -10576,7 +10802,7 @@
                 entity.z,
                 Number.isFinite(timestamp) ? timestamp : Date.now()
             );
-            updateShipHeadingLine(entity);
+            tweenEntityMarker(record, target, tweenDuration);
             for (var index = 0; index < latestEntities.length; index++) {
                 if (latestEntities[index].id === entity.id) {
                     latestEntities[index] = entity;
@@ -10585,7 +10811,6 @@
             }
             feedLastUpdated.entities = Date.now();
             setFeedState("entities", true);
-            map.panTo(target, { animate: false });
             renderTrails();
             refreshOpenPopupContent();
         } catch (error) {
@@ -11716,6 +11941,7 @@
         feedLastUpdated.players = Date.now();
         setFeedState("players", true);
         firstPlayersPayloadReceived = true;
+        var tweenDuration = playerPayloadTweenDuration(payload);
         var hadPlayers = latestPlayers.length > 0;
         var previousPlayerNames = latestPlayers.map(function (player) {
             return player.name || "";
@@ -11730,7 +11956,7 @@
         }).sort().join("\n");
         renderPlayerList(latestPlayers);
         renderConsolePlayers();
-        updatePlayerMarkers(latestPlayers);
+        updatePlayerMarkers(latestPlayers, tweenDuration);
         if (hadPlayers !== (latestPlayers.length > 0)) {
             updateEntityPolling(true);
         }
@@ -11910,6 +12136,7 @@
     startPolling(pollPlayers, POLL_INTERVAL_MS);
     startPolling(pollSagaActivity, ACTIVITY_POLL_INTERVAL_MS);
     connectEventStream();
+    document.addEventListener("visibilitychange", handleMarkerTweenVisibility);
     window.addEventListener("beforeunload", function () {
         if (cinemaState) {
             teardownCinemaState(cinemaState);
@@ -11926,6 +12153,10 @@
         window.clearInterval(layersStalenessTimer);
         window.clearInterval(savedBadgeTimer);
         window.clearTimeout(dayToastTimer);
+        document.removeEventListener("visibilitychange", handleMarkerTweenVisibility);
+        markerTweens.clear();
+        window.cancelAnimationFrame(markerTweenFrame);
+        markerTweenFrame = 0;
         window.cancelAnimationFrame(minimapFrame);
         activePingMarkers.forEach(function (record) {
             window.clearTimeout(record.timer);
