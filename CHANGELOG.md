@@ -2,6 +2,12 @@
 
 All notable changes to ValheimOne will be documented in this file. This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and intends to use [Semantic Versioning](https://semver.org/spec/v2.0.0.html) after its first release.
 
+## [0.10.3] - 2026-07-21
+
+### Fixed
+
+- Resource-node surveys introduced in 0.10.2 no longer fail immediately and report empty layers when scan-progress reporting encounters an inaccessible game internal; progress now uses the mod's safe reflection path and falls back to an indeterminate state instead of aborting the scan.
+
 ## [0.10.2] - 2026-07-21
 
 ### Security
