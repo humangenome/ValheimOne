@@ -392,7 +392,7 @@ internal sealed class LiveMapHttpServer
             }
             else if (isGet && path == "/api/pins")
             {
-                ServePins(response);
+                ServePins(response, viewLevel);
             }
             else if (isGet && path == "/api/webpins")
             {
@@ -2419,8 +2419,14 @@ internal sealed class LiveMapHttpServer
         WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
 
-    private void ServePins(HttpListenerResponse response)
+    private void ServePins(HttpListenerResponse response, ViewLevel viewLevel)
     {
+        if (viewLevel == ViewLevel.Public && !_config.PublicPins)
+        {
+            WriteJson(response, HttpStatusCode.OK, "{\"pins\":[]}");
+            return;
+        }
+
         MapTablePin[] pins = _getMapTableSnapshot().Pins;
         var json = new StringBuilder(16 + (pins.Length * 128));
         json.Append("{\"pins\":[");
@@ -2438,13 +2444,28 @@ internal sealed class LiveMapHttpServer
             json.Append(",\"z\":").Append(JsonWriter.Number(pin.Z));
             json.Append(",\"type\":").Append(pin.Type.ToString(CultureInfo.InvariantCulture));
             json.Append(",\"icon\":").Append(JsonWriter.Quote(pin.Icon));
-            json.Append(",\"author\":").Append(JsonWriter.Quote(pin.Author));
+            if (viewLevel != ViewLevel.Public)
+            {
+                string author = viewLevel == ViewLevel.Shared && IsPlatformIdentifier(pin.Author)
+                    ? "a viking"
+                    : pin.Author;
+                json.Append(",\"author\":").Append(JsonWriter.Quote(author));
+            }
             json.Append(",\"checked\":").Append(pin.IsChecked ? "true" : "false");
             json.Append('}');
         }
 
         json.Append("]}");
         WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private static bool IsPlatformIdentifier(string author)
+    {
+        string candidate = author.TrimStart();
+        return candidate.StartsWith("Steam_", StringComparison.OrdinalIgnoreCase) ||
+               candidate.StartsWith("XBL_", StringComparison.OrdinalIgnoreCase) ||
+               candidate.StartsWith("PSN_", StringComparison.OrdinalIgnoreCase) ||
+               candidate.StartsWith("NSA_", StringComparison.OrdinalIgnoreCase);
     }
 
     private void ServeWebPins(HttpListenerResponse response, ViewLevel viewLevel)

@@ -5368,7 +5368,7 @@
                 layerKey: "pins",
                 latLng: pin.latLng || worldToLatLng(pin.x, pin.z),
                 name: pin.name,
-                searchText: pin.name + " " + pin.author,
+                searchText: pin.author ? pin.name + " " + pin.author : pin.name,
                 x: pin.x,
                 z: pin.z,
                 markerResolver: function () {
@@ -8863,11 +8863,12 @@
 
     function buildPinPopup(pin) {
         var rows = [];
+        var author = typeof pin.author === "string" ? pin.author.trim() : "";
         if (pin.checked) {
             rows.push({ label: "Status", value: "✓ charted-off" });
         }
-        if (pin.author) {
-            rows.push({ label: "Charted by", value: pin.author });
+        if (author) {
+            rows.push({ label: "Charted by", value: author });
         }
         rows.push(positionPopupRow(pin.x, pin.z));
         return popupShell({

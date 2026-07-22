@@ -69,6 +69,10 @@ public sealed class LiveMapModule : IFeatureModule
             "PublicView",
             true,
             "Serve a read-only public map view to tokenless requests.");
+        ConfigEntryBool publicPins = _feature.Bool(
+            "PublicPins",
+            false,
+            "Expose player-placed cartography pins on the public map without author names.");
         ConfigEntryBool sharedPinEditing = _feature.Bool(
             "SharedPinEditing",
             true,
@@ -139,6 +143,7 @@ public sealed class LiveMapModule : IFeatureModule
             accessToken,
             shareToken,
             publicView,
+            publicPins,
             sharedPinEditing,
             publicWebPins,
             mirrorChat,
