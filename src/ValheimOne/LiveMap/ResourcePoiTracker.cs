@@ -71,6 +71,7 @@ internal sealed class ResourcePoiTracker
     private long _lastRequestUnixMs;
     private int _prefabIndex;
     private int _scanIndex;
+    private long _scanStartedUnixMs;
     private bool _scanning;
     private bool _scanWarningLogged;
 
@@ -138,10 +139,11 @@ internal sealed class ResourcePoiTracker
 
         _prefabIndex = 0;
         _scanIndex = 0;
+        _scanStartedUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         _scanWarningLogged = false;
         _scanning = true;
         _nextRefresh = now + RefreshIntervalSeconds;
-        _snapshot = _snapshot.WithScanning(true);
+        _snapshot = _snapshot.WithScanState(true, 0, -1);
     }
 
     private void ContinueScan(float now)
@@ -166,6 +168,7 @@ internal sealed class ResourcePoiTracker
                 ref _scanIndex);
             if (!complete)
             {
+                PublishScanProgress(manager);
                 return;
             }
 
@@ -210,12 +213,43 @@ internal sealed class ResourcePoiTracker
         _prefabIndex++;
         if (_prefabIndex < Prefabs.Length)
         {
+            PublishScanProgress(manager);
             return;
         }
 
         long scanUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         _snapshot = BuildSnapshot(scanUnixMs);
         ResetScan();
+    }
+
+    private void PublishScanProgress(ZDOMan manager)
+    {
+        int sectorCount = manager.m_objectsBySector?.Length ?? 0;
+        if (!_scanning || sectorCount <= 0)
+        {
+            return;
+        }
+
+        long totalSectors = (long)Prefabs.Length * sectorCount;
+        long completedSectors = ((long)_prefabIndex * sectorCount) +
+                                Math.Min(sectorCount, Math.Max(0, _scanIndex));
+        int progress = (int)Math.Min(
+            99L,
+            completedSectors * 100L / totalSectors);
+        int etaSeconds = -1;
+        long elapsedMilliseconds =
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - _scanStartedUnixMs;
+        if (completedSectors > 0L && elapsedMilliseconds > 0L)
+        {
+            double remainingSeconds = elapsedMilliseconds / 1000d *
+                                      (totalSectors - completedSectors) /
+                                      completedSectors;
+            etaSeconds = (int)Math.Min(
+                int.MaxValue,
+                Math.Ceiling(Math.Max(0d, remainingSeconds) / 30d) * 30d);
+        }
+
+        _snapshot = _snapshot.WithScanState(true, progress, etaSeconds);
     }
 
     private ResourceHealthDefinition GetHealthDefinition(ResourcePrefabDefinition prefab)
@@ -451,6 +485,8 @@ internal sealed class ResourcePoiTracker
         return new ResourcePoiMapSnapshot(
             scanUnixMs,
             false,
+            100,
+            0,
             groups.ToArray());
     }
 
@@ -504,6 +540,7 @@ internal sealed class ResourcePoiTracker
 
         _prefabIndex = 0;
         _scanIndex = 0;
+        _scanStartedUnixMs = 0L;
         _scanning = false;
     }
 
@@ -603,16 +640,24 @@ internal sealed class ResourcePoiMapSnapshot
     public ResourcePoiMapSnapshot(
         long lastScanUnixMs,
         bool scanning,
+        int scanProgress,
+        int scanEtaSeconds,
         ResourcePoiGroupSnapshot[] groups)
     {
         LastScanUnixMs = lastScanUnixMs;
         Scanning = scanning;
+        ScanProgress = scanProgress;
+        ScanEtaSeconds = scanEtaSeconds;
         Groups = groups;
     }
 
     public long LastScanUnixMs { get; }
 
     public bool Scanning { get; }
+
+    public int ScanProgress { get; }
+
+    public int ScanEtaSeconds { get; }
 
     public ResourcePoiGroupSnapshot[] Groups { get; }
 
@@ -635,7 +680,29 @@ internal sealed class ResourcePoiMapSnapshot
     {
         return Scanning == scanning
             ? this
-            : new ResourcePoiMapSnapshot(LastScanUnixMs, scanning, Groups);
+            : new ResourcePoiMapSnapshot(
+                LastScanUnixMs,
+                scanning,
+                ScanProgress,
+                ScanEtaSeconds,
+                Groups);
+    }
+
+    public ResourcePoiMapSnapshot WithScanState(
+        bool scanning,
+        int scanProgress,
+        int scanEtaSeconds)
+    {
+        return Scanning == scanning &&
+               ScanProgress == scanProgress &&
+               ScanEtaSeconds == scanEtaSeconds
+            ? this
+            : new ResourcePoiMapSnapshot(
+                LastScanUnixMs,
+                scanning,
+                scanProgress,
+                scanEtaSeconds,
+                Groups);
     }
 
     private static ResourcePoiMapSnapshot CreateEmpty()
@@ -655,7 +722,7 @@ internal sealed class ResourcePoiMapSnapshot
             }
         }
 
-        return new ResourcePoiMapSnapshot(0L, false, groups.ToArray());
+        return new ResourcePoiMapSnapshot(0L, false, 0, -1, groups.ToArray());
     }
 }
 

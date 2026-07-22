@@ -2384,6 +2384,17 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"scanUnixMs\":").Append(
             snapshot.LastScanUnixMs.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"scanning\":").Append(scanning ? "true" : "false");
+        if (scanning)
+        {
+            int scanProgress = snapshot.Scanning ? snapshot.ScanProgress : 0;
+            json.Append(",\"scanProgress\":").Append(
+                scanProgress.ToString(CultureInfo.InvariantCulture));
+            if (snapshot.Scanning && snapshot.ScanEtaSeconds >= 0)
+            {
+                json.Append(",\"scanEtaSeconds\":").Append(
+                    snapshot.ScanEtaSeconds.ToString(CultureInfo.InvariantCulture));
+            }
+        }
         json.Append(",\"pois\":[");
         for (int index = 0; index < pois.Length; index++)
         {

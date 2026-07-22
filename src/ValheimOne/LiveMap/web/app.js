@@ -467,6 +467,7 @@
     var poiRecords = new Map();
     var poiGroupMeta = new Map();
     var lazyPoiStates = new Map();
+    var resourceSurveyToastGroups = new Set();
     var availablePoiGroups = new Set();
     var entityLayers = new Map();
     var entityAvailability = "unknown";
@@ -6480,6 +6481,15 @@
         return "";
     }
 
+    function resourceSurveyingText(state) {
+        var etaSeconds = state ? Number(state.scanEtaSeconds) : NaN;
+        if (!Number.isFinite(etaSeconds) || etaSeconds < 0) {
+            return "Surveying…";
+        }
+
+        return "Surveying… ~" + Math.max(1, Math.ceil(etaSeconds / 60)) + "m";
+    }
+
     function formatTruncatedGroupCount(metadata, count) {
         if (!metadata || !metadata.truncated) {
             return String(count);
@@ -6495,12 +6505,18 @@
         layersRows.querySelectorAll("[data-layer-count]").forEach(function (badge) {
             var key = badge.dataset.layerCount;
             var lazyState = lazyPoiStates.get(key);
+            var metadata = poiGroupMeta.get(key);
+            var resultCount = metadata
+                ? metadata.count
+                : (poiRecords.get(key) || []).length;
             var surveying = isResourcePoiGroup(key) && layerSettings[key] &&
-                lazyState && (lazyState.requestPending || lazyState.scanning);
+                Number(resultCount) === 0 && lazyState &&
+                (lazyState.requestPending || lazyState.scanning);
             var loading = !surveying && layerSettings[key] && lazyState &&
-                lazyState.requestPending;
+                lazyState.requestPending &&
+                (!isResourcePoiGroup(key) || Number(resultCount) === 0);
             badge.textContent = surveying
-                ? "Surveying…"
+                ? resourceSurveyingText(lazyState)
                 : loading ? "Loading…" : String(layerCountValue(key));
             badge.classList.toggle("is-surveying", Boolean(surveying || loading));
         });
@@ -9591,6 +9607,8 @@
                 lastFetchAt: 0,
                 loaded: false,
                 requestPending: false,
+                scanEtaSeconds: null,
+                scanProgress: null,
                 scanUnixMs: 0,
                 scanning: false,
                 timer: 0
@@ -9704,6 +9722,8 @@
             var metadata = poiGroupMeta.get(group);
             var count = Math.floor(Number(payload.count));
             var cap = Math.floor(Number(payload.cap));
+            var scanEtaSeconds = Math.floor(Number(payload.scanEtaSeconds));
+            var scanProgress = Math.floor(Number(payload.scanProgress));
             var scanUnixMs = Math.floor(Number(payload.scanUnixMs));
             if (!Number.isFinite(count) || count < 0) {
                 count = pois.reduce(function (total, poi) {
@@ -9716,6 +9736,13 @@
             if (!Number.isFinite(scanUnixMs) || scanUnixMs < 0) {
                 scanUnixMs = 0;
             }
+            if (!Number.isFinite(scanEtaSeconds) || scanEtaSeconds < 0) {
+                scanEtaSeconds = null;
+            }
+            if (!Number.isFinite(scanProgress) || scanProgress < 0 ||
+                scanProgress > 100) {
+                scanProgress = null;
+            }
             if (metadata) {
                 metadata.count = count;
                 metadata.cap = Number.isFinite(cap) && cap > 0 ? cap : count;
@@ -9726,9 +9753,19 @@
             }
             state.lastFetchAt = Date.now();
             state.loaded = resource ? scanUnixMs > 0 : true;
+            state.scanEtaSeconds = resource ? scanEtaSeconds : null;
+            state.scanProgress = resource ? scanProgress : null;
             state.scanUnixMs = resource ? scanUnixMs : 0;
             state.scanning = resource && payload && payload.scanning === true;
             if (resource) {
+                if (count === 0 && state.scanning && layerSettings[group] &&
+                    !resourceSurveyToastGroups.has(group)) {
+                    resourceSurveyToastGroups.add(group);
+                    showNoticeToast(
+                        "Surveying the world for " + POI_GROUPS[group].label +
+                        " — first results in a few minutes"
+                    );
+                }
                 nextDelay = state.scanning
                     ? RESOURCE_POI_POLL_INTERVAL_MS
                     : RESOURCE_POI_REFRESH_INTERVAL_MS;
