@@ -2,6 +2,21 @@
 
 All notable changes to ValheimOne will be documented in this file. This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and intends to use [Semantic Versioning](https://semver.org/spec/v2.0.0.html) after its first release.
 
+## [Unreleased]
+
+### Changed
+
+- LiveMap layers panel and legend raised to a genuinely readable scale — 13px row labels, proportional section headers, legible counts, taller rows, a slightly wider 300px panel — with brighter parchment contrast on formerly dim text and one consistent vertical-centering idiom for every header, chevron, count, and all/none control.
+- The long POI sections (Dungeons, Spawners, Ores & Deposits, Forage, Structures) are now collapsible and start collapsed with per-category state remembered in layer settings, so the bigger text keeps the panel to a single screen; Live, Places, and overlay rows stay open.
+- The Bosses jump menu now lists each Forsaken exactly once in progression order with its map icon and altar count; selecting a boss flies to the altar nearest the current view and selecting it again cycles through the rest.
+- Watch mode is now Cinema Mode across the header button, player popups, context menu, and tooltips (existing `cinema` permalinks unchanged); entering settles within about three seconds, and on an empty server the mode announces "No vikings ashore — touring the world until someone joins" and slow-tours spawn, traders, and boss altars until a player appears, then follows them as before.
+- The sidebar received a composition pass: every icon keeps its aspect ratio (the day/night glyph no longer stretches), wind and explored share one tidy stats row that never truncates, section headers/gaps/separators follow one rhythm matching the layers panel, the raid banner renders only while a raid is active, and the Saga panel is now titled Server Events.
+- Boss map icons replaced with dedicated silhouette art of the seven Forsaken, used consistently on map markers, the boss-progression chips, popups, hover cards, and the Bosses jump menu.
+
+### Fixed
+
+- Opening a `cinema` permalink on an idle server no longer stalls forever before entering Cinema Mode.
+
 ## [0.10.0] - 2026-07-21
 
 ### Added

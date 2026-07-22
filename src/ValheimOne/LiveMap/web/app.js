@@ -38,7 +38,9 @@
     var CINEMA_AUTO_CYCLE_MS = 20000;
     var CINEMA_REFOLLOW_MS = 10 * 60 * 1000;
     var CINEMA_AMBIENT_STEP_MS = 18000;
-    var CINEMA_AMBIENT_DURATION_SEC = 16;
+    var CINEMA_AMBIENT_DURATION_SEC = 6;
+    var CINEMA_ENTRY_DURATION_SEC = 2.75;
+    var CINEMA_TOUR_BOSS_COUNT = 5;
     var LAYER_STORAGE_KEY = "vo-livemap-layers-v2";
     var LEGACY_LAYER_STORAGE_KEY = "vo-livemap-layers";
     var LEGACY_MINIMAP_STORAGE_KEY = "vo-livemap-minimap";
@@ -287,6 +289,11 @@
         return record.group;
     }
 
+    function bossIconKey(record) {
+        var iconKey = poiIconKey(record);
+        return iconKey.indexOf("boss_") === 0 ? iconKey : "";
+    }
+
     function layerIconKey(key) {
         if (key === "pins") {
             return "pin";
@@ -354,6 +361,13 @@
         densityDots: false,
         iconSize: "m",
         poiColors: {},
+        poiCollapsed: {
+            dungeons: true,
+            spawners: true,
+            ores: true,
+            forage: true,
+            structures: true
+        },
         poiOpacity: 100,
         legendCollapsed: false,
         mapStyle: "default"
@@ -481,6 +495,7 @@
     var dayToastTimer = 0;
     var noticeToastTimer = 0;
     var bossProgressionState = "";
+    var bossJumpServedIndices = new Map();
     var storageWriteWarningShown = false;
     var noticeToastElement = document.getElementById("notice-toast");
     var latestWind = null;
@@ -601,6 +616,7 @@
         dayToast: document.getElementById("day-toast"),
         dayNumber: document.getElementById("day-number"),
         exploredChip: document.getElementById("explored-chip"),
+        exploredLabel: document.getElementById("sidebar-explored-label"),
         joinCode: document.getElementById("join-code"),
         joinCodeCopy: document.getElementById("join-code-copy"),
         joinCodeLine: document.getElementById("join-code-line"),
@@ -615,6 +631,7 @@
         raidBadge: document.getElementById("raid-badge"),
         saveButton: document.getElementById("console-save"),
         savedChip: document.getElementById("saved-chip"),
+        savedLabel: document.getElementById("sidebar-saved-label"),
         saveStatus: document.getElementById("console-save-status"),
         sagaChevron: document.getElementById("saga-chevron"),
         sagaContent: document.getElementById("saga-content"),
@@ -624,6 +641,8 @@
         sagaToggle: document.getElementById("saga-toggle"),
         serverName: document.getElementById("server-name"),
         sidebarState: document.getElementById("sidebar-state"),
+        sidebarWindNeedle: document.getElementById("sidebar-wind-needle"),
+        sidebarWindLabel: document.getElementById("sidebar-wind-label"),
         skyIndicator: document.getElementById("sky-indicator"),
         statFrameAvg: document.getElementById("console-stat-frame-avg"),
         statFrameMax: document.getElementById("console-stat-frame-max"),
@@ -2316,7 +2335,10 @@
     function loadLayerSettings() {
         var settings = {};
         Object.keys(LAYER_DEFAULTS).forEach(function (key) {
-            settings[key] = key === "poiColors" ? {} : LAYER_DEFAULTS[key];
+            var defaultValue = LAYER_DEFAULTS[key];
+            settings[key] = defaultValue && typeof defaultValue === "object"
+                ? Object.assign({}, defaultValue)
+                : defaultValue;
         });
 
         try {
@@ -2350,6 +2372,15 @@
                         var colorKey = saved.poiColors[category.key];
                         if (poiPaletteChoice(colorKey)) {
                             settings.poiColors[category.key] = colorKey;
+                        }
+                    });
+                }
+                if (saved.poiCollapsed && typeof saved.poiCollapsed === "object" &&
+                    !Array.isArray(saved.poiCollapsed)) {
+                    POI_CATEGORIES.forEach(function (category) {
+                        if (typeof saved.poiCollapsed[category.key] === "boolean") {
+                            settings.poiCollapsed[category.key] =
+                                saved.poiCollapsed[category.key];
                         }
                     });
                 }
@@ -2542,7 +2573,11 @@
         shell.className = "vo-popup";
         header.className = "vo-popup-header";
         glyph.className = "vo-popup-glyph";
-        glyph.textContent = options.glyph || "•";
+        if (options.iconKey) {
+            glyph.innerHTML = iconMarkup(options.iconKey, options.glyph || "•");
+        } else {
+            glyph.textContent = options.glyph || "•";
+        }
         glyph.setAttribute("aria-hidden", "true");
         heading.className = "vo-popup-heading";
         kicker.className = "vo-popup-kicker";
@@ -3456,14 +3491,17 @@
     function renderSavedBadge() {
         if (!(lastSavedUnixMs > 0)) {
             elements.savedChip.hidden = true;
+            syncStatusChipsVisibility();
             return;
         }
 
         var ageMs = Math.max(0, Date.now() - lastSavedUnixMs);
-        elements.savedChip.textContent = "Saved " + formatSavedAge(ageMs);
+        var label = "Saved " + formatSavedAge(ageMs);
+        elements.savedLabel.textContent = label;
+        elements.savedChip.setAttribute("aria-label", label);
         elements.savedChip.classList.toggle("is-stale", ageMs > SAVED_STALE_MS);
         elements.savedChip.hidden = false;
-        elements.statusChips.hidden = false;
+        syncStatusChipsVisibility();
     }
 
     function updateLastSaved(value) {
@@ -3472,21 +3510,32 @@
         renderSavedBadge();
     }
 
+    function syncStatusChipsVisibility() {
+        elements.statusChips.hidden = elements.windChip.hidden &&
+            elements.exploredChip.hidden && elements.savedChip.hidden;
+    }
+
     function renderWindStatus() {
         if (!latestWind) {
+            elements.windChip.hidden = true;
+            syncStatusChipsVisibility();
             return;
         }
 
         var direction = compassLabel(latestWind.fromDeg);
         var intensityPct = Math.round(latestWind.intensity * 100);
-        elements.windChip.textContent = "⤢ " + direction + " " + intensityPct + "%";
+        var sidebarWindLabel = "Wind " + direction + " " + intensityPct + "%";
+        elements.sidebarWindLabel.textContent = sidebarWindLabel;
+        elements.windChip.setAttribute("aria-label", sidebarWindLabel);
         elements.windChip.hidden = false;
-        elements.statusChips.hidden = false;
 
         // The server reports where wind comes from; the needle points where it blows toward.
         var towardDeg = (latestWind.fromDeg + 180) % 360;
         var scale = 0.3 + (0.7 * latestWind.intensity);
         var windTitle = "Wind from " + direction + " · " + intensityPct + "%";
+        elements.sidebarWindNeedle.style.opacity = String(0.45 + (0.55 * latestWind.intensity));
+        elements.sidebarWindNeedle.style.transform = "rotate(" + towardDeg.toFixed(1) + "deg)";
+        syncStatusChipsVisibility();
         if (compassButton && compassWindNeedle) {
             compassWindNeedle.style.opacity = String(0.3 + (0.7 * latestWind.intensity));
             compassWindNeedle.style.transform = "rotate(" + towardDeg.toFixed(1) +
@@ -3509,14 +3558,16 @@
         var exploredPct = finiteNumberOrNull(status.exploredPct);
         if (exploredPct !== null) {
             exploredPct = Math.max(0, Math.min(100, exploredPct));
-            elements.exploredChip.textContent = "Explored " + exploredPct.toFixed(1) + "%";
+            var exploredLabel = "Explored " + exploredPct.toFixed(1) + "%";
+            elements.exploredLabel.textContent = exploredLabel;
+            elements.exploredChip.setAttribute("aria-label", exploredLabel);
             elements.exploredChip.hidden = false;
-            elements.statusChips.hidden = false;
         }
 
         var windDirDeg = finiteNumberOrNull(status.windDirDeg);
         var windIntensity = finiteNumberOrNull(status.windIntensity);
         if (windDirDeg === null || windIntensity === null) {
+            syncStatusChipsVisibility();
             return;
         }
 
@@ -3768,8 +3819,23 @@
         applyDensityPreferences();
         applyPoiPreferences();
         map.on("dragstart", function () {
-            if (!cinemaState) {
-                clearFollow();
+            if (cinemaState) {
+                cinemaPauseAmbientForUser();
+                return;
+            }
+            clearFollow();
+        });
+        var mapContainer = map.getContainer();
+        ["pointerdown", "touchstart", "wheel"].forEach(function (eventName) {
+            mapContainer.addEventListener(eventName, cinemaPauseAmbientForUser, {
+                passive: true
+            });
+        });
+        mapContainer.addEventListener("keydown", function (event) {
+            if (["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp", "+", "-"].indexOf(
+                event.key
+            ) !== -1) {
+                cinemaPauseAmbientForUser();
             }
         });
         map.on("zoomend", renderPoiLayers);
@@ -5344,6 +5410,7 @@
             (poiRecords.get(group) || []).forEach(function (record) {
                 items.push({
                     glyph: definition.glyph,
+                    iconKey: bossIconKey(record),
                     kind: definition.label,
                     layerKey: group,
                     latLng: record.latLng,
@@ -5444,7 +5511,11 @@
                 button.setAttribute("role", "option");
                 button.setAttribute("aria-selected", "false");
                 glyph.className = "map-search-result-glyph";
-                glyph.textContent = item.glyph;
+                if (item.iconKey) {
+                    glyph.innerHTML = iconMarkup(item.iconKey, item.glyph);
+                } else {
+                    glyph.textContent = item.glyph;
+                }
                 glyph.setAttribute("aria-hidden", "true");
                 copy.className = "map-search-result-copy";
                 name.textContent = item.name;
@@ -5742,7 +5813,8 @@
             layerKeys.split(",").forEach(function (key) {
                 if (key !== "legendCollapsed" && key !== "densityDots" &&
                     key !== "iconSize" && key !== "mapStyle" &&
-                    key !== "poiColors" && key !== "poiOpacity" &&
+                    key !== "poiColors" && key !== "poiCollapsed" &&
+                    key !== "poiOpacity" &&
                     typeof LAYER_DEFAULTS[key] === "boolean" &&
                     Object.prototype.hasOwnProperty.call(layerSettings, key)) {
                     layerSettings[key] = true;
@@ -5819,7 +5891,8 @@
         var enabledNonDefaultLayers = Object.keys(layerSettings).filter(function (key) {
             return key !== "legendCollapsed" && key !== "densityDots" &&
                 key !== "iconSize" && key !== "mapStyle" &&
-                key !== "poiColors" && key !== "poiOpacity" &&
+                key !== "poiColors" && key !== "poiCollapsed" &&
+                key !== "poiOpacity" &&
                 layerSettings[key] === true &&
                 LAYER_DEFAULTS[key] === false;
         });
@@ -5891,7 +5964,7 @@
 
                 toggle.type = "button";
                 title.textContent = "Layers";
-                chevron.textContent = "⌃";
+                chevron.textContent = "›";
                 chevron.setAttribute("aria-hidden", "true");
                 layersRows = L.DomUtil.create("div", "layers-rows", container);
 
@@ -5910,7 +5983,6 @@
                     container.classList.toggle("is-collapsed", isCollapsed);
                     layersRows.hidden = isCollapsed;
                     toggle.setAttribute("aria-expanded", String(!isCollapsed));
-                    chevron.textContent = isCollapsed ? "⌄" : "⌃";
                     window.clearInterval(layersStalenessTimer);
                     layersStalenessTimer = 0;
                     if (!isCollapsed) {
@@ -6159,16 +6231,27 @@
     function appendPoiCategory(parent, category) {
         var section = document.createElement("section");
         var header = document.createElement("header");
+        var toggle = document.createElement("button");
+        var chevron = document.createElement("span");
         var name = document.createElement("span");
         var actions = document.createElement("span");
         var count = document.createElement("span");
         var allButton = document.createElement("button");
         var noneButton = document.createElement("button");
+        var content = document.createElement("div");
         var body = document.createElement("div");
+        var isCollapsed = layerSettings.poiCollapsed[category.key] === true;
 
-        section.className = "poi-category";
+        section.className = "poi-category" + (isCollapsed ? " is-collapsed" : "");
         section.dataset.poiCategory = category.key;
         header.className = "poi-category-header";
+        toggle.type = "button";
+        toggle.className = "poi-category-toggle";
+        toggle.setAttribute("aria-controls", "poi-category-content-" + category.key);
+        toggle.setAttribute("aria-expanded", String(!isCollapsed));
+        chevron.className = "poi-category-chevron";
+        chevron.textContent = "›";
+        chevron.setAttribute("aria-hidden", "true");
         name.className = "poi-category-name";
         name.textContent = category.label;
         actions.className = "poi-category-actions";
@@ -6178,27 +6261,43 @@
         allButton.className = "poi-category-mini";
         allButton.textContent = "all";
         allButton.setAttribute("aria-label", "Show all " + category.label.toLowerCase());
-        allButton.addEventListener("click", function () {
+        allButton.addEventListener("click", function (event) {
+            event.stopPropagation();
             setSectionLayers(section, true);
         });
         noneButton.type = "button";
         noneButton.className = "poi-category-mini";
         noneButton.textContent = "none";
         noneButton.setAttribute("aria-label", "Hide all " + category.label.toLowerCase());
-        noneButton.addEventListener("click", function () {
+        noneButton.addEventListener("click", function (event) {
+            event.stopPropagation();
             setSectionLayers(section, false);
         });
+        content.id = "poi-category-content-" + category.key;
+        content.className = "poi-category-content";
+        content.hidden = isCollapsed;
         body.className = "poi-category-body";
 
+        toggle.appendChild(chevron);
+        toggle.appendChild(name);
         actions.appendChild(count);
         actions.appendChild(allButton);
         actions.appendChild(noneButton);
-        header.appendChild(name);
+        header.appendChild(toggle);
         header.appendChild(actions);
         section.appendChild(header);
-        appendPoiColorControls(section, category);
-        section.appendChild(body);
+        appendPoiColorControls(content, category);
+        content.appendChild(body);
+        section.appendChild(content);
         parent.appendChild(section);
+        toggle.addEventListener("click", function () {
+            var nextCollapsed = !section.classList.contains("is-collapsed");
+            section.classList.toggle("is-collapsed", nextCollapsed);
+            content.hidden = nextCollapsed;
+            toggle.setAttribute("aria-expanded", String(!nextCollapsed));
+            layerSettings.poiCollapsed[category.key] = nextCollapsed;
+            saveLayerSettings();
+        });
         return body;
     }
 
@@ -6651,6 +6750,85 @@
         });
     }
 
+    function groupBossJumpRecords(records) {
+        var groupsByKey = new Map();
+        var groups = [];
+
+        records.forEach(function (record, recordIndex) {
+            var iconKey = poiIconKey(record);
+            var progressionBoss = null;
+            var progressionIndex = BOSS_PROGRESSION.length;
+            BOSS_PROGRESSION.some(function (boss, bossIndex) {
+                if (boss.iconKey !== iconKey) {
+                    return false;
+                }
+                progressionBoss = boss;
+                progressionIndex = bossIndex;
+                return true;
+            });
+
+            var rawIdentity = typeof record.name === "string"
+                ? record.name.replace(/[^a-z0-9]/gi, "").toLowerCase()
+                : "";
+            var displayName = progressionBoss
+                ? progressionBoss.name
+                : (record.title || "Boss altar");
+            var identityKey = progressionBoss
+                ? progressionBoss.iconKey
+                : "boss-unknown-" + (rawIdentity || displayName.toLowerCase());
+            var group = groupsByKey.get(identityKey);
+            if (!group) {
+                group = {
+                    displayName: displayName,
+                    firstIndex: recordIndex,
+                    iconKey: progressionBoss ? progressionBoss.iconKey : iconKey,
+                    identityKey: identityKey,
+                    instances: [],
+                    progressionIndex: progressionIndex
+                };
+                groupsByKey.set(identityKey, group);
+                groups.push(group);
+            }
+            group.instances.push(record);
+        });
+
+        groups.sort(function (left, right) {
+            if (left.progressionIndex !== right.progressionIndex) {
+                return left.progressionIndex - right.progressionIndex;
+            }
+            return left.firstIndex - right.firstIndex;
+        });
+        return groups;
+    }
+
+    function nearestBossInstanceIndex(instances) {
+        var center = map ? latLngToWorld(map.getCenter()) : null;
+        if (!center || instances.length < 2) {
+            return 0;
+        }
+
+        var nearestIndex = 0;
+        var nearestDistance = Infinity;
+        instances.forEach(function (record, index) {
+            var distance = worldDistance(center.x, center.z, record.x, record.z);
+            if (distance < nearestDistance) {
+                nearestDistance = distance;
+                nearestIndex = index;
+            }
+        });
+        return nearestIndex;
+    }
+
+    function nextBossJumpRecord(group) {
+        var lastIndex = bossJumpServedIndices.get(group.identityKey);
+        var nextIndex = Number.isFinite(lastIndex) &&
+            lastIndex >= 0 && lastIndex < group.instances.length
+            ? (lastIndex + 1) % group.instances.length
+            : nearestBossInstanceIndex(group.instances);
+        bossJumpServedIndices.set(group.identityKey, nextIndex);
+        return group.instances[nextIndex];
+    }
+
     function renderJumpChips() {
         var spawn = (poiRecords.get("spawn") || [])[0];
         var trader = (poiRecords.get("trader") || [])[0];
@@ -6680,6 +6858,7 @@
         appendDirectChip("Spawn", spawn);
         appendDirectChip("Trader", trader);
         if (bosses.length > 0) {
+            var bossGroups = groupBossJumpRecords(bosses);
             var dropdown = document.createElement("div");
             var toggle = document.createElement("button");
             var menu = document.createElement("ul");
@@ -6703,16 +6882,34 @@
                 }
             }
 
-            bosses.forEach(function (record) {
+            bossGroups.forEach(function (bossGroup) {
                 var item = document.createElement("li");
                 var button = document.createElement("button");
+                var icon = document.createElement("span");
+                var label = document.createElement("span");
                 item.setAttribute("role", "none");
                 button.type = "button";
                 button.setAttribute("role", "menuitem");
-                button.textContent = record.title;
+                icon.className = "layer-jump-menu-icon";
+                icon.setAttribute("aria-hidden", "true");
+                icon.innerHTML = iconMarkup(
+                    bossGroup.iconKey,
+                    POI_GROUPS.boss.glyph
+                );
+                label.className = "layer-jump-menu-label";
+                label.textContent = bossGroup.displayName +
+                    (bossGroup.instances.length > 1
+                        ? " · " + bossGroup.instances.length + " altars"
+                        : "");
+                button.appendChild(icon);
+                button.appendChild(label);
+                if (bossGroup.instances.length > 1) {
+                    button.title = "click again for next altar";
+                }
                 button.addEventListener("click", function () {
                     setOpen(false, false);
-                    jumpToPoiRecord(record);
+                    toggle.focus();
+                    jumpToPoiRecord(nextBossJumpRecord(bossGroup));
                 });
                 item.appendChild(button);
                 menu.appendChild(item);
@@ -6766,8 +6963,10 @@
         container.className = "legend-block";
         toggle.type = "button";
         toggle.className = "legend-toggle";
+        title.className = "legend-title";
         title.textContent = "Legend";
         chevron.className = "legend-chevron";
+        chevron.textContent = "›";
         chevron.setAttribute("aria-hidden", "true");
         toggle.appendChild(title);
         toggle.appendChild(chevron);
@@ -6782,7 +6981,6 @@
             container.classList.toggle("is-collapsed", isCollapsed);
             legendContent.hidden = isCollapsed;
             toggle.setAttribute("aria-expanded", String(!isCollapsed));
-            chevron.textContent = isCollapsed ? "⌄" : "⌃";
         }
 
         toggle.addEventListener("click", function () {
@@ -7319,6 +7517,22 @@
         }
     }
 
+    function cinemaPauseAmbientForUser() {
+        if (!cinemaState || cinemaState.raidJumpActive ||
+            latestPlayers.length > 0 || document.hidden) {
+            return;
+        }
+        var state = cinemaState;
+        cinemaStopAmbient(state, true);
+        state.ambientTimer = window.setTimeout(function () {
+            if (cinemaState !== state) {
+                return;
+            }
+            state.ambientTimer = 0;
+            cinemaAmbientStep();
+        }, CINEMA_AMBIENT_STEP_MS);
+    }
+
     function cinemaStablePlayers() {
         return latestPlayers.slice().sort(function (left, right) {
             return left.trailKey.localeCompare(right.trailKey) ||
@@ -7374,6 +7588,48 @@
         renderCinemaHud();
     }
 
+    function cinemaLandmarkTour() {
+        var landmarks = [];
+        var spawn = (poiRecords.get("spawn") || [])[0];
+        if (spawn) {
+            landmarks.push(spawn);
+        }
+
+        var tradersByKey = new Map();
+        (poiRecords.get("trader") || []).forEach(function (record) {
+            var name = record.name.toLocaleLowerCase();
+            var key = name.indexOf("hildir") !== -1
+                ? "hildir"
+                : name.indexOf("bogwitch") !== -1
+                    ? "bogwitch"
+                    : name.indexOf("vendor") !== -1
+                        ? "vendor"
+                        : name;
+            if (!tradersByKey.has(key)) {
+                tradersByKey.set(key, record);
+            }
+        });
+        ["vendor", "hildir", "bogwitch"].forEach(function (key) {
+            var record = tradersByKey.get(key);
+            if (record) {
+                landmarks.push(record);
+                tradersByKey.delete(key);
+            }
+        });
+        Array.from(tradersByKey.keys()).sort().forEach(function (key) {
+            landmarks.push(tradersByKey.get(key));
+        });
+
+        groupBossJumpRecords(poiRecords.get("boss") || []).filter(function (group) {
+            return group.progressionIndex < BOSS_PROGRESSION.length;
+        }).slice(0, CINEMA_TOUR_BOSS_COUNT).forEach(function (group) {
+            if (group.instances.length > 0) {
+                landmarks.push(group.instances[0]);
+            }
+        });
+        return landmarks;
+    }
+
     function cinemaAmbientAnchors() {
         var anchors = [{ x: 0, z: 0 }];
         latestPins.forEach(function (pin) {
@@ -7403,8 +7659,36 @@
             return;
         }
 
-        var anchors = cinemaAmbientAnchors();
         var state = cinemaState;
+        var landmarks = cinemaLandmarkTour();
+        if (landmarks.length > 0) {
+            if (!state.ambientTourActive) {
+                state.ambientIndex = 0;
+                state.ambientTourActive = true;
+            }
+            var landmark = landmarks[state.ambientIndex % landmarks.length];
+            var landmarkDuration = state.ambientHasStarted
+                ? CINEMA_AMBIENT_DURATION_SEC
+                : CINEMA_ENTRY_DURATION_SEC;
+            state.ambientIndex++;
+            state.ambientHasStarted = true;
+            var landmarkZoom = Math.min(
+                map.getMaxZoom(),
+                Math.max(map.getMinZoom(), mapMetrics.baseZoom + 1.15)
+            );
+            map.flyTo(landmark.latLng, landmarkZoom, {
+                duration: landmarkDuration,
+                easeLinearity: 0.12
+            });
+            state.ambientTimer = window.setTimeout(
+                cinemaAmbientStep,
+                (landmarkDuration * 1000) + CINEMA_AMBIENT_STEP_MS
+            );
+            return;
+        }
+
+        state.ambientTourActive = false;
+        var anchors = cinemaAmbientAnchors();
         var anchor = anchors[state.ambientIndex % anchors.length];
         state.ambientIndex++;
         var worldExtent = mapMetrics.pixelSize * mapMetrics.textureSize / 2;
@@ -7421,8 +7705,12 @@
             map.getMaxZoom(),
             Math.max(map.getMinZoom(), mapMetrics.baseZoom + 0.35 + Math.random() * 0.35)
         );
+        var driftDuration = state.ambientHasStarted
+            ? 16
+            : CINEMA_ENTRY_DURATION_SEC;
+        state.ambientHasStarted = true;
         map.flyTo(worldToLatLng(x, z), zoom, {
-            duration: CINEMA_AMBIENT_DURATION_SEC,
+            duration: driftDuration,
             easeLinearity: 0.08
         });
         state.ambientTimer = window.setTimeout(
@@ -7681,22 +7969,27 @@
         var primary = "";
         var secondary = "";
         var showStayButton = false;
-        if (cinemaState.raidJumpActive && currentRaidEvent) {
+        var isIdle = latestPlayers.length === 0;
+        if (isIdle) {
+            primary = "No vikings ashore — touring the world until someone joins";
+            if (cinemaState.raidJumpActive && currentRaidEvent) {
+                secondary = "Raid · " + currentRaidEvent.name;
+                showStayButton = true;
+            } else if (cinemaState.locked) {
+                secondary = "Waiting for " + cinemaState.locked.name + " to return…";
+            }
+        } else if (cinemaState.raidJumpActive && currentRaidEvent) {
             primary = "Raid · " + currentRaidEvent.name;
             showStayButton = true;
         } else if (cinemaState.locked) {
             primary = cinemaState.locked.missingSince
                 ? "Waiting for " + cinemaState.locked.name + " to return…"
                 : "Locked on " + cinemaState.locked.name;
-            if (latestPlayers.length === 0) {
-                secondary = "No vikings ashore — " + elements.dayNumber.textContent;
-            }
-        } else if (latestPlayers.length === 0) {
-            primary = "No vikings ashore — " + elements.dayNumber.textContent;
         } else {
             primary = "Auto-cycling · click a player to lock";
         }
         elements.cinemaModeChip.textContent = primary;
+        elements.cinemaModeChip.classList.toggle("is-idle", isIdle);
         elements.cinemaModeChip.hidden = !primary;
         elements.cinemaSecondaryChip.textContent = secondary;
         elements.cinemaSecondaryChip.hidden = !secondary;
@@ -7763,8 +8056,10 @@
         var priorPendingFollow = pendingCinemaFromHash ? "" : pendingHashFollowName;
         var priorCenter = map.getCenter();
         cinemaState = {
+            ambientHasStarted: false,
             ambientIndex: 0,
             ambientTimer: 0,
+            ambientTourActive: false,
             currentAutoTrailKey: "",
             cycleTimer: 0,
             locked: null,
@@ -8409,7 +8704,7 @@
                 action: "watch",
                 kind: "player",
                 key: player.key,
-                label: "Watch"
+                label: "Cinema"
             });
         }
         actions.push({
@@ -8558,6 +8853,7 @@
         return popupShell({
             feed: "pois",
             glyph: POI_GROUPS[record.group].glyph,
+            iconKey: bossIconKey(record),
             kicker: poiPopupKicker(record.group),
             rows: rows,
             surveyUnixMs: resource ? resourcePoiSurveyUnixMs(record.group) : 0,
@@ -10449,7 +10745,6 @@
         elements.sagaPanel.classList.toggle("is-collapsed", isCollapsed);
         elements.sagaContent.hidden = isCollapsed;
         elements.sagaToggle.setAttribute("aria-expanded", String(!isCollapsed));
-        elements.sagaChevron.textContent = isCollapsed ? "⌄" : "⌃";
         if (!isCollapsed) {
             renderSagaRelativeTimes();
         }
@@ -10599,9 +10894,9 @@
         } else if (!sagaLoaded) {
             note = "Reading the runes…";
         } else if (sagaLoadFailed) {
-            note = "Saga unavailable";
+            note = "Server events unavailable";
         } else {
-            note = "No tales recorded yet";
+            note = "No events recorded yet";
         }
 
         elements.sagaNote.hidden = !note;
@@ -11069,6 +11364,7 @@
             findPlayerSuggestionContext(elements.commandInput.value.replace(/^\s+/, ""))) {
             renderCommandSuggestions();
         }
+        tryBootCinemaFromHash();
     }
 
     async function pollStatus() {

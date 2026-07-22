@@ -90,12 +90,12 @@
                 <span id="public-view-badge" class="public-view-badge" hidden>Public view</span>
                 <span id="offline-badge" class="offline-badge" hidden>Offline</span>
                 <button id="watch-button" class="watch-button" type="button"
-                        title="Watch the world in cinema mode" hidden>
+                        aria-label="Enter Cinema Mode" title="Enter Cinema Mode" hidden>
                     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                        <path d="M2.5 12s3.4-5 9.5-5 9.5 5 9.5 5-3.4 5-9.5 5-9.5-5-9.5-5Z" />
-                        <circle cx="12" cy="12" r="2.5" />
+                        <path d="m3 12 4.5-4.5L12 5l4.5 2.5L21 12l-4.5 4.5L12 19l-4.5-2.5L3 12Z" />
+                        <path d="m9 12 3-3 3 3-3 3-3-3ZM12 5v4m0 6v4" />
                     </svg>
-                    <span>Watch</span>
+                    <span>Cinema Mode</span>
                 </button>
             </div>
         </header>
@@ -124,40 +124,49 @@
                             aria-label="Copy join code">Copy</button>
                 </span>
             </div>
-            <div class="boss-progression-line">
-                <span class="detail-label">Bosses</span>
-                <div class="boss-progression" id="boss-progression"
-                     aria-label="Boss progression"></div>
-            </div>
         </section>
 
         <section class="time-panel" aria-label="World time">
-            <div class="time-copy">
-                <div class="day-number" id="day-number">Day —</div>
-                <div class="world-clock" id="world-clock">--:--</div>
-                <div class="status-chips" id="status-chips" aria-label="World conditions" hidden>
-                    <span class="status-chip" id="wind-chip" hidden></span>
-                    <span class="status-chip" id="explored-chip" hidden></span>
-                    <span class="status-chip saved-chip" id="saved-chip" hidden></span>
+            <div class="time-primary">
+                <div class="time-copy">
+                    <div class="day-number" id="day-number">Day —</div>
+                    <div class="world-clock" id="world-clock">--:--</div>
                 </div>
-                <div class="raid-badge" id="raid-badge" role="status" hidden></div>
+                <span class="sky-indicator is-sun" id="sky-indicator" role="img"
+                      aria-label="Daytime">☀</span>
             </div>
-            <span class="sky-indicator is-sun" id="sky-indicator" role="img" aria-label="Daytime">☀</span>
+            <div class="status-chips" id="status-chips" aria-label="World conditions" hidden>
+                <span class="status-chip wind-status" id="wind-chip" hidden>
+                    <span class="status-icon wind-rose" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" preserveAspectRatio="xMidYMid meet"
+                             focusable="false">
+                            <circle cx="12" cy="12" r="9" />
+                            <path class="wind-rose-cross" d="M12 5v14M5 12h14" />
+                            <g id="sidebar-wind-needle" class="sidebar-wind-needle">
+                                <path d="M12 12V5" />
+                                <path d="m9.5 8 2.5-3 2.5 3" />
+                            </g>
+                            <circle class="wind-rose-hub" cx="12" cy="12" r="1.35" />
+                        </svg>
+                    </span>
+                    <span id="sidebar-wind-label">Wind —</span>
+                </span>
+                <span class="status-chip" id="explored-chip" hidden>
+                    <span class="status-icon status-glyph" aria-hidden="true">◒</span>
+                    <span id="sidebar-explored-label">Explored —</span>
+                </span>
+                <span class="status-chip saved-chip" id="saved-chip" hidden>
+                    <span class="status-icon status-glyph" aria-hidden="true">✓</span>
+                    <span id="sidebar-saved-label">Saved —</span>
+                </span>
+            </div>
+            <div class="raid-badge" id="raid-badge" role="status" hidden></div>
         </section>
 
-        <section id="saga-panel" class="saga-panel is-collapsed" aria-labelledby="saga-heading" hidden>
-            <button id="saga-toggle" class="saga-toggle" type="button"
-                    aria-controls="saga-content" aria-expanded="false">
-                <span class="saga-heading-copy">
-                    <span class="saga-rune" aria-hidden="true">ᛋ</span>
-                    <span id="saga-heading">Saga</span>
-                </span>
-                <span id="saga-chevron" class="saga-chevron" aria-hidden="true">⌄</span>
-            </button>
-            <div id="saga-content" class="saga-content" hidden>
-                <p id="saga-note" class="saga-note">No tales recorded yet</p>
-                <ol id="saga-list" class="saga-list" role="log" aria-live="polite"></ol>
-            </div>
+        <section class="boss-progression-panel" aria-label="Boss progression">
+            <span class="sidebar-section-label">Boss Progression</span>
+            <div class="boss-progression" id="boss-progression"
+                 aria-label="Boss progression"></div>
         </section>
 
         <section class="players-panel" aria-labelledby="players-heading">
@@ -170,6 +179,19 @@
             </ul>
         </section>
 
+        <section id="saga-panel" class="saga-panel is-collapsed" aria-labelledby="saga-heading" hidden>
+            <button id="saga-toggle" class="saga-toggle" type="button"
+                    aria-label="Toggle Server Events" aria-controls="saga-content"
+                    aria-expanded="false">
+                <span id="saga-heading" class="saga-heading-copy">Server Events</span>
+                <span id="saga-chevron" class="saga-chevron" aria-hidden="true">›</span>
+            </button>
+            <div id="saga-content" class="saga-content" hidden>
+                <p id="saga-note" class="saga-note">No events recorded yet</p>
+                <ol id="saga-list" class="saga-list" role="log" aria-live="polite"></ol>
+            </div>
+        </section>
+
         <footer class="sidebar-footer">
             <a href="https://www.survivalservers.com/services/game_servers/valheim/?utm_source=valheimone&amp;utm_medium=livemap_footer&amp;utm_campaign=valheim_one"
                target="_blank" rel="noopener">Server hosting by SurvivalServers.com</a>
@@ -178,7 +200,7 @@
 
     <main id="map" aria-label="Valheim world map" aria-labelledby="map-tab" role="tabpanel"></main>
 
-    <section id="cinema-hud" class="cinema-hud" aria-label="Watch mode display" hidden>
+    <section id="cinema-hud" class="cinema-hud" aria-label="Cinema Mode display" hidden>
         <div class="cinema-topbar">
             <span id="cinema-server-name" class="cinema-chip cinema-server-chip">—</span>
             <span id="cinema-day" class="cinema-chip">Day —</span>
@@ -234,8 +256,8 @@
             </dl>
         </article>
 
-        <button id="cinema-exit" class="cinema-exit" type="button" aria-label="Exit watch mode"
-                title="Exit watch mode (Esc)">×</button>
+        <button id="cinema-exit" class="cinema-exit" type="button" aria-label="Exit Cinema Mode"
+                title="Exit Cinema Mode (Esc)">×</button>
         <div class="cinema-raid-vignette" aria-hidden="true"></div>
     </section>
 
