@@ -1,6 +1,5 @@
 using System;
 using System.Globalization;
-using Splatform;
 using UnityEngine;
 using ValheimOne.Infrastructure;
 
@@ -140,11 +139,7 @@ internal sealed class ServerShutdownScheduler
                 return;
             }
 
-            var userInfo = new UserInfo
-            {
-                Name = "Server",
-                UserId = new PlatformUserID("Server"),
-            };
+            UserInfo userInfo = ServerUserInfo.Create();
             routedRpc.InvokeRoutedRPC(
                 ZRoutedRpc.Everybody,
                 "ChatMessage",

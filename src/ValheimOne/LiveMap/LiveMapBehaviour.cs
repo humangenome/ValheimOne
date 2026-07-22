@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using Splatform;
 using UnityEngine;
 using ValheimOne.ActivityLog;
 using ValheimOne.Infrastructure;
@@ -332,11 +331,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
                 }
 
                 var position = new Vector3(pending.X, height, pending.Z);
-                var userInfo = new UserInfo
-                {
-                    Name = pending.Label,
-                    UserId = new PlatformUserID("Server"),
-                };
+                UserInfo userInfo = ServerUserInfo.Create(pending.Label);
                 routedRpc.InvokeRoutedRPC(
                     ZRoutedRpc.Everybody,
                     "ChatMessage",

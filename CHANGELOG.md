@@ -10,6 +10,10 @@ All notable changes to ValheimOne will be documented in this file. This project 
 - LiveMap admin and shared views now include a default-off Bases layer that surveys player-built structures, groups nearby pieces into base areas, and shows approximate structure counts without exposing settlements to the public view.
 - LiveMap admin and shared views now include a default-off Creatures layer for active bosses, serpents, and raid mobs inside the event area, with live counts, creature-specific map art, smooth movement, star levels, and position details.
 
+### Fixed
+
+- Server-originated shutdown shouts and web map pings no longer emit a platform-ID parse error in each connected player's log.
+
 ## [0.11.0] - 2026-07-22
 
 ### Added
