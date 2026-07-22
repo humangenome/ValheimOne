@@ -6,6 +6,7 @@
     var ENTITIES_POLL_INTERVAL_MS = 10000;
     var CONSOLE_LOG_POLL_INTERVAL_MS = 2000;
     var CONSOLE_STATS_POLL_INTERVAL_MS = 5000;
+    var MAP_STATS_POLL_INTERVAL_MS = 30000;
     var ACTIVITY_POLL_INTERVAL_MS = 5000;
     var CONSOLE_LOG_LIMIT = 1000;
     var SAGA_EVENT_LIMIT = 100;
@@ -543,8 +544,10 @@
     var activeTab = "map";
     var consoleAvailable = false;
     var consolePollingStarted = false;
+    var statsPollingStarted = false;
+    var statsPollTimer = 0;
     var consoleLogRequestPending = false;
-    var consoleStatsRequestPending = false;
+    var statsRequestPending = false;
     var consoleBanRequestPending = false;
     var consoleBanRefreshQueued = false;
     var consoleMetaRequestPending = false;
@@ -624,6 +627,15 @@
         joinCodeCopy: document.getElementById("join-code-copy"),
         joinCodeLine: document.getElementById("join-code-line"),
         mapPane: document.getElementById("map"),
+        metricDay: document.getElementById("map-metric-day"),
+        metricDayItem: document.getElementById("map-metric-day-item"),
+        metricFrame: document.getElementById("map-metric-frame"),
+        metricFrameItem: document.getElementById("map-metric-frame-item"),
+        metricStatus: document.getElementById("map-metric-status"),
+        metricUptime: document.getElementById("map-metric-uptime"),
+        metricUptimeItem: document.getElementById("map-metric-uptime-item"),
+        metricZdo: document.getElementById("map-metric-zdo"),
+        metricZdoItem: document.getElementById("map-metric-zdo-item"),
         mapTab: document.getElementById("map-tab"),
         mapStatus: document.getElementById("render-status"),
         mapStatusText: document.getElementById("render-status-text"),
@@ -968,6 +980,7 @@
         if (!showConsole) {
             closeSuggestions();
             closeConfirmDialog();
+            scheduleStatsPolling(0);
             return;
         }
 
@@ -975,10 +988,10 @@
             elements.sidebarState.checked = false;
         }
 
+        scheduleStatsPolling(0);
         startConsolePolling();
         loadConsoleMeta();
         loadConsoleHistory().then(pollConsoleLog);
-        pollConsoleStats();
         loadBanList();
         renderConsolePlayers();
         if (persist) {
@@ -992,11 +1005,14 @@
         var isAvailable = currentView === "admin" && status && status.console === true;
         consoleAvailable = isAvailable;
         elements.tabList.hidden = !isAvailable;
+        elements.metricFrameItem.hidden = !isAvailable;
+        elements.metricZdoItem.hidden = !isAvailable;
         if (!isAvailable) {
             setActiveTab("map", false);
             return;
         }
 
+        startStatsPolling();
         loadConsoleHistory();
         setActiveTab(requestedTab, false);
     }
@@ -1881,14 +1897,63 @@
         return Number.isFinite(number) ? number.toFixed(1) + suffix : "—";
     }
 
-    async function pollConsoleStats() {
-        if (!consoleIsActive() || consoleStatsRequestPending) {
+    function formatAbbreviatedInteger(value) {
+        var number = Math.max(0, Math.floor(Number(value)));
+        if (!Number.isFinite(number)) {
+            return "—";
+        }
+        if (number >= 1000000) {
+            return (number / 1000000).toFixed(number < 10000000 ? 1 : 0)
+                .replace(/\.0$/, "") + "M";
+        }
+        if (number >= 1000) {
+            return (number / 1000).toFixed(number < 100000 ? 1 : 0)
+                .replace(/\.0$/, "") + "k";
+        }
+        return String(number);
+    }
+
+    function updateMapMetricsFromStatus(status) {
+        var day = Number(status && status.day);
+        elements.metricDayItem.hidden = !Number.isFinite(day);
+        elements.metricDay.textContent = Number.isFinite(day)
+            ? formatInteger(day)
+            : "—";
+
+        var uptime = Number(status && status.uptimeSeconds);
+        elements.metricUptimeItem.hidden = !Number.isFinite(uptime);
+        elements.metricUptime.textContent = Number.isFinite(uptime)
+            ? formatUptime(uptime)
+            : "—";
+    }
+
+    function updateMapMetricsFromStats(payload) {
+        elements.metricFrame.textContent = formatDecimal(payload && payload.frameAvgMs, " ms");
+        elements.metricZdo.textContent = formatAbbreviatedInteger(payload && payload.zdoCount);
+        updateMapMetricsFromStatus(payload);
+    }
+
+    function updateMapMetricStatus() {
+        var state = feedStaleness("status").state;
+        var label = state === "green"
+            ? "Server online"
+            : state === "red" ? "Server offline" : "Server status loading";
+        elements.metricStatus.classList.toggle("is-online", state === "green");
+        elements.metricStatus.classList.toggle("is-offline", state === "red");
+        elements.metricStatus.classList.toggle("is-waiting", state !== "green" && state !== "red");
+        elements.metricStatus.setAttribute("aria-label", label);
+        elements.metricStatus.title = label;
+    }
+
+    async function pollStats(reportFailure) {
+        if (!consoleAvailable || statsRequestPending || document.hidden) {
             return;
         }
 
-        consoleStatsRequestPending = true;
+        statsRequestPending = true;
         try {
             var payload = await fetchConsoleJson("/api/stats");
+            updateMapMetricsFromStats(payload);
             elements.statUptime.textContent = formatUptime(payload && payload.uptimeSeconds);
             elements.statPlayers.textContent = formatInteger(payload && payload.players);
             elements.statZdo.textContent = formatInteger(payload && payload.zdoCount);
@@ -1900,10 +1965,54 @@
             elements.statFrameMax.textContent = formatDecimal(payload && payload.frameMaxMs, " ms");
             clearConsoleFailure("stats");
         } catch (error) {
-            reportConsoleFailure("stats", "Server stats", error);
+            if (reportFailure) {
+                reportConsoleFailure("stats", "Server stats", error);
+            }
         } finally {
-            consoleStatsRequestPending = false;
+            statsRequestPending = false;
         }
+    }
+
+    async function pollConsoleStats() {
+        if (!consoleIsActive()) {
+            return;
+        }
+        await pollStats(true);
+    }
+
+    async function pollMapStats() {
+        if (activeTab !== "map") {
+            return;
+        }
+        await pollStats(false);
+    }
+
+    function scheduleStatsPolling(delay) {
+        if (!statsPollingStarted) {
+            return;
+        }
+        window.clearTimeout(statsPollTimer);
+        statsPollTimer = window.setTimeout(runStatsPolling, delay);
+    }
+
+    async function runStatsPolling() {
+        statsPollTimer = 0;
+        if (consoleIsActive()) {
+            await pollConsoleStats();
+        } else {
+            await pollMapStats();
+        }
+        scheduleStatsPolling(consoleIsActive()
+            ? CONSOLE_STATS_POLL_INTERVAL_MS
+            : MAP_STATS_POLL_INTERVAL_MS);
+    }
+
+    function startStatsPolling() {
+        if (statsPollingStarted) {
+            return;
+        }
+        statsPollingStarted = true;
+        scheduleStatsPolling(0);
     }
 
     function normalizeBannedPlayers(payload) {
@@ -2193,10 +2302,6 @@
             await pollConsoleLog();
             window.setTimeout(pollLogLoop, CONSOLE_LOG_POLL_INTERVAL_MS);
         }, CONSOLE_LOG_POLL_INTERVAL_MS);
-        window.setTimeout(async function pollStatsLoop() {
-            await pollConsoleStats();
-            window.setTimeout(pollStatsLoop, CONSOLE_STATS_POLL_INTERVAL_MS);
-        }, CONSOLE_STATS_POLL_INTERVAL_MS);
     }
 
     function bindConsoleEvents() {
@@ -2291,6 +2396,7 @@
         }
 
         elements.offlineBadge.hidden = failedFeeds.size === 0;
+        updateMapMetricStatus();
         updateFeedStalenessDots();
     }
 
@@ -11548,6 +11654,7 @@
         elements.serverName.textContent = textOrDash(status.serverName);
         elements.worldName.textContent = textOrDash(status.worldName);
         updateJoinCode(status.joinCode);
+        updateMapMetricsFromStatus(status);
         renderWorldTime(status.day, status.timeOfDay);
         renderBossProgression(status.globalKeys);
         updateWorldMetrics(status);
@@ -11811,6 +11918,7 @@
         window.clearTimeout(hashUpdateTimer);
         window.clearTimeout(entityFocusPollTimer);
         window.clearTimeout(renderStatusFailureTimer);
+        window.clearTimeout(statsPollTimer);
         window.clearInterval(sagaRelativeTimer);
         stopAllLazyPoiPolling();
         window.clearInterval(popupRefreshTimer);

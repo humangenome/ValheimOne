@@ -41,7 +41,7 @@ Builds a procedural world render directly from the server seed, then cuts it int
 
 ![ValheimOne Live Map — admin view](docs/screenshots/livemap-admin.png)
 
-The embedded HTTP server serves two views: a token-gated admin view with every layer available, and a read-only public view governed by a configurable fog mode — `off`, `trails`, or `explored`, the latter decoding vanilla cartography-table data so the public map reveals exactly what players have charted. Server status and player data are also available as JSON at `/api/status` and `/api/players`.
+The embedded HTTP server serves three view tiers: a token-gated admin view with every layer available, a shared spectator view, and a read-only public view governed by a configurable fog mode — `off`, `trails`, or `explored`, the latter decoding vanilla cartography-table data so the public map reveals exactly what players have charted. A slim map-top strip keeps status, day, and uptime visible in every tier, adding frame time and abbreviated ZDO count for console-authorized admins. Server status and player data are also available as JSON at `/api/status` and `/api/players`.
 
 ![ValheimOne Live Map — public view with explored fog](docs/screenshots/livemap-public-fog.png)
 

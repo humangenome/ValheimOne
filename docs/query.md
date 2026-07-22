@@ -11,6 +11,7 @@ curl http://<server-ip>:8790/api/status
   "serverName": "MyWorld",
   "worldName": "MyWorld",
   "day": 12,
+  "uptimeSeconds": 13320,
   "timeOfDay": 0.42,
   "players": 3,
   "view": "public",
@@ -31,9 +32,10 @@ curl http://<server-ip>:8790/api/status
 | `serverName` / `worldName` | World identity. |
 | `joinCode` | Current PlayFab crossplay join code. Admin view only; absent from shared/public responses and when no code is available. Treat this value as a server-access credential. |
 | `day` | Current in-game day number. |
+| `uptimeSeconds` | Seconds since the dedicated server process started. Available at every authorized view tier, including public status responses when `StatusPublic` permits them. |
 | `timeOfDay` | 0..1 fraction of the current day. |
 | `players` | Players visible at the caller's view level (public callers only see players sharing their position unless names/positions are public). |
-| `view` | `admin` or `public` — which view level answered the request. |
+| `view` | `admin`, `shared`, or `public` — which view level answered the request. |
 | `console` | `true` only for admin-token requests when the web console is enabled. |
 | `map.state` / `map.progress` | World-render lifecycle for the map front-end. |
 

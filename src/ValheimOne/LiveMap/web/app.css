@@ -1059,12 +1059,83 @@ input {
 #map {
     position: fixed;
     z-index: 0;
-    top: 0;
+    top: 32px;
     right: 0;
     bottom: 0;
     left: var(--sidebar-width);
     /* Must match MapShading.DeepWater (rgb 22, 36, 61) so letterbox and loading tiles blend into the ocean. */
     background: var(--map-ocean);
+}
+
+.map-metrics {
+    position: fixed;
+    z-index: 1000;
+    top: 0;
+    right: 0;
+    left: var(--sidebar-width);
+    display: flex;
+    height: 32px;
+    align-items: center;
+    gap: 16px;
+    padding: 0 13px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-bottom: 1px solid var(--border-strong);
+    background:
+        linear-gradient(90deg, rgba(217, 177, 104, 0.055), transparent 36%),
+        #211910;
+    box-shadow: inset 0 -1px 0 rgba(255, 226, 180, 0.045), 0 4px 14px rgb(0 0 0 / 18%);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1;
+    scrollbar-width: none;
+    white-space: nowrap;
+}
+
+.map-metrics::-webkit-scrollbar {
+    display: none;
+}
+
+.map-metric-status {
+    width: 9px;
+    height: 9px;
+    flex: 0 0 9px;
+    border: 1px solid rgba(232, 220, 196, 0.22);
+    border-radius: 50%;
+    background: var(--secondary);
+    box-shadow: 0 0 0 2px rgba(138, 116, 88, 0.1);
+}
+
+.map-metric-status.is-online {
+    border-color: rgba(163, 194, 106, 0.62);
+    background: var(--moss);
+    box-shadow: 0 0 7px rgba(163, 194, 106, 0.34);
+}
+
+.map-metric-status.is-offline {
+    border-color: rgba(201, 106, 82, 0.7);
+    background: var(--raid);
+    box-shadow: 0 0 7px rgba(201, 106, 82, 0.34);
+}
+
+.map-metric {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: baseline;
+    gap: 5px;
+}
+
+.map-metric[hidden] {
+    display: none;
+}
+
+.map-metric-label {
+    color: #baa98e;
+}
+
+.map-metric strong {
+    color: var(--text);
+    font-weight: 700;
 }
 
 .leaflet-container {
@@ -4169,7 +4240,7 @@ body.is-dropping-webpin #map .leaflet-overlay-pane path {
 .console-pane {
     position: fixed;
     z-index: 850;
-    top: 0;
+    top: 32px;
     right: 0;
     bottom: 0;
     left: var(--sidebar-width);
@@ -4927,7 +4998,7 @@ body.is-dropping-webpin #map .leaflet-overlay-pane path {
 .render-status {
     position: fixed;
     z-index: 900;
-    top: 0;
+    top: 32px;
     right: 0;
     bottom: 0;
     left: var(--sidebar-width);
@@ -5035,6 +5106,7 @@ body.is-dropping-webpin #map .leaflet-overlay-pane path {
 body.is-cinema #sidebar,
 body.is-cinema > .sidebar-toggle,
 body.is-cinema #console-pane,
+body.is-cinema #map-metrics,
 body.is-cinema #render-status,
 body.is-cinema #map > .leaflet-control-container,
 body.is-cinema #map > .measure-hud,
@@ -5043,6 +5115,7 @@ body.is-cinema #map > .follow-pill {
 }
 
 body.is-cinema #map {
+    top: 0;
     left: 0;
 }
 
@@ -5515,8 +5588,14 @@ body.is-cinema.is-cinema-raid .cinema-raid-vignette {
 
 @media (max-width: 759px) {
     #map,
+    .map-metrics,
     .render-status {
         left: 0;
+    }
+
+    .map-metrics {
+        gap: 12px;
+        padding-left: 60px;
     }
 
     .leaflet-top.leaflet-left {
@@ -5756,7 +5835,7 @@ body.is-cinema.is-cinema-raid .cinema-raid-vignette {
 
     .console-pane {
         left: 0;
-        padding: 60px 9px 9px;
+        padding: 28px 9px 9px;
         overflow-y: auto;
     }
 

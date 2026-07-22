@@ -716,6 +716,7 @@ internal sealed class LiveMapHttpServer
         bool snapshotStale = snapshot.UnixMs != 0 &&
                              snapshotAgeMs > Math.Max(0.25f, _getEffectiveUpdateSeconds()) * 3000.0;
         long lastSavedUnixMs = WorldSavePatch.LastSavedUnixMs;
+        double uptimeSeconds = _consoleBridge?.Stats.UptimeSeconds ?? 0d;
         string globalKeysChangeKey = JoinSortedStrings(snapshot.GlobalKeys);
         string modifiersChangeKey = JoinSortedStrings(snapshot.Modifiers);
         var json = new StringBuilder(640);
@@ -729,6 +730,7 @@ internal sealed class LiveMapHttpServer
 
         json.Append(",\"pluginVersion\":").Append(JsonWriter.Quote(ValheimOnePlugin.PluginVersion));
         json.Append(",\"day\":").Append(snapshot.Day.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"uptimeSeconds\":").Append(JsonWriter.Number(uptimeSeconds));
         json.Append(",\"timeOfDay\":").Append(JsonWriter.Number(snapshot.TimeOfDay));
         json.Append(",\"windDirDeg\":").Append(JsonWriter.Number(Math.Round(snapshot.WindDirDeg, 1)));
         json.Append(",\"windIntensity\":").Append(JsonWriter.Number(Math.Round(snapshot.WindIntensity, 3)));

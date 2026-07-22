@@ -6,6 +6,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Added
 
+- LiveMap now keeps a slim parchment-themed metrics strip above the map and console: every view sees server status, day, and uptime, while console-authorized admins also see frame-time and abbreviated ZDO metrics on a 30-second map cadence without duplicate stats requests.
 - Dedicated-server operators can schedule a graceful shutdown with `vo shutdown <seconds> [message]`, cancel it with `vo shutdown cancel`, or use the admin shutdown API; connected players receive shout countdowns, the pending deadline is exposed to the dashboard, and expiry forces a synchronous world save before Valheim's clean application-exit path runs.
 
 ## [0.10.3] - 2026-07-21
