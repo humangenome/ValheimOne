@@ -37,7 +37,7 @@ _ValheimOne is a community project and is not affiliated with or endorsed by Iro
 
 ### Live Map
 
-Builds a procedural world render directly from the server seed, then cuts it into a zoomable Leaflet tile pyramid cached on disk for fast browser navigation. Live player positions (honoring in-game position privacy), points of interest read from world locations, shared map pins, and fog-of-war all update over the generated terrain, with a toggleable Layers panel and low-zoom POI clustering. Updates stream over an `/api/events` Server-Sent-Events feed (with automatic polling fallback), and an opt-in entity layer adds ships, carts, portals, and a pulsing ring for active raid events.
+Builds a procedural world render directly from the server seed, then cuts it into a zoomable Leaflet tile pyramid cached on disk for fast browser navigation. Live player positions (honoring in-game position privacy), points of interest read from world locations, shared map pins, and fog-of-war all update over the generated terrain, with a toggleable Layers panel and low-zoom POI clustering. Updates stream over an `/api/events` Server-Sent-Events feed (with automatic polling fallback), and an opt-in entity layer adds ships, carts, portals, tombstones, wards, beds, and a pulsing ring for active raid events, alongside a default-off Creatures layer that tracks bosses, serpents, and mobs inside an active raid. An on-demand structure survey clusters player-built pieces into a Bases layer that outlines each settlement with its approximate structure count, and admins can tow an unattended ship to a clicked map point, with moves refused while players are nearby or beyond a five-kilometer limit.
 
 ![ValheimOne Live Map — admin view](docs/screenshots/livemap-admin.png)
 
