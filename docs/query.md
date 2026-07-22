@@ -55,7 +55,8 @@ With `[LiveMap] ConsoleEnabled = true` **and** a non-empty `AccessToken`, the sa
 | `/api/admin/ban` / `/api/admin/unban` | POST `{"player":"..."}` | Ban / unban. |
 | `/api/admin/banlist` | GET | Current ban list. |
 | `/api/admin/save` | POST | Trigger a world + profile save. Returns `alreadySaving` when a save was in flight. |
-| `/api/stats` | GET | Uptime, player/peer counts, ZDO count, Mono heap, frame avg/max ms, world day/time. |
+| `/api/admin/shutdown` | POST `{"seconds":60,"message":"Maintenance"}` or `{"action":"cancel"}` | Schedule a save-first server shutdown (5–3600 seconds) or cancel one. Returns the pending deadline and message. `{"cancel":true}` is also accepted. |
+| `/api/stats` | GET | Uptime, player/peer counts, ZDO count, Mono heap, frame avg/max ms, world day/time, and pending-shutdown state. |
 
 ## Streaming and map-data endpoints
 

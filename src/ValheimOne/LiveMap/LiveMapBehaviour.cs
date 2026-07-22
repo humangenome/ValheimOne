@@ -27,6 +27,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private LiveMapHttpServer? _httpServer;
     private LogRingBuffer? _logRingBuffer;
     private ConsoleBridge? _consoleBridge;
+    private ServerShutdownScheduler? _shutdownScheduler;
     private volatile LiveMapSnapshot _snapshot = LiveMapSnapshot.Empty;
     private volatile PoiCatalog _poiCatalog = PoiCatalog.Empty;
     private volatile string _fogMode = "off";
@@ -90,7 +91,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         behaviour._log = log;
         behaviour._enabledCheck = enabledCheck;
         behaviour._getWebPinStore = getWebPinStore;
-        behaviour._consoleBridge = new ConsoleBridge(null, log);
+        behaviour._shutdownScheduler = new ServerShutdownScheduler(log);
+        behaviour._consoleBridge = new ConsoleBridge(null, log, behaviour._shutdownScheduler);
         Instance = behaviour;
     }
 
@@ -108,6 +110,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
 
         VoCommands.PumpSessionTimes();
         _consoleBridge?.Pump();
+        _shutdownScheduler?.Tick();
 
         if (!_enabledCheck())
         {

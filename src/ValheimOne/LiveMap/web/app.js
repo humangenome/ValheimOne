@@ -2033,6 +2033,32 @@
         elements.confirmCancel.focus();
     }
 
+    function shutdownCommandDetails(command) {
+        var match = /^vo\s+shutdown\s+([+-]?\d+)(?:\s+.*)?$/i.exec(command);
+        if (!match) {
+            return null;
+        }
+
+        var requestedSeconds = Number(match[1]);
+        if (!Number.isSafeInteger(requestedSeconds) ||
+            requestedSeconds < -2147483648 || requestedSeconds > 2147483647) {
+            return null;
+        }
+
+        return {
+            seconds: Math.max(5, Math.min(3600, requestedSeconds))
+        };
+    }
+
+    function openShutdownConfirmDialog(command, details) {
+        confirmAction = { action: "console-command", command: command };
+        elements.confirmMessage.textContent = "Shut down the server in " + details.seconds +
+            "s? Everyone is disconnected after the world saves. Cancel later with " +
+            "vo shutdown cancel.";
+        elements.confirmBackdrop.hidden = false;
+        elements.confirmCancel.focus();
+    }
+
     function closeConfirmDialog() {
         confirmAction = null;
         elements.confirmBackdrop.hidden = true;
@@ -2043,9 +2069,15 @@
             return;
         }
 
-        var action = confirmAction.action;
-        var player = confirmAction.player;
+        var pendingAction = confirmAction;
+        var action = pendingAction.action;
+        var player = pendingAction.player;
         closeConfirmDialog();
+        if (action === "console-command") {
+            await submitConsoleCommand(pendingAction.command);
+            return;
+        }
+
         try {
             var payload = await postConsoleJson("/api/admin/" + action, { player: player });
             if (!payload || payload.ok !== true) {
@@ -2087,10 +2119,19 @@
         }
     }
 
-    async function submitConsoleCommand() {
-        var command = elements.commandInput.value.trim();
+    async function submitConsoleCommand(confirmedCommand) {
+        var isConfirmed = typeof confirmedCommand === "string";
+        var command = isConfirmed ? confirmedCommand : elements.commandInput.value.trim();
         if (!command) {
             return;
+        }
+
+        if (!isConfirmed) {
+            var shutdownDetails = shutdownCommandDetails(command);
+            if (shutdownDetails) {
+                openShutdownConfirmDialog(command, shutdownDetails);
+                return;
+            }
         }
 
         appendConsoleEntries([{ kind: "command", text: "> " + command }]);

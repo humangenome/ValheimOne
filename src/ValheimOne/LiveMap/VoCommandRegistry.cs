@@ -60,6 +60,16 @@ internal static class VoCommandRegistry
             "server",
             new[] { "vo save" }),
         new VoCommandDefinition(
+            "shutdown",
+            "vo shutdown <seconds> [message] | vo shutdown cancel",
+            "Schedule or cancel a save-first dedicated-server shutdown.",
+            "server",
+            new[]
+            {
+                "vo shutdown 60 Restarting for maintenance",
+                "vo shutdown cancel",
+            }),
+        new VoCommandDefinition(
             "players",
             "vo players",
             "List connected players, session times, host IDs, and public positions.",

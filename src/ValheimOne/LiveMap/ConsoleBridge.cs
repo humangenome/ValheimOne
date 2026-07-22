@@ -28,6 +28,7 @@ internal sealed class ConsoleBridge
 
     private LogRingBuffer? _ringBuffer;
     private readonly ModLogger _log;
+    private readonly ServerShutdownScheduler _shutdownScheduler;
     private readonly ConcurrentQueue<IBridgeJob> _jobs = new ConcurrentQueue<IBridgeJob>();
     private readonly int _mainThreadId;
     private volatile StatsSnapshot _stats = StatsSnapshot.Empty;
@@ -40,14 +41,20 @@ internal sealed class ConsoleBridge
     private bool _idle;
     private int _stopped;
 
-    public ConsoleBridge(LogRingBuffer? ringBuffer, ModLogger log)
+    public ConsoleBridge(
+        LogRingBuffer? ringBuffer,
+        ModLogger log,
+        ServerShutdownScheduler shutdownScheduler)
     {
         _ringBuffer = ringBuffer;
         _log = log;
+        _shutdownScheduler = shutdownScheduler;
         _mainThreadId = Thread.CurrentThread.ManagedThreadId;
     }
 
     public StatsSnapshot Stats => _stats;
+
+    public ServerShutdownSnapshot Shutdown => _shutdownScheduler.Snapshot;
 
     public void SetRingBuffer(LogRingBuffer? ringBuffer)
     {
@@ -99,6 +106,20 @@ internal sealed class ConsoleBridge
         return Submit(
             () => SaveOnMainThread(_log),
             error => ConsoleSaveResult.Failure(error));
+    }
+
+    public ShutdownActionResult ArmShutdown(int seconds, string message)
+    {
+        return Submit(
+            () => _shutdownScheduler.Arm(seconds, message),
+            error => ShutdownActionResult.Failure(error, _shutdownScheduler.Snapshot));
+    }
+
+    public ShutdownActionResult CancelShutdown()
+    {
+        return Submit(
+            _shutdownScheduler.Cancel,
+            error => ShutdownActionResult.Failure(error, _shutdownScheduler.Snapshot));
     }
 
     public List<ConsoleCommandInfo> GetKnownCommands()

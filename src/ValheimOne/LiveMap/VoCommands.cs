@@ -185,6 +185,9 @@ internal static class VoCommands
                 case "save":
                     RunSave(args);
                     break;
+                case "shutdown":
+                    RunShutdown(args);
+                    break;
                 case "kick":
                     RunTargetAction(args, "kick");
                     break;
@@ -425,6 +428,59 @@ internal static class VoCommands
             result.AlreadySaving
                 ? "A save was already in progress; another save was requested."
                 : "World and player profile save requested.");
+    }
+
+    private static void RunShutdown(Terminal.ConsoleEventArgs args)
+    {
+        ConsoleBridge? bridge = LiveMapBehaviour.Instance?.ConsoleBridge;
+        if (bridge == null)
+        {
+            Write(args, "Shutdown scheduler unavailable.");
+            return;
+        }
+
+        string action = args.Length > 2 ? args[2].Trim() : string.Empty;
+        if (string.Equals(action, "cancel", StringComparison.OrdinalIgnoreCase))
+        {
+            ShutdownActionResult cancelResult = bridge.CancelShutdown();
+            if (!cancelResult.Ok)
+            {
+                Write(args, "Shutdown cancellation failed: " + cancelResult.Error);
+                return;
+            }
+
+            Write(
+                args,
+                cancelResult.Changed
+                    ? "Pending server shutdown cancelled."
+                    : "No server shutdown was pending.");
+            return;
+        }
+
+        if (!int.TryParse(
+                action,
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture,
+                out int requestedSeconds))
+        {
+            Write(args, "Usage: vo shutdown <seconds> [message] | vo shutdown cancel");
+            return;
+        }
+
+        string message = JoinArguments(args, 3);
+        ShutdownActionResult armResult = bridge.ArmShutdown(requestedSeconds, message);
+        if (!armResult.Ok)
+        {
+            Write(args, "Shutdown scheduling failed: " + armResult.Error);
+            return;
+        }
+
+        ServerShutdownSnapshot snapshot = armResult.Snapshot;
+        Write(
+            args,
+            $"Server shutdown scheduled in {snapshot.TotalSeconds}s for " +
+            DateTimeOffset.FromUnixTimeMilliseconds(snapshot.DeadlineUnixMs)
+                .ToString("u", CultureInfo.InvariantCulture));
     }
 
     private static void RunTargetAction(Terminal.ConsoleEventArgs args, string actionName)

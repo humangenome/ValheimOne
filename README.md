@@ -53,7 +53,9 @@ Collaborative web pins let map viewers mark destinations, resources, and tasks d
 
 ### Web Admin Console
 
-Adds a Console tab to the Live Map dashboard (opt-in via `ConsoleEnabled`, admin token required): a live server log with severity colors and resume-scroll, a command input with history and autocomplete that executes whitelisted commands through the game's own console path (`ConsoleWhitelist`, or `AllowAllCommands`), player kick/ban/unban with confirm dialogs, a world-save button, and a stats readout backed by `/api/stats` (uptime, players, ZDOs, Mono heap, frame timings).
+Adds a Console tab to the Live Map dashboard (opt-in via `ConsoleEnabled`, admin token required): a live server log with severity colors and resume-scroll, a command input with history and autocomplete that executes whitelisted commands through the game's own console path (`ConsoleWhitelist`, or `AllowAllCommands`), player kick/ban/unban with confirm dialogs, a world-save button, and a stats readout backed by `/api/stats` (uptime, players, ZDOs, Mono heap, frame timings). Destructive shutdown commands receive an additional browser confirmation before they are sent.
+
+Use `vo shutdown <seconds> [message]` from the native or web console to schedule a graceful dedicated-server stop (the delay is clamped to 5–3600 seconds), and `vo shutdown cancel` to cancel it. Players receive server shouts when the countdown is armed and at applicable 60-, 30-, and 10-second marks. At zero, ValheimOne completes a synchronous world and player-profile save before entering Valheim's normal clean-exit path.
 
 ![ValheimOne Web Admin Console](docs/screenshots/console-tab.png)
 

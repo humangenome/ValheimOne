@@ -458,6 +458,10 @@ internal sealed class LiveMapHttpServer
             {
                 ServeSave(request, response);
             }
+            else if (isPost && path == "/api/admin/shutdown")
+            {
+                ServeShutdown(request, response);
+            }
             else if (isGet && path == "/api/stats")
             {
                 ServeStats(response);
@@ -1486,6 +1490,61 @@ internal sealed class LiveMapHttpServer
         WriteJson(response, HttpStatusCode.OK, json);
     }
 
+    private void ServeShutdown(HttpListenerRequest request, HttpListenerResponse response)
+    {
+        ReadAuditIdentity(request, out string operatorName, out string source);
+        if (!TryReadShutdownRequest(
+                request,
+                response,
+                out bool cancel,
+                out int seconds,
+                out string message,
+                out string requestError))
+        {
+            _activityLog.RecordAdminAction(
+                operatorName,
+                "shutdown",
+                null,
+                "error",
+                requestError,
+                source);
+            return;
+        }
+
+        ShutdownActionResult result = cancel
+            ? _consoleBridge!.CancelShutdown()
+            : _consoleBridge!.ArmShutdown(seconds, message);
+        _activityLog.RecordAdminAction(
+            operatorName,
+            "shutdown",
+            cancel ? "cancel" : seconds.ToString(CultureInfo.InvariantCulture),
+            result.Ok ? "ok" : "error",
+            result.Ok
+                ? cancel
+                    ? result.Changed ? "cancelled" : "not pending"
+                    : "scheduled"
+                : result.Error,
+            source);
+
+        var json = new StringBuilder(192);
+        json.Append("{\"ok\":").Append(result.Ok ? "true" : "false");
+        if (!result.Ok)
+        {
+            json.Append(",\"error\":").Append(JsonWriter.Quote(result.Error));
+        }
+
+        json.Append(",\"action\":").Append(JsonWriter.Quote(cancel ? "cancelled" : "armed"));
+        if (cancel)
+        {
+            json.Append(",\"cancelled\":").Append(result.Changed ? "true" : "false");
+        }
+
+        json.Append(",\"shutdown\":");
+        AppendShutdownJson(json, result.Snapshot);
+        json.Append('}');
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
     private void ServeStats(HttpListenerResponse response)
     {
         StatsSnapshot stats = _consoleBridge!.Stats;
@@ -1503,6 +1562,8 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"worldName\":").Append(JsonWriter.Quote(snapshot.WorldName));
         json.Append(",\"day\":").Append(snapshot.Day.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"timeOfDay\":").Append(JsonWriter.Number(snapshot.TimeOfDay));
+        json.Append(",\"shutdown\":");
+        AppendShutdownJson(json, _consoleBridge.Shutdown);
         ActivityLogHealthSnapshot activityHealth = _activityLog.GetHealth();
         json.Append(",\"activityLog\":{");
         json.Append("\"enabled\":").Append(activityHealth.Enabled ? "true" : "false");
@@ -1523,6 +1584,122 @@ internal sealed class LiveMapHttpServer
         json.Append('}');
         json.Append('}');
         WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private static void AppendShutdownJson(
+        StringBuilder json,
+        ServerShutdownSnapshot snapshot)
+    {
+        long remainingSeconds = 0L;
+        if (snapshot.Pending)
+        {
+            long remainingMilliseconds = Math.Max(
+                0L,
+                snapshot.DeadlineUnixMs - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            remainingSeconds = (remainingMilliseconds + 999L) / 1000L;
+        }
+
+        json.Append('{');
+        json.Append("\"pending\":").Append(snapshot.Pending ? "true" : "false");
+        json.Append(",\"deadlineUnixMs\":");
+        if (snapshot.Pending)
+        {
+            json.Append(snapshot.DeadlineUnixMs.ToString(CultureInfo.InvariantCulture));
+        }
+        else
+        {
+            json.Append("null");
+        }
+
+        json.Append(",\"secondsRemaining\":").Append(
+            remainingSeconds.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"totalSeconds\":").Append(
+            snapshot.TotalSeconds.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"message\":").Append(JsonWriter.Quote(snapshot.Message));
+        json.Append('}');
+    }
+
+    private static bool TryReadShutdownRequest(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        out bool cancel,
+        out int seconds,
+        out string message,
+        out string error)
+    {
+        cancel = false;
+        seconds = 0;
+        message = string.Empty;
+        error = "bad request";
+        if (!TryReadRequestBody(request, out string json, out bool tooLarge))
+        {
+            error = tooLarge ? "payload too large" : "bad request";
+            WriteJson(
+                response,
+                tooLarge ? HttpStatusCode.RequestEntityTooLarge : HttpStatusCode.BadRequest,
+                "{\"ok\":false,\"error\":" + JsonWriter.Quote(error) + "}");
+            return false;
+        }
+
+        string action = string.Empty;
+        if (TryFindJsonPropertyValue(json, "action", out _) &&
+            !TryReadJsonStringProperty(json, "action", out action))
+        {
+            error = "invalid action";
+            WriteJson(response, HttpStatusCode.BadRequest, "{\"ok\":false,\"error\":\"invalid action\"}");
+            return false;
+        }
+
+        action = action.Trim();
+        bool cancelFlag = false;
+        if (TryFindJsonPropertyValue(json, "cancel", out _) &&
+            !TryReadJsonBooleanProperty(json, "cancel", out cancelFlag))
+        {
+            error = "invalid cancel flag";
+            WriteJson(response, HttpStatusCode.BadRequest, "{\"ok\":false,\"error\":\"invalid cancel flag\"}");
+            return false;
+        }
+
+        cancel = cancelFlag || string.Equals(action, "cancel", StringComparison.OrdinalIgnoreCase);
+        if (cancel)
+        {
+            return true;
+        }
+
+        if (action.Length > 0 &&
+            !string.Equals(action, "arm", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(action, "schedule", StringComparison.OrdinalIgnoreCase))
+        {
+            error = "invalid action";
+            WriteJson(response, HttpStatusCode.BadRequest, "{\"ok\":false,\"error\":\"invalid action\"}");
+            return false;
+        }
+
+        if (!TryReadJsonNumberProperty(json, "seconds", out float parsedSeconds) ||
+            float.IsNaN(parsedSeconds) ||
+            float.IsInfinity(parsedSeconds) ||
+            parsedSeconds != Math.Truncate(parsedSeconds) ||
+            parsedSeconds < int.MinValue ||
+            parsedSeconds > int.MaxValue)
+        {
+            error = "integer seconds are required";
+            WriteJson(
+                response,
+                HttpStatusCode.BadRequest,
+                "{\"ok\":false,\"error\":\"integer seconds are required\"}");
+            return false;
+        }
+
+        seconds = (int)parsedSeconds;
+        if (TryFindJsonPropertyValue(json, "message", out _) &&
+            !TryReadJsonStringProperty(json, "message", out message))
+        {
+            error = "invalid message";
+            WriteJson(response, HttpStatusCode.BadRequest, "{\"ok\":false,\"error\":\"invalid message\"}");
+            return false;
+        }
+
+        return true;
     }
 
     private void ServePlayers(HttpListenerResponse response, ViewLevel viewLevel)
