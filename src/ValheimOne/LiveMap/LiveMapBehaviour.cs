@@ -24,6 +24,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private MapTableReader? _mapTableReader;
     private EntityTracker? _entityTracker;
     private ResourcePoiTracker? _resourcePoiTracker;
+    private PlayerBaseTracker? _playerBaseTracker;
     private LiveMapHttpServer? _httpServer;
     private LogRingBuffer? _logRingBuffer;
     private ConsoleBridge? _consoleBridge;
@@ -152,6 +153,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _mapTableReader?.Tick(now, _fogMode == "explored");
         _entityTracker?.Tick(now);
         _resourcePoiTracker?.Tick(now);
+        _playerBaseTracker?.Tick();
         if (!idleChanged && now >= _nextPlayerUpdate)
         {
             RefreshSnapshot();
@@ -252,12 +254,15 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _entityTracker = entityTracker;
         ResourcePoiTracker resourcePoiTracker = new ResourcePoiTracker(config, log);
         _resourcePoiTracker = resourcePoiTracker;
+        PlayerBaseTracker playerBaseTracker = new PlayerBaseTracker(log);
+        _playerBaseTracker = playerBaseTracker;
 
         _idle = GameAccess.GetPeers(network).Count == 0;
         RefreshSnapshot();
         _fogTracker.Tick(_snapshot.Players);
         entityTracker.Tick(Time.realtimeSinceStartup);
         resourcePoiTracker.Tick(Time.realtimeSinceStartup);
+        playerBaseTracker.Tick();
         _httpServer = new LiveMapHttpServer(
             port,
             config.BindIp,
@@ -269,6 +274,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             () => _poiCatalog,
             () => resourcePoiTracker.Snapshot,
             resourcePoiTracker.NoteResourcesRequested,
+            () => playerBaseTracker.Snapshot,
+            playerBaseTracker.NoteBasesRequested,
             () => _mapTableReader?.Snapshot ?? MapTableSnapshot.Empty,
             _getWebPinStore!,
             () => entityTracker.Snapshot,
@@ -643,6 +650,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _mapTableReader = null;
         _entityTracker = null;
         _resourcePoiTracker = null;
+        _playerBaseTracker?.Stop();
+        _playerBaseTracker = null;
         _fogTracker?.Stop();
         _fogTracker = null;
         _renderer?.Stop();

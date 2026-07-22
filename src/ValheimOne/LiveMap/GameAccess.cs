@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
@@ -41,6 +42,79 @@ internal static class GameAccess
             }
 
             sectorCount = sectors.Length;
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    public static bool TryCopyZdoBatch(
+        ZDOMan manager,
+        List<ZDO> output,
+        ref int sectorIndex,
+        ref int objectIndex,
+        int maximumObjects,
+        int maximumSectors,
+        out int sectorCount,
+        out bool complete)
+    {
+        sectorCount = 0;
+        complete = false;
+        if (maximumObjects <= 0 || maximumSectors <= 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            Array? sectors = ObjectsBySectorField.Value?.GetValue(manager) as Array;
+            if (sectors == null)
+            {
+                return false;
+            }
+
+            sectorCount = sectors.Length;
+            int inspected = 0;
+            int visitedSectors = 0;
+            while (sectorIndex < sectors.Length &&
+                   inspected < maximumObjects &&
+                   visitedSectors < maximumSectors)
+            {
+                object? sector = sectors.GetValue(sectorIndex);
+                if (sector == null)
+                {
+                    sectorIndex++;
+                    objectIndex = 0;
+                    visitedSectors++;
+                    continue;
+                }
+
+                if (!(sector is IList objects))
+                {
+                    return false;
+                }
+
+                while (objectIndex < objects.Count && inspected < maximumObjects)
+                {
+                    object? value = objects[objectIndex++];
+                    inspected++;
+                    if (value is ZDO zdo)
+                    {
+                        output.Add(zdo);
+                    }
+                }
+
+                if (objectIndex >= objects.Count)
+                {
+                    sectorIndex++;
+                    objectIndex = 0;
+                    visitedSectors++;
+                }
+            }
+
+            complete = sectorIndex >= sectors.Length;
             return true;
         }
         catch (Exception)

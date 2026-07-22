@@ -226,6 +226,11 @@
             '<path d="M6 21 7 6l5-3 5 3 1 15H6Z"/>' +
             '<path d="M10 17V8l4 3-4 2 5 4M6 21h12"/>'
         ),
+        bases: svg(
+            '<path d="M3 20h18M5 20V10l7-6 7 6v10"/>' +
+            '<path d="M8 20v-6h8v6M4 11l8-7 8 7M9 9h6"/>' +
+            '<path d="M10 14h4"/>'
+        ),
 
         ship: svg(
             '<path d="M3 14h18l-3 5H7l-4-5ZM12 14V4m0 2 6 6h-6M12 7 7 12h5"/>' +

@@ -42,6 +42,8 @@ internal sealed class LiveMapHttpServer
     private readonly Func<PoiCatalog> _getPoiCatalog;
     private readonly Func<ResourcePoiMapSnapshot> _getResourcePoiSnapshot;
     private readonly Action _noteResourcesRequested;
+    private readonly Func<PlayerBaseMapSnapshot> _getPlayerBaseSnapshot;
+    private readonly Action _noteBasesRequested;
     private readonly Func<MapTableSnapshot> _getMapTableSnapshot;
     private readonly Func<WebPinStore?> _getWebPinStore;
     private readonly Func<EntityMapSnapshot> _getEntitySnapshot;
@@ -91,6 +93,8 @@ internal sealed class LiveMapHttpServer
         Func<PoiCatalog> getPoiCatalog,
         Func<ResourcePoiMapSnapshot> getResourcePoiSnapshot,
         Action noteResourcesRequested,
+        Func<PlayerBaseMapSnapshot> getPlayerBaseSnapshot,
+        Action noteBasesRequested,
         Func<MapTableSnapshot> getMapTableSnapshot,
         Func<WebPinStore?> getWebPinStore,
         Func<EntityMapSnapshot> getEntitySnapshot,
@@ -118,6 +122,8 @@ internal sealed class LiveMapHttpServer
         _getPoiCatalog = getPoiCatalog;
         _getResourcePoiSnapshot = getResourcePoiSnapshot;
         _noteResourcesRequested = noteResourcesRequested;
+        _getPlayerBaseSnapshot = getPlayerBaseSnapshot;
+        _noteBasesRequested = noteBasesRequested;
         _getMapTableSnapshot = getMapTableSnapshot;
         _getWebPinStore = getWebPinStore;
         _getEntitySnapshot = getEntitySnapshot;
@@ -2308,6 +2314,7 @@ internal sealed class LiveMapHttpServer
 
         PoiCatalog catalog = _getPoiCatalog();
         ResourcePoiMapSnapshot resourceSnapshot = _getResourcePoiSnapshot();
+        PlayerBaseMapSnapshot baseSnapshot = _getPlayerBaseSnapshot();
         List<PlayerGhostEntry>? visibleGhosts = viewLevel == ViewLevel.Public
             ? null
             : GetVisibleGhosts(viewLevel);
@@ -2342,6 +2349,12 @@ internal sealed class LiveMapHttpServer
             {
                 count = visibleGhosts?.Count ?? 0;
             }
+            else if (string.Equals(definition.Key, "bases", StringComparison.Ordinal))
+            {
+                count = baseSnapshot.Count;
+                cap = PlayerBaseTracker.MaximumBases;
+                truncated = baseSnapshot.OutputTruncated;
+            }
             else if (definition.Resource &&
                 resourceSnapshot.TryGetGroup(
                     definition.Key,
@@ -2356,6 +2369,10 @@ internal sealed class LiveMapHttpServer
             bool inline = !string.Equals(
                               definition.Key,
                               "ghosts",
+                              StringComparison.Ordinal) &&
+                          !string.Equals(
+                              definition.Key,
+                              "bases",
                               StringComparison.Ordinal) &&
                           !definition.Resource &&
                           count <= MaximumInlineLocationPoisPerGroup;
@@ -2375,11 +2392,15 @@ internal sealed class LiveMapHttpServer
                 json.Append(",\"truncated\":true");
             }
             json.Append(",\"inline\":").Append(inline ? "true" : "false");
-            json.Append(",\"resource\":").Append(definition.Resource ? "true" : "false");
-            if (definition.Resource)
+            bool surveyed = definition.Resource ||
+                            string.Equals(definition.Key, "bases", StringComparison.Ordinal);
+            json.Append(",\"resource\":").Append(surveyed ? "true" : "false");
+            if (surveyed)
             {
                 json.Append(",\"scanUnixMs\":").Append(
-                    resourceSnapshot.LastScanUnixMs.ToString(CultureInfo.InvariantCulture));
+                    (string.Equals(definition.Key, "bases", StringComparison.Ordinal)
+                        ? baseSnapshot.LastScanUnixMs
+                        : resourceSnapshot.LastScanUnixMs).ToString(CultureInfo.InvariantCulture));
             }
 
             json.Append('}');
@@ -2438,6 +2459,12 @@ internal sealed class LiveMapHttpServer
 
         if (!definition.Resource)
         {
+            if (string.Equals(definition.Key, "bases", StringComparison.Ordinal))
+            {
+                ServePlayerBaseGroup(response);
+                return;
+            }
+
             if (string.Equals(definition.Key, "ghosts", StringComparison.Ordinal))
             {
                 ServeGhostPoiGroup(response, viewLevel);
@@ -2449,6 +2476,70 @@ internal sealed class LiveMapHttpServer
         }
 
         ServeResourcePoiGroup(response, definition);
+    }
+
+    private void ServePlayerBaseGroup(HttpListenerResponse response)
+    {
+        _noteBasesRequested();
+        PlayerBaseMapSnapshot snapshot = _getPlayerBaseSnapshot();
+        long nowUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        long scanAgeMs = snapshot.LastScanUnixMs == 0L
+            ? long.MaxValue
+            : Math.Max(0L, nowUnixMs - snapshot.LastScanUnixMs);
+        bool scanning = snapshot.Scanning ||
+                        snapshot.LastScanUnixMs == 0L ||
+                        scanAgeMs >= PlayerBaseTracker.CacheMilliseconds;
+        var json = new StringBuilder(160 + (snapshot.Bases.Length * 96));
+        json.Append("{\"group\":\"bases\",\"label\":\"Bases\",\"count\":");
+        json.Append(snapshot.Count.ToString(CultureInfo.InvariantCulture));
+        if (snapshot.OutputTruncated)
+        {
+            json.Append(",\"cap\":").Append(
+                PlayerBaseTracker.MaximumBases.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"truncated\":true");
+        }
+        if (snapshot.PiecesTruncated)
+        {
+            json.Append(",\"pieceCap\":").Append(
+                PlayerBaseTracker.MaximumPiecePositions.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"piecesTruncated\":true");
+        }
+        json.Append(",\"resource\":true");
+        json.Append(",\"scanUnixMs\":").Append(
+            snapshot.LastScanUnixMs.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"scanning\":").Append(scanning ? "true" : "false");
+        if (scanning)
+        {
+            int scanProgress = snapshot.Scanning ? snapshot.ScanProgress : 0;
+            json.Append(",\"scanProgress\":").Append(
+                scanProgress.ToString(CultureInfo.InvariantCulture));
+            if (snapshot.Scanning && snapshot.ScanEtaSeconds >= 0)
+            {
+                json.Append(",\"scanEtaSeconds\":").Append(
+                    snapshot.ScanEtaSeconds.ToString(CultureInfo.InvariantCulture));
+            }
+        }
+        json.Append(",\"pois\":[");
+        for (int index = 0; index < snapshot.Bases.Length; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            PlayerBaseEntry playerBase = snapshot.Bases[index];
+            json.Append('{');
+            json.Append("\"id\":").Append(JsonWriter.Quote(playerBase.Id));
+            json.Append(",\"x\":").Append(JsonWriter.NumberOneDecimal(playerBase.X));
+            json.Append(",\"z\":").Append(JsonWriter.NumberOneDecimal(playerBase.Z));
+            json.Append(",\"radius\":").Append(JsonWriter.NumberOneDecimal(playerBase.Radius));
+            json.Append(",\"pieces\":").Append(
+                playerBase.Pieces.ToString(CultureInfo.InvariantCulture));
+            json.Append('}');
+        }
+
+        json.Append("]}");
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
 
     private void ServeGhostPoiGroup(HttpListenerResponse response, ViewLevel viewLevel)

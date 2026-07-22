@@ -22,6 +22,7 @@
     var OVERVIEW_CLUSTER_GRID_PX = 64;
     var RESOURCE_POI_POLL_INTERVAL_MS = 5000;
     var RESOURCE_POI_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
+    var BASE_POI_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
     var MAP_LOADING_TIMEOUT_MS = 15000;
     var SSE_RETRY_INITIAL_MS = 5000;
     var SSE_RETRY_MAX_MS = 60000;
@@ -178,6 +179,7 @@
             label: "Structures",
             minimumZoom: 3,
             groups: [
+                "bases",
                 "structure_camp",
                 "structure_tarpit",
                 "structure_shipwreck",
@@ -257,6 +259,9 @@
             searchGroupOnly: true
         },
         structure_camp: { label: "Enemy Camps", glyph: "⚔", category: "structures" },
+        bases: {
+            label: "Bases", glyph: "⌂", category: "structures", resource: true, base: true
+        },
         structure_tarpit: { label: "Tar Pits", glyph: "≋", category: "structures" },
         structure_shipwreck: { label: "Shipwrecks", glyph: "⚓", category: "structures" },
         structure_ruins: { label: "Ruins & Villages", glyph: "▥", category: "structures" },
@@ -391,6 +396,7 @@
         forage_dragonegg: false,
         forage_blackcore: false,
         structure_camp: false,
+        bases: false,
         structure_tarpit: false,
         structure_shipwreck: false,
         structure_ruins: false,
@@ -4330,6 +4336,9 @@
         map.createPane("trailPane");
         map.getPane("trailPane").style.zIndex = "380";
         map.getPane("trailPane").style.pointerEvents = "none";
+        map.createPane("baseAreaPane");
+        map.getPane("baseAreaPane").style.zIndex = "385";
+        map.getPane("baseAreaPane").style.pointerEvents = "none";
         map.createPane("wardRadiusPane");
         map.getPane("wardRadiusPane").style.zIndex = "390";
         map.getPane("wardRadiusPane").style.pointerEvents = "none";
@@ -7181,10 +7190,17 @@
         layersRows.querySelectorAll("[data-poi-truncation-note]").forEach(function (note) {
             var metadata = poiGroupMeta.get(note.dataset.poiTruncationNote);
             var truncated = metadata && metadata.truncated === true;
-            note.hidden = !truncated;
-            note.textContent = truncated
-                ? "Showing first " + formatInteger(metadata.cap) + " — world has more"
-                : "";
+            var piecesTruncated = metadata && metadata.piecesTruncated === true;
+            note.hidden = !truncated && !piecesTruncated;
+            if (truncated) {
+                note.textContent = "Showing first " + formatInteger(metadata.cap) +
+                    " — world has more";
+            } else if (piecesTruncated) {
+                note.textContent = "Survey capped at " + formatInteger(metadata.pieceCap) +
+                    " structures — results may be incomplete";
+            } else {
+                note.textContent = "";
+            }
         });
         layersRows.querySelectorAll(".layer-section").forEach(function (section) {
             var inputs = Array.prototype.slice.call(
@@ -9537,6 +9553,9 @@
     }
 
     function resourcePoiTitle(group) {
+        if (group === "bases") {
+            return "Player base";
+        }
         if (group === "spawner_greydwarf") {
             return "Greydwarf nest";
         }
@@ -9620,6 +9639,20 @@
     }
 
     function buildPoiPopup(record) {
+        if (record.group === "bases") {
+            return popupShell({
+                glyph: POI_GROUPS.bases.glyph,
+                iconKey: "bases",
+                kicker: "PLAYER BASE",
+                rows: [{
+                    label: "Structures",
+                    value: "≈ " + formatInteger(record.pieces)
+                }, positionPopupRow(record.x, record.z)],
+                surveyUnixMs: resourcePoiSurveyUnixMs("bases"),
+                title: "Player base"
+            });
+        }
+
         var rows = [];
         var resource = isResourcePoiGroup(record.group);
         var stateText = resource ? resourcePoiStateText(record) : "";
@@ -10127,8 +10160,18 @@
             lastSessionSeconds === null || totalPlaySeconds === null)) {
             return null;
         }
+        var baseRadius = group === "bases" ? finiteNumberOrNull(poi.radius) : null;
+        var basePieces = group === "bases" ? Math.floor(Number(poi.pieces)) : 0;
+        var baseId = group === "bases" && typeof poi.id === "string"
+            ? poi.id.trim()
+            : "";
+        if (group === "bases" && (!baseId || baseRadius === null || baseRadius <= 0 ||
+            !Number.isFinite(basePieces) || basePieces < 1)) {
+            return null;
+        }
         return {
             available: available,
+            baseId: baseId,
             explored: poi.explored !== false,
             group: group,
             latLng: worldToLatLng(Number(poi.x), Number(poi.z)),
@@ -10137,7 +10180,9 @@
             memberCount: memberCount,
             minedPct: minedPct,
             name: typeof poi.name === "string" ? poi.name : "",
+            pieces: basePieces,
             placed: poi.placed !== false,
+            radius: baseRadius,
             state: state,
             title: group === "ghosts"
                 ? (typeof poi.name === "string" && poi.name.trim()
@@ -10281,6 +10326,62 @@
         return marker;
     }
 
+    function renderBaseArea(record, layer) {
+        var radius = worldDistanceToMap(record.radius);
+        if (!Number.isFinite(radius) || radius <= 0) {
+            return;
+        }
+
+        var color = window.getComputedStyle(document.documentElement)
+            .getPropertyValue("--accent").trim() || "#d9b168";
+        L.circle(record.latLng, {
+            bubblingMouseEvents: false,
+            className: "base-area",
+            color: color,
+            fill: true,
+            fillColor: color,
+            fillOpacity: 0.035,
+            interactive: false,
+            opacity: 0.34,
+            pane: "baseAreaPane",
+            radius: radius,
+            weight: 1
+        }).addTo(layer);
+    }
+
+    function createBaseMarker(record) {
+        var markerMarkup = iconMarkup("bases", POI_GROUPS.bases.glyph);
+        var icon = L.divIcon({
+            className: "base-div-icon",
+            html: '<span class="base-marker-shell" aria-hidden="true">' +
+                markerMarkup + '</span><span class="base-marker-label">Base</span>',
+            iconAnchor: [10, 10],
+            iconSize: [58, 20]
+        });
+        var marker = L.marker(record.latLng, {
+            icon: icon,
+            pane: "poiPane",
+            title: "Player base · approximately " + record.pieces + " structures"
+        });
+        var tooltipContent = document.createElement("span");
+        tooltipContent.textContent = "Player base · ≈ " + record.pieces + " structures";
+        bindMarkerTooltip(marker, tooltipContent, {
+            fallbackGlyph: POI_GROUPS.bases.glyph,
+            iconKey: "bases",
+            title: "Player base"
+        }, {
+            className: "map-tooltip poi-tooltip",
+            direction: "top",
+            offset: [0, -10],
+            opacity: 1
+        });
+        bindMapPopup(marker, function () {
+            return buildPoiPopup(record);
+        }, { kind: "poi" });
+        record.marker = marker;
+        return marker;
+    }
+
     function createGhostMarker(record) {
         var icon = L.divIcon({
             className: "ghost-div-icon",
@@ -10366,6 +10467,13 @@
         records.forEach(function (record) {
             record.marker = null;
         });
+        if (group === "bases") {
+            records.forEach(function (record) {
+                createBaseMarker(record).addTo(layer);
+                renderBaseArea(record, layer);
+            });
+            return;
+        }
         if (!useClusters || group === "ghosts") {
             records.forEach(function (record) {
                 createPoiMarker(record).addTo(layer);
@@ -10455,6 +10563,12 @@
              POI_GROUPS[group].dynamic === true);
     }
 
+    function lazyPoiRefreshInterval(group) {
+        return group === "bases"
+            ? BASE_POI_REFRESH_INTERVAL_MS
+            : RESOURCE_POI_REFRESH_INTERVAL_MS;
+    }
+
     function stopLazyPoiPolling(group) {
         var state = lazyPoiStates.get(group);
         if (!state) {
@@ -10507,7 +10621,7 @@
                     group,
                     Math.max(
                         0,
-                        state.lastFetchAt + RESOURCE_POI_REFRESH_INTERVAL_MS - Date.now()
+                        state.lastFetchAt + lazyPoiRefreshInterval(group) - Date.now()
                     )
                 );
             }
@@ -10572,6 +10686,8 @@
                 metadata.count = count;
                 metadata.cap = Number.isFinite(cap) && cap > 0 ? cap : count;
                 metadata.truncated = payload && payload.truncated === true;
+                metadata.pieceCap = Math.floor(Number(payload.pieceCap));
+                metadata.piecesTruncated = payload && payload.piecesTruncated === true;
                 if (resource) {
                     metadata.scanUnixMs = scanUnixMs;
                 }
@@ -10593,9 +10709,9 @@
                 }
                 nextDelay = state.scanning
                     ? RESOURCE_POI_POLL_INTERVAL_MS
-                    : RESOURCE_POI_REFRESH_INTERVAL_MS;
+                    : lazyPoiRefreshInterval(group);
             } else if (refreshes) {
-                nextDelay = RESOURCE_POI_REFRESH_INTERVAL_MS;
+                nextDelay = lazyPoiRefreshInterval(group);
             }
             feedLastUpdated.pois = Date.now();
             setFeedState("pois", true);

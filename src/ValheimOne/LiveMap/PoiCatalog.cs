@@ -376,6 +376,7 @@ internal static class PoiGroups
         new PoiGroupDefinition("structure_ruins", "Ruins & Villages", "structures", false),
         new PoiGroupDefinition("structure_mistlands", "Mistlands Remains", "structures", false),
         new PoiGroupDefinition("structure_runestone", "Runestones & Lore", "structures", false),
+        new PoiGroupDefinition("bases", "Bases", "structures", false),
         new PoiGroupDefinition("misc", "Misc", "structures", false),
         new PoiGroupDefinition("ghosts", "Last seen", "live", false),
     };
