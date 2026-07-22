@@ -2,6 +2,25 @@
 
 All notable changes to ValheimOne will be documented in this file. This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and intends to use [Semantic Versioning](https://semver.org/spec/v2.0.0.html) after its first release.
 
+## [0.10.2] - 2026-07-21
+
+### Security
+
+- LiveMap cartography-table pins now respect map view tiers: shared views replace raw player platform IDs with “a viking,” while public views receive no pins unless the new default-off `PublicPins` setting is enabled, and even then omit author identity entirely.
+
+### Added
+
+- First-time resource-layer surveys now report live progress and an estimated time remaining in the Layers panel, with a one-time notice explaining that initial results can take a few minutes instead of leaving an indefinite loading state.
+
+### Changed
+
+- LiveMap entity scans now use independent per-group budgets for ships, carts, portals, tombstones, wards, and beds instead of one shared 800-entity ceiling, so an abundant group cannot crowd the others out; the API reports each group’s cap and truncation state and capped layer counts display with a `+` suffix.
+- Cartography-table pins now cluster into compact count markers at overview zoom, preserving checked-state styling and zooming toward the cluster when selected, then expand back into individual pins at closer views.
+
+### Fixed
+
+- Resource POI groups that reach the 5,000-entry safety cap no longer present that partial result as a complete world count: API responses expose the cap and truncation state, while the Layers panel shows `5,000+` with an explicit “world has more” note.
+
 ## [0.10.1] - 2026-07-21
 
 ### Changed
