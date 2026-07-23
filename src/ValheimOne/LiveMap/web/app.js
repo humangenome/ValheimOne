@@ -58,6 +58,10 @@
     var MOTD_VERSION_STORAGE_KEY = "vo-livemap-motd-version";
     var WEB_PIN_AUTHOR_STORAGE_KEY = "webPinAuthor";
     var TAB_SESSION_KEY = "vo-livemap-active-tab";
+    var CODEX_ROW_HEIGHT = 42;
+    var CODEX_WINDOW_OVERSCAN = 8;
+    var CODEX_SEARCH_DEBOUNCE_MS = 180;
+    var CODEX_REVERSE_USE_LIMIT = 8;
     var CONSOLE_CATEGORY_ORDER = ["server", "players", "moderation", "world", "diagnostics"];
     var CONSOLE_CATEGORY_LABELS = {
         server: "Server",
@@ -65,6 +69,27 @@
         moderation: "Moderation",
         world: "World",
         diagnostics: "Diagnostics"
+    };
+    var CODEX_CATEGORY_TYPES = {
+        weapons: [
+            "Ammo", "AmmoNonEquipable", "Bow", "OneHandedWeapon", "TwoHandedWeapon",
+            "TwoHandedWeaponLeft"
+        ],
+        armor: ["Chest", "Helmet", "Legs", "Shield", "Shoulder", "Utility"],
+        tools: ["Tool", "Torch"],
+        materials: ["Fish", "Material"],
+        consumables: ["Consumable"],
+        trophies: ["Trophy"],
+        misc: ["Customization", "Misc", "Trinket"]
+    };
+    var CODEX_CATEGORY_LABELS = {
+        weapons: "Weapons",
+        armor: "Armor",
+        tools: "Tools",
+        materials: "Materials",
+        consumables: "Consumables",
+        trophies: "Trophies",
+        misc: "Misc"
     };
     var POI_COLOR_PALETTE = [
         { key: "gold", label: "Gold", value: "var(--accent)" },
@@ -641,9 +666,22 @@
     var heatmapRequestPending = false;
     var heatmapRequestSequence = 0;
     var latestHeatmap = null;
-    var requestedTab = loadRequestedTab();
+    var initialCodexToken = codexTokenFromHash(window.location.hash);
+    var requestedTab = initialCodexToken !== null ? "codex" : loadRequestedTab();
     var activeTab = "map";
     var consoleAvailable = false;
+    var catalogPayload = null;
+    var catalogPromise = null;
+    var catalogItems = [];
+    var catalogItemsByToken = new Map();
+    var catalogReverseRecipes = new Map();
+    var codexFilteredItems = [];
+    var codexExpandedToken = "";
+    var codexExpandedHeight = 0;
+    var codexWindowKey = "";
+    var codexSearchTimer = 0;
+    var codexShowAllReverseUses = false;
+    var pendingCodexToken = initialCodexToken || "";
     var consolePollingStarted = false;
     var consoleLogPollTimer = 0;
     var statsPollingStarted = false;
@@ -727,6 +765,15 @@
         confirmCancel: document.getElementById("console-confirm-cancel"),
         confirmMessage: document.getElementById("console-confirm-message"),
         confirmSubmit: document.getElementById("console-confirm-submit"),
+        codexCategory: document.getElementById("codex-category"),
+        codexCount: document.getElementById("codex-count"),
+        codexList: document.getElementById("codex-list"),
+        codexPane: document.getElementById("codex-pane"),
+        codexScroll: document.getElementById("codex-scroll"),
+        codexSearch: document.getElementById("codex-search"),
+        codexState: document.getElementById("codex-state"),
+        codexTab: document.getElementById("codex-tab"),
+        codexVersion: document.getElementById("codex-version"),
         consoleLog: document.getElementById("console-log"),
         consolePane: document.getElementById("console-pane"),
         consoleResume: document.getElementById("console-resume"),
@@ -1049,7 +1096,8 @@
 
     function loadRequestedTab() {
         try {
-            return window.sessionStorage.getItem(TAB_SESSION_KEY) === "console" ? "console" : "map";
+            var storedTab = window.sessionStorage.getItem(TAB_SESSION_KEY);
+            return storedTab === "console" || storedTab === "codex" ? storedTab : "map";
         } catch (error) {
             return "map";
         }
@@ -1074,7 +1122,9 @@
     }
 
     function setActiveTab(tab, persist) {
-        var nextTab = tab === "console" && consoleAvailable ? "console" : "map";
+        var nextTab = tab === "codex"
+            ? "codex"
+            : (tab === "console" && consoleAvailable ? "console" : "map");
         if (persist) {
             requestedTab = nextTab;
             saveRequestedTab(nextTab);
@@ -1083,19 +1133,30 @@
             }
         }
 
-        if (nextTab === activeTab && elements.consolePane.hidden === (nextTab !== "console")) {
+        if (nextTab === activeTab &&
+            elements.consolePane.hidden === (nextTab !== "console") &&
+            elements.codexPane.hidden === (nextTab !== "codex")) {
             return;
         }
 
+        var priorTab = activeTab;
         activeTab = nextTab;
         var showConsole = activeTab === "console";
-        setTabButtonState(elements.mapTab, !showConsole);
+        var showCodex = activeTab === "codex";
+        setTabButtonState(elements.mapTab, !showConsole && !showCodex);
         setTabButtonState(elements.consoleTab, showConsole);
+        setTabButtonState(elements.codexTab, showCodex);
         elements.consolePane.hidden = !showConsole;
-        elements.mapPane.setAttribute("aria-hidden", String(showConsole));
+        elements.codexPane.hidden = !showCodex;
+        elements.mapPane.setAttribute("aria-hidden", String(showConsole || showCodex));
         document.body.classList.toggle("is-console-active", showConsole);
+        document.body.classList.toggle("is-codex-active", showCodex);
+        if (!showCodex && (priorTab === "codex" ||
+            codexTokenFromHash(window.location.hash) !== null)) {
+            restoreMapHash();
+        }
 
-        if (showConsole) {
+        if (showConsole || showCodex) {
             disarmShipTow();
         }
 
@@ -1103,6 +1164,13 @@
             closeSuggestions();
             closeConfirmDialog();
             scheduleStatsPolling(0);
+            if (showCodex) {
+                if (persist) {
+                    writeCodexHash(codexExpandedToken);
+                }
+                loadCatalog();
+                return;
+            }
             return;
         }
 
@@ -1128,16 +1196,732 @@
     function updateConsoleAvailability(status) {
         var isAvailable = currentView === "admin" && status && status.console === true;
         consoleAvailable = isAvailable;
-        elements.tabList.hidden = !isAvailable;
+        elements.consoleTab.hidden = !isAvailable;
+        elements.tabList.hidden = [elements.mapTab, elements.consoleTab, elements.codexTab]
+            .filter(function (button) { return !button.hidden; }).length <= 1;
         elements.metricFrameItem.hidden = !isAvailable;
         elements.metricZdoItem.hidden = !isAvailable;
         if (!isAvailable) {
-            setActiveTab("map", false);
+            setActiveTab(requestedTab, false);
             return;
         }
 
         startStatsPolling();
         setActiveTab(requestedTab, false);
+    }
+
+    function codexTokenFromHash(hash) {
+        var match = String(hash || "").match(/^#codex(?:\/([^/?#]*))?$/i);
+        if (!match) {
+            return null;
+        }
+        if (!match[1]) {
+            return "";
+        }
+        try {
+            return decodeURIComponent(match[1]);
+        } catch (error) {
+            return match[1];
+        }
+    }
+
+    function writeCodexHash(itemToken) {
+        var hash = "#codex";
+        if (itemToken) {
+            hash += "/" + encodeURIComponent(itemToken);
+        }
+        if (window.location.hash === hash) {
+            return;
+        }
+        window.history.replaceState(
+            window.history.state,
+            "",
+            window.location.pathname + window.location.search + hash
+        );
+    }
+
+    function restoreMapHash() {
+        if (codexTokenFromHash(window.location.hash) === null) {
+            return;
+        }
+        window.history.replaceState(
+            window.history.state,
+            "",
+            window.location.pathname + window.location.search
+        );
+        scheduleHashUpdate();
+    }
+
+    function codexCategoryForType(type) {
+        var rawType = typeof type === "string" ? type : "";
+        var category = Object.keys(CODEX_CATEGORY_TYPES).find(function (key) {
+            return CODEX_CATEGORY_TYPES[key].indexOf(rawType) !== -1;
+        });
+        return category || "misc";
+    }
+
+    function cleanCatalogText(value) {
+        return typeof value === "string"
+            ? value.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim()
+            : "";
+    }
+
+    function humanizeCatalogName(value) {
+        var text = typeof value === "string" ? value : "";
+        return text.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/_/g, " ").trim();
+    }
+
+    function formatCatalogNumber(value) {
+        var number = Number(value);
+        if (!Number.isFinite(number)) {
+            return "—";
+        }
+        return number.toLocaleString("en-US", { maximumFractionDigits: 2 });
+    }
+
+    function codexElement(tagName, className, textValue) {
+        var element = document.createElement(tagName);
+        if (className) {
+            element.className = className;
+        }
+        if (textValue !== undefined && textValue !== null) {
+            element.textContent = String(textValue);
+        }
+        return element;
+    }
+
+    function makeCodexJumpLink(reference, className) {
+        var tokenValue = reference && typeof reference.prefab === "string"
+            ? reference.prefab
+            : "";
+        var name = reference && typeof reference.name === "string" && reference.name.trim()
+            ? reference.name.trim()
+            : tokenValue;
+        var link = codexElement("a", className || "codex-jump-link", name || "Unknown item");
+        link.href = "#codex/" + encodeURIComponent(tokenValue);
+        link.dataset.codexToken = tokenValue;
+        return link;
+    }
+
+    function setCodexLoadState(kind, detail) {
+        elements.codexState.textContent = "";
+        elements.codexState.classList.toggle("is-error", kind === "error");
+        elements.codexScroll.hidden = kind !== "ready";
+        if (kind === "ready") {
+            elements.codexState.hidden = true;
+            return;
+        }
+
+        elements.codexState.hidden = false;
+        if (kind === "loading") {
+            elements.codexState.appendChild(codexElement("span", "spinner"));
+            elements.codexState.appendChild(codexElement("span", "", "Unrolling the item catalog…"));
+            return;
+        }
+
+        var copy = codexElement("div", "codex-state-copy");
+        copy.appendChild(codexElement("strong", "", "The Codex could not be opened"));
+        copy.appendChild(codexElement(
+            "span",
+            "",
+            detail || "The catalog request failed. Check the connection and try again."
+        ));
+        var retry = codexElement("button", "console-primary-button", "Retry");
+        retry.type = "button";
+        retry.dataset.codexRetry = "true";
+        elements.codexState.appendChild(copy);
+        elements.codexState.appendChild(retry);
+    }
+
+    function buildCatalogIndexes(payload) {
+        catalogPayload = payload;
+        catalogItems = payload.items.slice().sort(function (left, right) {
+            var byName = String(left.name || left.token || "").localeCompare(
+                String(right.name || right.token || ""),
+                "en",
+                { sensitivity: "base" }
+            );
+            return byName || String(left.token || "").localeCompare(String(right.token || ""));
+        });
+        catalogItemsByToken = new Map();
+        catalogReverseRecipes = new Map();
+
+        catalogItems.forEach(function (item) {
+            if (item && typeof item.token === "string") {
+                catalogItemsByToken.set(item.token.toLocaleLowerCase(), item);
+            }
+        });
+
+        catalogItems.forEach(function (outputItem) {
+            (Array.isArray(outputItem.recipes) ? outputItem.recipes : []).forEach(function (recipe) {
+                if (!recipe || recipe.enabled === false) {
+                    return;
+                }
+                (Array.isArray(recipe.ingredients) ? recipe.ingredients : []).forEach(function (ingredient) {
+                    if (!ingredient || typeof ingredient.prefab !== "string") {
+                        return;
+                    }
+                    var key = ingredient.prefab.toLocaleLowerCase();
+                    var consumers = catalogReverseRecipes.get(key) || [];
+                    if (!consumers.some(function (item) { return item.token === outputItem.token; })) {
+                        consumers.push(outputItem);
+                    }
+                    catalogReverseRecipes.set(key, consumers);
+                });
+            });
+        });
+
+        var version = payload.version || {};
+        var versionParts = [];
+        if (version.game) {
+            versionParts.push("Game " + version.game);
+        }
+        if (version.mod) {
+            versionParts.push("ValheimOne " + version.mod);
+        }
+        if (version.schema !== undefined) {
+            versionParts.push("schema " + version.schema);
+        }
+        elements.codexVersion.textContent = versionParts.length > 0
+            ? versionParts.join(" · ")
+            : "Valheim item & recipe catalog";
+        elements.codexSearch.disabled = false;
+        elements.codexCategory.disabled = false;
+        setCodexLoadState("ready");
+        applyCodexFilters(true);
+
+        if (pendingCodexToken) {
+            var jumpToken = pendingCodexToken;
+            pendingCodexToken = "";
+            jumpToCodexItem(jumpToken, false);
+        }
+    }
+
+    async function loadCatalog() {
+        if (catalogPayload) {
+            setCodexLoadState("ready");
+            return catalogPayload;
+        }
+        if (catalogPromise) {
+            return catalogPromise;
+        }
+
+        elements.codexSearch.disabled = true;
+        elements.codexCategory.disabled = true;
+        setCodexLoadState("loading");
+        catalogPromise = (async function () {
+            try {
+                var response = await fetch("/api/catalog", { credentials: "same-origin" });
+                if (!response.ok) {
+                    throw new Error("HTTP " + response.status);
+                }
+                var payload = await response.json();
+                if (!payload || !Array.isArray(payload.items)) {
+                    throw new Error("Invalid catalog response");
+                }
+                buildCatalogIndexes(payload);
+                return payload;
+            } catch (error) {
+                setCodexLoadState("error");
+                throw error;
+            } finally {
+                catalogPromise = null;
+            }
+        }());
+        catalogPromise.catch(function () {
+            return null;
+        });
+        return catalogPromise;
+    }
+
+    function applyCodexFilters(resetScroll) {
+        if (!catalogPayload) {
+            return;
+        }
+        var queryText = elements.codexSearch.value.trim().toLocaleLowerCase();
+        var category = elements.codexCategory.value || "all";
+        codexFilteredItems = catalogItems.filter(function (item) {
+            if (category !== "all" && codexCategoryForType(item.type) !== category) {
+                return false;
+            }
+            if (!queryText) {
+                return true;
+            }
+            return [item.name, item.token, cleanCatalogText(item.description)]
+                .join("\n")
+                .toLocaleLowerCase()
+                .indexOf(queryText) !== -1;
+        });
+
+        if (!codexFilteredItems.some(function (item) { return item.token === codexExpandedToken; })) {
+            codexExpandedToken = "";
+            codexExpandedHeight = 0;
+            codexShowAllReverseUses = false;
+        }
+        elements.codexCount.textContent = codexFilteredItems.length.toLocaleString("en-US") +
+            " of " + catalogItems.length.toLocaleString("en-US") + " items";
+        if (resetScroll !== false) {
+            elements.codexScroll.scrollTop = 0;
+        }
+        codexWindowKey = "";
+        renderCodexWindow(true);
+    }
+
+    function codexExpandedIndex() {
+        if (!codexExpandedToken) {
+            return -1;
+        }
+        return codexFilteredItems.findIndex(function (item) {
+            return item.token === codexExpandedToken;
+        });
+    }
+
+    function codexIndexAtOffset(offset, expandedIndex) {
+        if (expandedIndex < 0 || codexExpandedHeight <= 0) {
+            return Math.floor(offset / CODEX_ROW_HEIGHT);
+        }
+        var expandedRowBottom = (expandedIndex + 1) * CODEX_ROW_HEIGHT;
+        if (offset <= expandedRowBottom) {
+            return Math.floor(offset / CODEX_ROW_HEIGHT);
+        }
+        if (offset < expandedRowBottom + codexExpandedHeight) {
+            return expandedIndex;
+        }
+        return Math.floor((offset - codexExpandedHeight) / CODEX_ROW_HEIGHT);
+    }
+
+    function createCodexQuickStat(label, value, className) {
+        var stat = codexElement("span", "codex-quick-stat" + (className ? " " + className : ""));
+        stat.appendChild(codexElement("b", "", label));
+        stat.appendChild(document.createTextNode(" " + value));
+        return stat;
+    }
+
+    function createCodexItemRow(item, index, top, expanded) {
+        var entry = codexElement("div", "codex-item-entry");
+        entry.setAttribute("role", "listitem");
+        entry.style.top = top + "px";
+
+        var row = codexElement("button", "codex-item-row" + (expanded ? " is-expanded" : ""));
+        row.type = "button";
+        row.dataset.codexOpen = item.token;
+        row.setAttribute("aria-expanded", String(expanded));
+        if (expanded) {
+            row.setAttribute("aria-controls", "codex-detail-" + index);
+        }
+
+        var category = codexCategoryForType(item.type);
+        var glyph = codexElement("span", "codex-category-glyph");
+        glyph.title = CODEX_CATEGORY_LABELS[category];
+        glyph.innerHTML = iconMarkup("codex_" + category, "◇");
+        row.appendChild(glyph);
+
+        var identity = codexElement("span", "codex-item-identity");
+        identity.appendChild(codexElement("strong", "codex-item-name", item.name || item.token));
+        identity.appendChild(codexElement("small", "codex-item-token", item.token));
+        row.appendChild(identity);
+        row.appendChild(codexElement("span", "codex-item-type", humanizeCatalogName(item.type) || "Misc"));
+
+        var quickStats = codexElement("span", "codex-quick-stats");
+        quickStats.appendChild(createCodexQuickStat("Wt", formatCatalogNumber(item.weight)));
+        quickStats.appendChild(createCodexQuickStat("Stack", formatCatalogNumber(item.maxStackSize)));
+        quickStats.appendChild(createCodexQuickStat(
+            "",
+            item.teleportable === false ? "No portal" : "Portal",
+            item.teleportable === false ? "is-no-portal" : "is-portal"
+        ));
+        row.appendChild(quickStats);
+        row.appendChild(codexElement("span", "codex-row-chevron", "›"));
+        entry.appendChild(row);
+        return entry;
+    }
+
+    function catalogDamageSummary(damage) {
+        if (!damage || typeof damage !== "object") {
+            return "";
+        }
+        var base = damage.base && typeof damage.base === "object" ? damage.base : {};
+        var perLevel = damage.perLevel && typeof damage.perLevel === "object" ? damage.perLevel : {};
+        return Array.from(new Set(Object.keys(base).concat(Object.keys(perLevel)))).filter(function (key) {
+            return Number(base[key]) !== 0 || Number(perLevel[key]) !== 0;
+        }).map(function (key) {
+            var value = humanizeCatalogName(key);
+            value = value.charAt(0).toUpperCase() + value.slice(1);
+            value += " " + formatCatalogNumber(base[key] || 0);
+            if (Number(perLevel[key])) {
+                value += " (+" + formatCatalogNumber(perLevel[key]) + "/quality)";
+            }
+            return value;
+        }).join(" · ");
+    }
+
+    function appendCodexStat(stats, label, value) {
+        var record = codexElement("div", "codex-stat");
+        record.appendChild(codexElement("dt", "", label));
+        record.appendChild(codexElement("dd", "", value));
+        stats.appendChild(record);
+    }
+
+    function createCodexSection(title) {
+        var section = codexElement("section", "codex-detail-section");
+        section.appendChild(codexElement("h2", "", title));
+        var body = codexElement("div", "codex-detail-section-body");
+        section.appendChild(body);
+        return { section: section, body: body };
+    }
+
+    function appendCodexRecipe(sectionBody, recipe) {
+        var recipeCard = codexElement("article", "codex-recipe");
+        var heading = codexElement("div", "codex-recipe-heading");
+        if (recipe.station && recipe.station.name) {
+            heading.appendChild(document.createTextNode("Crafted at "));
+            heading.appendChild(codexElement("strong", "", recipe.station.name));
+            if (Number.isFinite(Number(recipe.minStationLevel))) {
+                heading.appendChild(document.createTextNode(" (lvl " + recipe.minStationLevel + ")"));
+            }
+        } else {
+            heading.textContent = "Crafted by hand";
+        }
+        if (Number(recipe.amount) > 1) {
+            heading.appendChild(document.createTextNode(" · makes " + formatCatalogNumber(recipe.amount)));
+        }
+        recipeCard.appendChild(heading);
+
+        var ingredients = codexElement("div", "codex-ingredients");
+        (Array.isArray(recipe.ingredients) ? recipe.ingredients : []).forEach(function (ingredient, index) {
+            if (index > 0) {
+                ingredients.appendChild(document.createTextNode(", "));
+            }
+            ingredients.appendChild(makeCodexJumpLink(ingredient));
+            ingredients.appendChild(document.createTextNode(" ×" + formatCatalogNumber(ingredient.amount)));
+            if (Number(ingredient.amountPerLevel) > 0) {
+                ingredients.appendChild(codexElement(
+                    "small",
+                    "codex-per-level",
+                    " +" + formatCatalogNumber(ingredient.amountPerLevel) + "/quality"
+                ));
+            }
+        });
+        recipeCard.appendChild(ingredients);
+        sectionBody.appendChild(recipeCard);
+    }
+
+    function appendCodexConversion(sectionBody, record, outputKey) {
+        var line = codexElement("div", "codex-conversion");
+        var stationName = record.station && record.station.name
+            ? record.station.name
+            : humanizeCatalogName(record.method || "Source");
+        line.appendChild(codexElement("strong", "", stationName + ":"));
+        line.appendChild(document.createTextNode(" " + formatCatalogNumber(record.amount || 1) + "× "));
+        line.appendChild(makeCodexJumpLink(record[outputKey] || {}));
+        sectionBody.appendChild(line);
+    }
+
+    function createCodexDetail(item, index, top) {
+        var card = codexElement("article", "codex-item-detail");
+        card.id = "codex-detail-" + index;
+        card.setAttribute("role", "region");
+        card.setAttribute("aria-label", (item.name || item.token) + " details");
+        card.style.top = top + "px";
+
+        var description = cleanCatalogText(item.description);
+        if (description) {
+            card.appendChild(codexElement("p", "codex-description", description));
+        }
+
+        var stats = codexElement("dl", "codex-stat-block");
+        appendCodexStat(stats, "Weight", formatCatalogNumber(item.weight));
+        appendCodexStat(stats, "Stack", formatCatalogNumber(item.maxStackSize));
+        appendCodexStat(stats, "Max quality", formatCatalogNumber(item.maxQuality));
+        appendCodexStat(stats, "Tool tier", formatCatalogNumber(item.toolTier));
+        appendCodexStat(stats, "Portal", item.teleportable === false ? "No" : "Yes");
+        var damageSummary = catalogDamageSummary(item.damage);
+        if (damageSummary) {
+            appendCodexStat(stats, "Damage", damageSummary);
+        }
+        if (item.armor && Number.isFinite(Number(item.armor.base))) {
+            var armorSummary = formatCatalogNumber(item.armor.base);
+            if (Number(item.armor.perLevel)) {
+                armorSummary += " (+" + formatCatalogNumber(item.armor.perLevel) + "/quality)";
+            }
+            appendCodexStat(stats, "Armor", armorSummary);
+        }
+        card.appendChild(stats);
+
+        var recipes = (Array.isArray(item.recipes) ? item.recipes : []).filter(function (recipe) {
+            return recipe && recipe.enabled !== false;
+        });
+        if (recipes.length > 0) {
+            var recipesSection = createCodexSection("Recipes");
+            recipes.forEach(function (recipe) {
+                appendCodexRecipe(recipesSection.body, recipe);
+            });
+            card.appendChild(recipesSection.section);
+        }
+
+        var sources = Array.isArray(item.sources) ? item.sources : [];
+        if (sources.length > 0) {
+            var sourceSection = createCodexSection("Obtained from");
+            sources.forEach(function (source) {
+                appendCodexConversion(sourceSection.body, source, "input");
+            });
+            card.appendChild(sourceSection.section);
+        }
+
+        var uses = Array.isArray(item.uses) ? item.uses : [];
+        var reverseUses = catalogReverseRecipes.get(String(item.token || "").toLocaleLowerCase()) || [];
+        if (uses.length > 0 || reverseUses.length > 0) {
+            var usesSection = createCodexSection("Used in");
+            uses.forEach(function (use) {
+                appendCodexConversion(usesSection.body, use, "output");
+            });
+            if (reverseUses.length > 0) {
+                var reverse = codexElement("div", "codex-reverse-uses");
+                reverse.appendChild(codexElement("strong", "codex-reverse-label", "Used to craft:"));
+                var visibleUses = codexShowAllReverseUses
+                    ? reverseUses
+                    : reverseUses.slice(0, CODEX_REVERSE_USE_LIMIT);
+                visibleUses.forEach(function (consumer) {
+                    reverse.appendChild(makeCodexJumpLink(
+                        { prefab: consumer.token, name: consumer.name },
+                        "codex-use-chip"
+                    ));
+                });
+                if (visibleUses.length < reverseUses.length) {
+                    var more = codexElement(
+                        "button",
+                        "codex-use-chip is-more",
+                        "+" + (reverseUses.length - visibleUses.length) + " more"
+                    );
+                    more.type = "button";
+                    more.dataset.codexMoreUses = "true";
+                    reverse.appendChild(more);
+                }
+                usesSection.body.appendChild(reverse);
+            }
+            card.appendChild(usesSection.section);
+        }
+
+        var droppedBy = Array.isArray(item.droppedBy) ? item.droppedBy : [];
+        if (droppedBy.length > 0) {
+            var dropsSection = createCodexSection("Dropped by");
+            var dropList = codexElement("div", "codex-drop-list");
+            droppedBy.forEach(function (drop) {
+                var label = drop && drop.name ? drop.name : (drop.creature || drop.prefab || "Unknown creature");
+                var hasChance = drop && drop.chance !== undefined && drop.chance !== null;
+                var chance = Number(hasChance ? drop.chance : NaN);
+                if (hasChance && Number.isFinite(chance)) {
+                    var percentage = chance <= 1 ? chance * 100 : chance;
+                    label += " (" + formatCatalogNumber(percentage) + "%)";
+                }
+                dropList.appendChild(codexElement("span", "codex-drop", label));
+            });
+            dropsSection.body.appendChild(dropList);
+            card.appendChild(dropsSection.section);
+        }
+
+        return card;
+    }
+
+    function measureCodexDetail() {
+        var detail = elements.codexList.querySelector(".codex-item-detail");
+        if (!detail) {
+            return;
+        }
+        var measuredHeight = Math.ceil(detail.getBoundingClientRect().height);
+        if (measuredHeight > 0 && measuredHeight !== codexExpandedHeight) {
+            codexExpandedHeight = measuredHeight;
+            codexWindowKey = "";
+            renderCodexWindow(true);
+        }
+    }
+
+    function renderCodexWindow(force) {
+        if (!catalogPayload || elements.codexScroll.hidden) {
+            return;
+        }
+
+        var expandedIndex = codexExpandedIndex();
+        var totalHeight = codexFilteredItems.length * CODEX_ROW_HEIGHT +
+            (expandedIndex >= 0 ? codexExpandedHeight : 0);
+        elements.codexList.style.height = Math.max(totalHeight, 1) + "px";
+
+        if (codexFilteredItems.length === 0) {
+            var emptyKey = "empty";
+            if (!force && codexWindowKey === emptyKey) {
+                return;
+            }
+            codexWindowKey = emptyKey;
+            elements.codexList.textContent = "";
+            elements.codexList.appendChild(codexElement(
+                "p",
+                "codex-empty",
+                "No items match those runes."
+            ));
+            return;
+        }
+
+        var viewTop = elements.codexScroll.scrollTop;
+        var viewBottom = viewTop + elements.codexScroll.clientHeight;
+        var start = Math.max(
+            0,
+            codexIndexAtOffset(viewTop, expandedIndex) - CODEX_WINDOW_OVERSCAN
+        );
+        var end = Math.min(
+            codexFilteredItems.length,
+            codexIndexAtOffset(viewBottom, expandedIndex) + CODEX_WINDOW_OVERSCAN + 1
+        );
+        var windowKey = [
+            start,
+            end,
+            codexExpandedToken,
+            codexExpandedHeight,
+            codexShowAllReverseUses,
+            codexFilteredItems.length
+        ].join("|");
+        if (!force && codexWindowKey === windowKey) {
+            return;
+        }
+        codexWindowKey = windowKey;
+        elements.codexList.textContent = "";
+
+        for (var index = start; index < end; index++) {
+            var top = index * CODEX_ROW_HEIGHT +
+                (expandedIndex >= 0 && index > expandedIndex ? codexExpandedHeight : 0);
+            var isExpanded = index === expandedIndex;
+            elements.codexList.appendChild(createCodexItemRow(
+                codexFilteredItems[index],
+                index,
+                top,
+                isExpanded
+            ));
+            if (isExpanded) {
+                elements.codexList.appendChild(createCodexDetail(
+                    codexFilteredItems[index],
+                    index,
+                    top + CODEX_ROW_HEIGHT
+                ));
+            }
+        }
+
+        if (expandedIndex >= start && expandedIndex < end) {
+            window.requestAnimationFrame(measureCodexDetail);
+        }
+    }
+
+    function openCodexItem(item, scrollToItem, updateHash) {
+        if (!item) {
+            return;
+        }
+        var closing = codexExpandedToken === item.token && !scrollToItem;
+        codexExpandedToken = closing ? "" : item.token;
+        codexExpandedHeight = 0;
+        codexShowAllReverseUses = false;
+        codexWindowKey = "";
+
+        if (!closing && scrollToItem) {
+            var index = codexFilteredItems.findIndex(function (candidate) {
+                return candidate.token === item.token;
+            });
+            if (index >= 0) {
+                elements.codexScroll.scrollTop = index * CODEX_ROW_HEIGHT;
+            }
+        }
+        renderCodexWindow(true);
+        if (updateHash !== false) {
+            writeCodexHash(codexExpandedToken);
+        }
+    }
+
+    function jumpToCodexItem(tokenValue, updateHash) {
+        if (!catalogPayload) {
+            pendingCodexToken = tokenValue || "";
+            setActiveTab("codex", false);
+            loadCatalog();
+            return;
+        }
+        var item = catalogItemsByToken.get(String(tokenValue || "").toLocaleLowerCase());
+        if (!item) {
+            showNoticeToast("That item is not present in this Codex");
+            return;
+        }
+
+        elements.codexSearch.value = "";
+        elements.codexCategory.value = "all";
+        applyCodexFilters(false);
+        openCodexItem(item, true, updateHash);
+    }
+
+    function handleCodexHashChange() {
+        var hashToken = codexTokenFromHash(window.location.hash);
+        if (hashToken === null) {
+            if (activeTab === "codex") {
+                requestedTab = "map";
+                saveRequestedTab("map");
+                setActiveTab("map", false);
+            }
+            return;
+        }
+
+        requestedTab = "codex";
+        saveRequestedTab("codex");
+        setActiveTab("codex", false);
+        if (hashToken) {
+            jumpToCodexItem(hashToken, false);
+        }
+    }
+
+    function bindCodexEvents() {
+        elements.codexSearch.addEventListener("input", function () {
+            window.clearTimeout(codexSearchTimer);
+            codexSearchTimer = window.setTimeout(function () {
+                codexSearchTimer = 0;
+                applyCodexFilters(true);
+            }, CODEX_SEARCH_DEBOUNCE_MS);
+        });
+        elements.codexCategory.addEventListener("change", function () {
+            window.clearTimeout(codexSearchTimer);
+            codexSearchTimer = 0;
+            applyCodexFilters(true);
+        });
+        elements.codexScroll.addEventListener("scroll", function () {
+            renderCodexWindow(false);
+        });
+        elements.codexList.addEventListener("click", function (event) {
+            var jumpLink = event.target.closest("[data-codex-token]");
+            if (jumpLink) {
+                event.preventDefault();
+                jumpToCodexItem(jumpLink.dataset.codexToken, true);
+                return;
+            }
+            var moreUses = event.target.closest("[data-codex-more-uses]");
+            if (moreUses) {
+                codexShowAllReverseUses = true;
+                codexWindowKey = "";
+                renderCodexWindow(true);
+                return;
+            }
+            var row = event.target.closest("[data-codex-open]");
+            if (row) {
+                openCodexItem(
+                    catalogItemsByToken.get(row.dataset.codexOpen.toLocaleLowerCase()),
+                    false,
+                    true
+                );
+            }
+        });
+        elements.codexState.addEventListener("click", function (event) {
+            if (event.target.closest("[data-codex-retry]")) {
+                loadCatalog();
+            }
+        });
+        window.addEventListener("resize", function () {
+            if (activeTab === "codex" && catalogPayload) {
+                codexWindowKey = "";
+                renderCodexWindow(true);
+            }
+        });
+        window.addEventListener("hashchange", handleCodexHashChange);
     }
 
     async function fetchConsoleJson(path, options) {
@@ -2504,6 +3288,36 @@
         });
         elements.consoleTab.addEventListener("click", function () {
             setActiveTab("console", true);
+        });
+        elements.codexTab.addEventListener("click", function () {
+            setActiveTab("codex", true);
+        });
+        elements.tabList.addEventListener("keydown", function (event) {
+            if (["ArrowLeft", "ArrowRight", "Home", "End"].indexOf(event.key) === -1) {
+                return;
+            }
+            var tabs = [elements.mapTab, elements.consoleTab, elements.codexTab].filter(
+                function (button) { return !button.hidden; }
+            );
+            var currentIndex = Math.max(0, tabs.indexOf(document.activeElement));
+            var nextIndex = currentIndex;
+            if (event.key === "Home") {
+                nextIndex = 0;
+            } else if (event.key === "End") {
+                nextIndex = tabs.length - 1;
+            } else if (event.key === "ArrowLeft") {
+                nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+            } else {
+                nextIndex = (currentIndex + 1) % tabs.length;
+            }
+            event.preventDefault();
+            tabs[nextIndex].focus();
+            setActiveTab(
+                tabs[nextIndex] === elements.consoleTab
+                    ? "console"
+                    : (tabs[nextIndex] === elements.codexTab ? "codex" : "map"),
+                true
+            );
         });
         elements.consoleLog.addEventListener("scroll", function () {
             var distanceFromBottom = elements.consoleLog.scrollHeight -
@@ -7216,7 +8030,7 @@
 
     function writeMapHash() {
         hashUpdateTimer = 0;
-        if (!map || !mapMetrics) {
+        if (activeTab === "codex" || !map || !mapMetrics) {
             return;
         }
 
@@ -13764,6 +14578,8 @@
 
     bindCinemaEvents();
     bindConsoleEvents();
+    bindCodexEvents();
+    setActiveTab(requestedTab, false);
     bindPopupDocumentEvents();
     elements.sagaToggle.addEventListener("click", function () {
         setSagaCollapsed(!elements.sagaPanel.classList.contains("is-collapsed"));
@@ -13821,6 +14637,7 @@
         window.clearInterval(layersStalenessTimer);
         window.clearInterval(savedBadgeTimer);
         window.clearTimeout(dayToastTimer);
+        window.clearTimeout(codexSearchTimer);
         document.removeEventListener("visibilitychange", handleMarkerTweenVisibility);
         markerTweens.clear();
         window.cancelAnimationFrame(markerTweenFrame);

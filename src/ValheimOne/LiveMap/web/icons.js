@@ -35,6 +35,36 @@
             '<path d="m12 7 4.3 5-4.3 5-4.3-5L12 7Z"/>' +
             '<circle cx="12" cy="12" r="1.2"/>'
         ),
+        codex_weapons: svg(
+            '<path d="m4 20 4-4m-2 2 2 2 2-2-2-2"/>' +
+            '<path d="M8 16 18.5 5.5 20 3l-2.5 1.5L7 15"/>' +
+            '<path d="m13 8 3 3"/>'
+        ),
+        codex_armor: svg(
+            '<path d="M7 4 4 7l2 4 2-1v10h8V10l2 1 2-4-3-3-2 2H9L7 4Z"/>' +
+            '<path d="M9 6c.5 2 5.5 2 6 0M12 9v8"/>'
+        ),
+        codex_tools: svg(
+            '<path d="m4 20 8-8m-3-3 3 3 7-7-3-3-7 7Z"/>' +
+            '<path d="m5 15 4 4"/>'
+        ),
+        codex_materials: svg(
+            '<path d="m12 3 7 4v9l-7 5-7-5V7l7-4Z"/>' +
+            '<path d="m5 7 7 4 7-4M12 11v10"/>'
+        ),
+        codex_consumables: svg(
+            '<path d="M9 3h6v3l2 3v10H7V9l2-3V3Z"/>' +
+            '<path d="M9 6h6m-8 7h10M10 16h4"/>'
+        ),
+        codex_trophies: svg(
+            '<path d="M8 4h8v4c0 3-1.5 5-4 5S8 11 8 8V4Z"/>' +
+            '<path d="M8 6H4c0 3 1.5 5 4.5 5m7-5H20c0 3-1.5 5-4.5 5M12 13v4m-4 3h8m-7-3h6"/>'
+        ),
+        codex_misc: svg(
+            '<path d="m12 3 8 9-8 9-8-9 8-9Z"/>' +
+            '<path d="m12 7 4 5-4 5-4-5 4-5Z"/>' +
+            '<circle cx="12" cy="12" r="1"/>'
+        ),
         ghosts: svg(
             '<path d="M5.5 20V10.5a6.5 6.5 0 0 1 13 0V20l-2.2-1.8-2.1 1.8-2.2-1.8L9.8 20l-2.1-1.8L5.5 20Z"/>' +
             '<circle cx="9.5" cy="11" r=".8"/><circle cx="14.5" cy="11" r=".8"/>' +
