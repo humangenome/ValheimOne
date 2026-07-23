@@ -6,6 +6,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Added
 
+- LiveMap now maintains a server-side dungeon registry with world-wide entrance discovery, generated-interior room layouts decoded from each dungeon's `roomData` ZDO, and bounds-based resolution of players inside.
 - The native and web consoles now support `vo item <name>` catalog summaries with recipe-use lookup and lazy item-name autocomplete.
 - LiveMap now includes a public Codex of Items tab with searchable, categorized item stats, recipes, conversion sources, creature drops, and jump-link recipe navigation.
 - LiveMap now serves a public, versioned item and recipe catalog from `GET /api/catalog`, including crafting, conversion, and creature-drop sources with day-long ETag caching.

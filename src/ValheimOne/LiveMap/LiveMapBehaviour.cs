@@ -29,6 +29,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private MapTableReader? _mapTableReader;
     private EntityTracker? _entityTracker;
     private ResourcePoiTracker? _resourcePoiTracker;
+    private DungeonRegistry? _dungeonRegistry;
     private PlayerBaseTracker? _playerBaseTracker;
     private LiveMapHttpServer? _httpServer;
     private LogRingBuffer? _logRingBuffer;
@@ -61,6 +62,11 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     internal EntityMapSnapshot EntitySnapshot => _entityTracker?.Snapshot ?? EntityMapSnapshot.Empty;
 
     internal bool EntityTrackerReady => _entityTracker != null;
+
+    internal DungeonRegistrySnapshot DungeonSnapshot =>
+        _dungeonRegistry?.Snapshot ?? DungeonRegistrySnapshot.Empty;
+
+    internal bool DungeonRegistryReady => _dungeonRegistry != null;
 
     internal string ServiceState
     {
@@ -114,6 +120,23 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _entityTracker?.NoteEntitiesRequested();
     }
 
+    internal DungeonRegistrySnapshot EnsureDungeonsScanned()
+    {
+        return _dungeonRegistry?.EnsureScanned() ?? DungeonRegistrySnapshot.Empty;
+    }
+
+    internal bool TryGetDungeonId(Vector3 playerPosition, out string dungeonId)
+    {
+        DungeonRegistry? registry = _dungeonRegistry;
+        if (registry != null)
+        {
+            return registry.TryGetDungeonId(playerPosition, out dungeonId);
+        }
+
+        dungeonId = string.Empty;
+        return false;
+    }
+
     private void Update()
     {
         if (_stopped || _config == null || _log == null || _enabledCheck == null)
@@ -165,6 +188,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _mapTableReader?.Tick(now, _fogMode == "explored");
         _entityTracker?.Tick(now);
         _resourcePoiTracker?.Tick(now);
+        _dungeonRegistry?.Tick(now);
         _playerBaseTracker?.Tick();
         if (!idleChanged && now >= _nextPlayerUpdate)
         {
@@ -277,6 +301,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _entityTracker = entityTracker;
         ResourcePoiTracker resourcePoiTracker = new ResourcePoiTracker(config, log);
         _resourcePoiTracker = resourcePoiTracker;
+        DungeonRegistry dungeonRegistry = new DungeonRegistry(zoneSystem, log);
+        _dungeonRegistry = dungeonRegistry;
         PlayerBaseTracker playerBaseTracker = new PlayerBaseTracker(log);
         _playerBaseTracker = playerBaseTracker;
         _activityHeatmap = _getActivityHeatmap?.Invoke();
@@ -686,6 +712,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _mapTableReader = null;
         _entityTracker = null;
         _resourcePoiTracker = null;
+        _dungeonRegistry = null;
         _activityHeatmap = null;
         _leaderboardStore = null;
         _playerBaseTracker?.Stop();

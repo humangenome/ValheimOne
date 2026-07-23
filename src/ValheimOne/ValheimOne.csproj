@@ -26,6 +26,7 @@
     <Reference Include="assembly_valheim"><HintPath>$(ValheimPublicized)/assembly_valheim_publicized.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="assembly_utils"><HintPath>$(ValheimPublicized)/assembly_utils_publicized.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="assembly_guiutils"><HintPath>$(ValheimPublicized)/assembly_guiutils_publicized.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="SoftReferenceableAssets"><HintPath>$(ValheimManaged)/SoftReferenceableAssets.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Splatform"><HintPath>$(ValheimManaged)/Splatform.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine"><HintPath>$(ValheimManaged)/UnityEngine.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="UnityEngine.CoreModule"><HintPath>$(ValheimManaged)/UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
