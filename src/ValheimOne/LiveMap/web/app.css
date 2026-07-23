@@ -2402,8 +2402,14 @@ input {
     height: 7px;
     border: 1px solid var(--border);
     border-radius: 999px;
-    background: linear-gradient(90deg, var(--accent), var(--sun), var(--raid));
-    box-shadow: 0 0 7px var(--accent-soft);
+    background: linear-gradient(
+        90deg,
+        rgba(217, 177, 104, 0.14),
+        rgba(217, 177, 104, 0.48) 32%,
+        rgba(224, 168, 60, 0.8) 68%,
+        rgba(201, 106, 82, 0.96)
+    );
+    box-shadow: 0 0 9px rgba(224, 168, 60, 0.28);
 }
 
 .leaflet-bottom .compass-control {

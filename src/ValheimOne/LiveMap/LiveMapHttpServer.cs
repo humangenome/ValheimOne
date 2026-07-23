@@ -388,6 +388,10 @@ internal sealed class LiveMapHttpServer
             {
                 ServeTrail(request, response, viewLevel);
             }
+            else if (isGet && path == "/api/chat")
+            {
+                ServeChat(response, viewLevel);
+            }
             else if (isGet && path == "/api/heatmap")
             {
                 ServeHeatmap(request, response, viewLevel);
@@ -2401,6 +2405,32 @@ internal sealed class LiveMapHttpServer
             chat.UnixMs.ToString(CultureInfo.InvariantCulture));
         json.Append('}');
         return json.ToString();
+    }
+
+    private static void ServeChat(HttpListenerResponse response, ViewLevel viewLevel)
+    {
+        if (viewLevel == ViewLevel.Public)
+        {
+            WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
+        var chats = new List<MapChatSnapshot>(32);
+        MapPingPatch.CopyChatAfter(0L, chats);
+        var json = new StringBuilder(16 + (chats.Count * 384));
+        json.Append("{\"chats\":[");
+        for (int index = 0; index < chats.Count; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            json.Append(BuildChatJson(chats[index]));
+        }
+
+        json.Append("]}");
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
 
     private void ServeHeatmap(

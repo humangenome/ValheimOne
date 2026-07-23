@@ -46,7 +46,7 @@ curl http://<server-ip>:8790/api/status
 
 ## Admin API (token required)
 
-With `[LiveMap] ConsoleEnabled = true` **and** a non-empty `AccessToken`, the same port serves an admin API. Every endpoint below returns `401` without the token (query `?token=...` or header `X-LiveMap-Token`), including when `PublicView = true`. With an empty `AccessToken` the console endpoints stay locked out entirely.
+With a non-empty `AccessToken`, the same port serves admin actions; console-specific routes additionally require `[LiveMap] ConsoleEnabled = true`. Every endpoint below returns `401` without the token (query `?token=...` or header `X-LiveMap-Token`), including when `PublicView = true`. With an empty `AccessToken` the admin endpoints stay locked out entirely.
 
 | Endpoint | Method | Purpose |
 |---|---|---|
@@ -56,6 +56,7 @@ With `[LiveMap] ConsoleEnabled = true` **and** a non-empty `AccessToken`, the sa
 | `/api/admin/kick` | POST `{"player":"name/ip/userID"}` | Kick a player. |
 | `/api/admin/ban` / `/api/admin/unban` | POST `{"player":"..."}` | Ban / unban. |
 | `/api/admin/banlist` | GET | Current ban list. |
+| `/api/admin/chat` | POST `{"text":"..."}` | Broadcast up to 256 characters as a server shout. Limited to 5 sends per 10 seconds and recorded in the admin activity audit. |
 | `/api/admin/save` | POST | Trigger a world + profile save. Returns `alreadySaving` when a save was in flight. |
 | `/api/admin/shutdown` | POST `{"seconds":60,"message":"Maintenance"}` or `{"action":"cancel"}` | Schedule a save-first server shutdown (5–3600 seconds) or cancel one. Returns the pending deadline and message. `{"cancel":true}` is also accepted. |
 | `/api/stats` | GET | Uptime, player/peer counts, ZDO count, Mono heap, frame avg/max ms, world day/time, and pending-shutdown state. |
@@ -64,7 +65,10 @@ With `[LiveMap] ConsoleEnabled = true` **and** a non-empty `AccessToken`, the sa
 
 | Endpoint | Method | Purpose |
 |---|---|---|
-| `/api/events` | GET (SSE) | Server-Sent-Events stream. Map-view auth (admin or public token rules). Named events with the same JSON shapes as the polling endpoints: `players`, `status` (change-detected), and — for console-authorized admin tokens only — `log` (incremental, cursor-carrying). Sends `retry: 5000`; capped at 8 concurrent streams (`409` beyond). |
+| `/api/events` | GET (SSE) | Server-Sent-Events stream. Map-view auth rules apply. Named events include `players`, change-detected `status`, new `chat` messages for admin/shared views, and — for console-authorized admin tokens only — incremental `log` batches. Sends `retry: 5000`; capped at 8 concurrent streams (`409` beyond). |
+| `/api/chat` | GET | Admin/shared only; public returns `404`. Returns the current 32-message ring buffer oldest-first as `{"chats":[{"sequence":1,"x":0,"z":0,"playerName":"...","text":"...","shout":false,"unixMs":1720000000000}]}`. Player chat follows `MirrorChat`; server-originated shouts remain available when mirroring is off. |
+| `/api/heatmap` | GET `?window=24h|7d` | Admin/shared only; public returns `404`. Returns the aggregate activity grid used by the default-off Activity Heatmap layer. |
+| `/api/leaderboard` | GET | Admin/shared only; public returns `404`. Returns per-wipe playtime, deaths, and distance traveled for up to 50 display names; no platform identifiers are exposed. |
 | `/api/entities` | GET | Admin view + `EntityLayer = true` only. Ship/cart/portal positions from ZDO scans (5 s refresh, 500-entity cap) plus the active raid `event` object. |
 
 Admins also get an `"event"` raid object (`{name,x,z,radius,elapsed,duration}` or `null`) on `/api/status` regardless of `EntityLayer`.

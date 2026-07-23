@@ -603,6 +603,10 @@
     var sagaEvents = [];
     var sagaChatEvents = [];
     var chatHistory = [];
+    var chatHistoryRequested = false;
+    var chatHistoryRequestSequence = 0;
+    var chatSequences = new Set();
+    var liveChatSequences = new Set();
     var chatSendPending = false;
     var sagaCursor = 0;
     var sagaEnabled = null;
@@ -4684,7 +4688,9 @@
             image.data[offset] = color[0];
             image.data[offset + 1] = color[1];
             image.data[offset + 2] = color[2];
-            image.data[offset + 3] = Math.round((0.08 + (0.25 * Math.sqrt(intensity))) * 255);
+            image.data[offset + 3] = Math.round(
+                (0.10 + (0.80 * Math.pow(intensity, 1.15))) * 255
+            );
         });
         context.putImageData(image, 0, 0);
         return canvas;
@@ -6149,6 +6155,38 @@
         return hours + ":" + minutes;
     }
 
+    function normalizeChatPayload(payload) {
+        if (!payload || typeof payload !== "object") {
+            return null;
+        }
+
+        var sequence = Number(payload.sequence);
+        var x = Number(payload.x);
+        var z = Number(payload.z);
+        var unixMs = Number(payload.unixMs);
+        var playerName = typeof payload.playerName === "string"
+            ? payload.playerName.trim()
+            : "";
+        var text = typeof payload.text === "string" ? payload.text.trim() : "";
+        if (!Number.isFinite(sequence) || sequence <= 0 ||
+            !Number.isFinite(x) || !Number.isFinite(z) ||
+            !Number.isFinite(unixMs) || unixMs <= 0 ||
+            !text) {
+            return null;
+        }
+
+        return {
+            playerName: playerName || "A viking",
+            receivedAt: Date.now(),
+            sequence: Math.floor(sequence),
+            shout: payload.shout === true,
+            text: text.slice(0, 256),
+            unixMs: Math.floor(unixMs),
+            x: x,
+            z: z
+        };
+    }
+
     function renderChatHistory() {
         var distanceFromBottom = elements.chatList.scrollHeight -
             elements.chatList.scrollTop - elements.chatList.clientHeight;
@@ -6185,50 +6223,66 @@
         }
     }
 
-    function appendChatHistory(chat) {
-        if (chatHistory.some(function (entry) { return entry.sequence === chat.sequence; })) {
-            return;
+    function appendChatHistory(chat, deferRender) {
+        if (chatSequences.has(chat.sequence)) {
+            return false;
         }
 
+        chatSequences.add(chat.sequence);
         chatHistory.push(chat);
         chatHistory.sort(function (left, right) {
             return left.sequence - right.sequence;
         });
         chatHistory = chatHistory.slice(-CHAT_HISTORY_LIMIT);
-        renderChatHistory();
+        if (!deferRender) {
+            renderChatHistory();
+        }
+        return true;
+    }
+
+    async function ensureChatHistory() {
+        if ((currentView !== "admin" && currentView !== "shared") ||
+            chatHistoryRequested || (eventSource && !eventSourceOpen)) {
+            return;
+        }
+
+        chatHistoryRequested = true;
+        var requestSequence = ++chatHistoryRequestSequence;
+        try {
+            var payload = await fetchJson("/api/chat");
+            if (requestSequence !== chatHistoryRequestSequence ||
+                currentView === "public" || !payload ||
+                !Array.isArray(payload.chats)) {
+                return;
+            }
+
+            payload.chats.forEach(function (entry) {
+                var chat = normalizeChatPayload(entry);
+                if (chat) {
+                    appendChatHistory(chat, true);
+                }
+            });
+            renderChatHistory();
+        } catch (error) {
+            return;
+        }
     }
 
     function handleChatPayload(payload) {
-        if (currentView === "public" || !payload || typeof payload !== "object") {
+        if (currentView === "public") {
             return;
         }
 
-        var sequence = Number(payload.sequence);
-        var x = Number(payload.x);
-        var z = Number(payload.z);
-        var unixMs = Number(payload.unixMs);
-        var playerName = typeof payload.playerName === "string"
-            ? payload.playerName.trim()
-            : "";
-        var text = typeof payload.text === "string" ? payload.text.trim() : "";
-        if (!Number.isFinite(sequence) || sequence <= 0 ||
-            !Number.isFinite(x) || !Number.isFinite(z) ||
-            !Number.isFinite(unixMs) || unixMs <= 0 ||
-            !text) {
+        var chat = normalizeChatPayload(payload);
+        if (!chat) {
             return;
         }
+        appendChatHistory(chat, false);
+        if (liveChatSequences.has(chat.sequence)) {
+            return;
+        }
+        liveChatSequences.add(chat.sequence);
 
-        var chat = {
-            playerName: playerName || "A viking",
-            receivedAt: Date.now(),
-            sequence: Math.floor(sequence),
-            shout: payload.shout === true,
-            text: text.slice(0, 256),
-            unixMs: Math.floor(unixMs),
-            x: x,
-            z: z
-        };
-        appendChatHistory(chat);
         var sagaId = "chat:" + chat.unixMs + ":" + chat.sequence;
         if (!sagaChatEvents.some(function (event) { return event.id === sagaId; })) {
             sagaChatEvents.push({
@@ -13186,6 +13240,10 @@
         sagaEvents = [];
         sagaChatEvents = [];
         chatHistory = [];
+        chatHistoryRequestSequence++;
+        chatHistoryRequested = false;
+        chatSequences.clear();
+        liveChatSequences.clear();
         sagaCursor = 0;
         sagaEnabled = null;
         sagaLoaded = false;
@@ -13217,6 +13275,7 @@
         }
         if (nextView === currentView) {
             ensureSagaActivity();
+            ensureChatHistory();
             return;
         }
 
@@ -13236,6 +13295,7 @@
             clearLeaderboard();
         } else {
             ensureSagaActivity();
+            ensureChatHistory();
             if (leaderboardIsExpanded()) {
                 scheduleLeaderboardPoll(0);
             }
@@ -13604,6 +13664,7 @@
             activeSource.close();
         }
         resumePollingAfterEventStream();
+        ensureChatHistory();
         scheduleEventStreamRetry();
     }
 
@@ -13641,6 +13702,7 @@
             }
             eventSourceOpen = true;
             eventSourceRetryDelay = SSE_RETRY_INITIAL_MS;
+            ensureChatHistory();
             if ((currentView === "admin" || currentView === "shared") && sagaLoaded) {
                 loadSagaActivity(0, true);
             }
