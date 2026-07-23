@@ -49,6 +49,14 @@ The embedded HTTP server serves three view tiers: a token-gated admin view with 
 
 Map generation and runtime data stay on the server. Players join with fully vanilla clients; the browser map does not require a Valheim client mod.
 
+### Dungeon Interior Viewer
+
+Dungeon entrances on the Live Map give admin and shared viewers a View Interior action that opens a top-down room schematic parsed from the game's own generated room data. Live players inside appear directly in the schematic, while their map markers and roster entries are tagged `In: <dungeon>` — solving the "vanished into a crypt" problem at a glance.
+
+![ValheimOne dungeon entrance with View Interior action](docs/screenshots/dungeon-marker.png)
+
+![ValheimOne Dungeon Interior Viewer](docs/screenshots/dungeon-interior.png)
+
 ### Web pins
 
 Collaborative web pins let map viewers mark destinations, resources, and tasks directly from the browser. Checking a pin off keeps it in the shared history instead of deleting it, and changes sync live through the existing SSE feed. `SharedPinEditing` controls whether shared-view visitors can create pins and edit their own, while `PublicWebPins` exposes the pins read-only on the public view. The persistent store keeps up to 100 pins per author and 500 globally, and accepts only the built-in icon whitelist.

@@ -110,6 +110,8 @@ With a non-empty `AccessToken`, the same port serves admin actions; console-spec
 | `/api/chat` | GET | Admin/shared only; public returns `404`. Returns the current 32-message ring buffer oldest-first as `{"chats":[{"sequence":1,"x":0,"z":0,"playerName":"...","text":"...","shout":false,"unixMs":1720000000000}]}`. Player chat follows `MirrorChat`; server-originated shouts remain available when mirroring is off. |
 | `/api/heatmap` | GET `?window=24h|7d` | Admin/shared only; public returns `404`. Returns the aggregate activity grid used by the default-off Activity Heatmap layer. |
 | `/api/leaderboard` | GET | Admin/shared only; public returns `404`. Returns per-wipe playtime, deaths, and distance traveled for up to 50 display names; no platform identifiers are exposed. |
+| `/api/dungeons` | GET | Admin/shared only; public returns `404`. Returns discovered dungeon entrances with generation and interior state, room counts, and live-player counts. |
+| `/api/dungeons/{id}` | GET | Admin/shared only; public returns `404`. Returns one dungeon's generated room layout and live players inside for the View Interior schematic; unknown IDs return `404`. |
 | `/api/entities` | GET | Admin view + `EntityLayer = true` only. Ship/cart/portal positions from ZDO scans (5 s refresh, 500-entity cap) plus the active raid `event` object. |
 
 Admins also get an `"event"` raid object (`{name,x,z,radius,elapsed,duration}` or `null`) on `/api/status` regardless of `EntityLayer`.
