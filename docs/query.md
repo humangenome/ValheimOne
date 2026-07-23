@@ -42,7 +42,48 @@ curl http://<server-ip>:8790/api/status
 ## Access rules
 
 - `[LiveMap] StatusPublic = true` (default): `/api/status` answers **without a token** even when the map itself is token-locked (`AccessToken` set, `PublicView = false`). Tokenless callers get the public view. This is intended for hosting-panel status polls — set it to `false` to require map access for status too.
-- All other endpoints follow the normal map rules: `AccessToken` grants the admin view; `PublicView` controls whether tokenless visitors get the read-only public map.
+- `/api/catalog` is always public because it contains static game data only. All remaining endpoints follow the normal map rules: `AccessToken` grants the admin view; `PublicView` controls whether tokenless visitors get the read-only public map.
+
+## GET /api/catalog
+
+`GET /api/catalog` returns the startup-built Codex of Items payload to every view tier, including tokenless callers when `PublicView = false`. It contains no world, player, seed, position, or ZDO data. The server reuses `catalog.json` from the LiveMap sidecar directory when its game, mod, and schema versions match.
+
+```json
+{
+  "version": { "game": "0.221.12", "mod": "0.11.0", "schema": 1 },
+  "generatedUtc": "2026-07-22T12:00:00.000Z",
+  "items": [
+    {
+      "token": "SwordIron",
+      "name": "Iron sword",
+      "description": "A survivor's friend.",
+      "type": "OneHandedWeapon",
+      "maxQuality": 4,
+      "toolTier": 3,
+      "weight": 0.8,
+      "maxStackSize": 1,
+      "teleportable": true,
+      "damage": { "base": { "slash": 55 }, "perLevel": { "slash": 6 } },
+      "recipes": [
+        {
+          "enabled": true,
+          "amount": 1,
+          "station": { "prefab": "forge", "name": "Forge" },
+          "minStationLevel": 1,
+          "ingredients": [
+            { "prefab": "Iron", "name": "Iron", "amount": 20, "amountPerLevel": 10 }
+          ]
+        }
+      ],
+      "sources": [],
+      "uses": [],
+      "droppedBy": []
+    }
+  ]
+}
+```
+
+Armor items add an `armor` base/per-level summary. Conversion outputs list `sources` and their inputs list matching `uses`; methods are `smelter`, `cooking`, or `fermenter`. Creature drops include the creature prefab, localized name, and 0..1 base `chance`. Responses send a strong content-hash `ETag` and `Cache-Control: public, max-age=86400`; a matching `If-None-Match` receives `304 Not Modified`.
 
 ## Admin API (token required)
 

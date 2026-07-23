@@ -17,6 +17,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private LiveMapConfig? _config;
     private ActivityLogModule? _activityLog;
     private ModLogger? _log;
+    private string _dataDirectory = string.Empty;
     private Func<bool>? _enabledCheck;
     private Func<WebPinStore?>? _getWebPinStore;
     private Func<ActivityHeatmap?>? _getActivityHeatmap;
@@ -35,6 +36,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private ServerShutdownScheduler? _shutdownScheduler;
     private volatile LiveMapSnapshot _snapshot = LiveMapSnapshot.Empty;
     private volatile PoiCatalog _poiCatalog = PoiCatalog.Empty;
+    private ItemCatalog? _itemCatalog;
     private volatile string _fogMode = "off";
     private readonly Dictionary<long, PlayerMotionState> _motion =
         new Dictionary<long, PlayerMotionState>();
@@ -87,6 +89,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         LiveMapConfig config,
         ActivityLogModule activityLog,
         ModLogger log,
+        string dataDirectory,
         Func<bool> enabledCheck,
         Func<WebPinStore?> getWebPinStore,
         Func<ActivityHeatmap?> getActivityHeatmap,
@@ -96,6 +99,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         behaviour._config = config;
         behaviour._activityLog = activityLog;
         behaviour._log = log;
+        behaviour._dataDirectory = dataDirectory;
         behaviour._enabledCheck = enabledCheck;
         behaviour._getWebPinStore = getWebPinStore;
         behaviour._getActivityHeatmap = getActivityHeatmap;
@@ -187,7 +191,11 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         ZNet? network = ZNet.instance;
         WorldGenerator? generator = WorldGenerator.instance;
         ZoneSystem? zoneSystem = ZoneSystem.instance;
+        ObjectDB? objectDb = ObjectDB.instance;
+        ZNetScene? netScene = ZNetScene.instance;
         if (network == null || generator == null || zoneSystem == null ||
+            objectDb == null || netScene == null ||
+            objectDb.m_items.Count == 0 || netScene.m_prefabs.Count == 0 ||
             !network.IsServer() || !zoneSystem.LocationsGenerated)
         {
             return;
@@ -246,6 +254,13 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
                 $"{poiCatalog.ServedPois.Count} served");
         }
 
+        _itemCatalog ??= ItemCatalog.LoadOrBuild(
+            _dataDirectory,
+            gameVersion,
+            objectDb,
+            netScene,
+            log);
+
         _renderer = new WorldMapRenderer(
             generator,
             world.m_seed,
@@ -283,6 +298,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             config.PublicShowPlayerNames,
             () => _snapshot,
             () => _poiCatalog,
+            _itemCatalog,
             () => resourcePoiTracker.Snapshot,
             resourcePoiTracker.NoteResourcesRequested,
             () => playerBaseTracker.Snapshot,

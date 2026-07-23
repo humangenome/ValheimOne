@@ -6,6 +6,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Added
 
+- LiveMap now serves a public, versioned item and recipe catalog from `GET /api/catalog`, including crafting, conversion, and creature-drop sources with day-long ETag caching.
 - LiveMap admin and shared views now include a live Chat panel, while admins can send audited server shouts back into the game without enabling the web console.
 - LiveMap admin and shared views now include a wipe-scoped Leaderboard for character playtime, deaths, and distance traveled, with public views kept private.
 - LiveMap admin and shared views now include a default-off Activity Heatmap overlay with private aggregate 24-hour and 7-day activity windows, while public views receive no heatmap access.

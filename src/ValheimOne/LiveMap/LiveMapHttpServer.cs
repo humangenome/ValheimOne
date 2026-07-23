@@ -43,6 +43,7 @@ internal sealed class LiveMapHttpServer
     private readonly bool _publicShowPlayerNames;
     private readonly Func<LiveMapSnapshot> _getSnapshot;
     private readonly Func<PoiCatalog> _getPoiCatalog;
+    private readonly ItemCatalog _itemCatalog;
     private readonly Func<ResourcePoiMapSnapshot> _getResourcePoiSnapshot;
     private readonly Action _noteResourcesRequested;
     private readonly Func<PlayerBaseMapSnapshot> _getPlayerBaseSnapshot;
@@ -98,6 +99,7 @@ internal sealed class LiveMapHttpServer
         bool publicShowPlayerNames,
         Func<LiveMapSnapshot> getSnapshot,
         Func<PoiCatalog> getPoiCatalog,
+        ItemCatalog itemCatalog,
         Func<ResourcePoiMapSnapshot> getResourcePoiSnapshot,
         Action noteResourcesRequested,
         Func<PlayerBaseMapSnapshot> getPlayerBaseSnapshot,
@@ -129,6 +131,7 @@ internal sealed class LiveMapHttpServer
         _publicShowPlayerNames = publicShowPlayerNames;
         _getSnapshot = getSnapshot;
         _getPoiCatalog = getPoiCatalog;
+        _itemCatalog = itemCatalog;
         _getResourcePoiSnapshot = getResourcePoiSnapshot;
         _noteResourcesRequested = noteResourcesRequested;
         _getPlayerBaseSnapshot = getPlayerBaseSnapshot;
@@ -343,6 +346,11 @@ internal sealed class LiveMapHttpServer
 
                 viewLevel = ViewLevel.Admin;
             }
+            else if (path == "/api/catalog" &&
+                     string.Equals(request.HttpMethod, "GET", StringComparison.OrdinalIgnoreCase))
+            {
+                viewLevel = ViewLevel.Public;
+            }
             else if (!TryResolveView(request, out viewLevel))
             {
                 if (path == "/api/status" && _config.StatusPublic)
@@ -375,6 +383,10 @@ internal sealed class LiveMapHttpServer
             else if (isGet && path == "/api/status")
             {
                 ServeStatus(response, viewLevel);
+            }
+            else if (isGet && path == "/api/catalog")
+            {
+                ServeCatalog(request, response);
             }
             else if (isGet && path == "/api/players")
             {
@@ -712,6 +724,51 @@ internal sealed class LiveMapHttpServer
         LiveMapSnapshot snapshot = _getSnapshot();
         string json = BuildStatusJson(snapshot, viewLevel, out _);
         WriteJson(response, HttpStatusCode.OK, json);
+    }
+
+    private void ServeCatalog(
+        HttpListenerRequest request,
+        HttpListenerResponse response)
+    {
+        response.Headers[HttpResponseHeader.ETag] = _itemCatalog.ETag;
+        if (MatchesETag(request.Headers["If-None-Match"], _itemCatalog.ETag))
+        {
+            response.StatusCode = (int)HttpStatusCode.NotModified;
+            response.Headers[HttpResponseHeader.CacheControl] = "public, max-age=86400";
+            response.ContentLength64 = 0;
+            response.OutputStream.Close();
+            return;
+        }
+
+        WriteBytes(
+            response,
+            HttpStatusCode.OK,
+            "application/json; charset=utf-8",
+            _itemCatalog.Content,
+            "public, max-age=86400");
+    }
+
+    private static bool MatchesETag(string? header, string etag)
+    {
+        if (string.IsNullOrWhiteSpace(header))
+        {
+            return false;
+        }
+
+        string[] candidates = header!.Split(',');
+        for (int index = 0; index < candidates.Length; index++)
+        {
+            string candidate = candidates[index].Trim();
+            if (string.Equals(candidate, "*", StringComparison.Ordinal) ||
+                string.Equals(candidate, etag, StringComparison.Ordinal) ||
+                (candidate.StartsWith("W/", StringComparison.Ordinal) &&
+                 string.Equals(candidate.Substring(2), etag, StringComparison.Ordinal)))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private string BuildStatusJson(

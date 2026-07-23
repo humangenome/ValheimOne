@@ -239,6 +239,7 @@ public sealed class LiveMapModule : IFeatureModule
             _config,
             _activityLog,
             _log,
+            _dataDirectory,
             () => _feature.Enabled.Value,
             () => WebPinStore,
             () => ActivityHeatmap,
