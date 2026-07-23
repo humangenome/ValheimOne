@@ -1328,6 +1328,68 @@ input {
     outline-offset: -2px;
 }
 
+.heatmap-window-control {
+    display: flex;
+    min-height: 34px;
+    align-items: center;
+    gap: 7px;
+    padding: 2px 4px 5px 44px;
+}
+
+.heatmap-window-control[hidden] {
+    display: none;
+}
+
+.heatmap-window-title {
+    flex: 0 0 auto;
+    color: var(--layers-secondary);
+    font-size: 11px;
+}
+
+.heatmap-window-segments {
+    display: grid;
+    min-width: 0;
+    flex: 1 1 auto;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: hidden;
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    background: var(--background);
+}
+
+.heatmap-window-option {
+    min-width: 0;
+    min-height: 24px;
+    padding: 2px 4px;
+    border: 0;
+    border-left: 1px solid var(--border);
+    background: transparent;
+    color: var(--layers-secondary);
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.heatmap-window-option:first-child {
+    border-left: 0;
+}
+
+.heatmap-window-option:hover {
+    color: var(--accent);
+}
+
+.heatmap-window-option.is-selected {
+    background: var(--accent-soft);
+    color: var(--accent);
+}
+
+.heatmap-window-option:focus-visible {
+    position: relative;
+    z-index: 1;
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
 .layer-row {
     display: grid;
     min-height: 34px;
@@ -1408,6 +1470,12 @@ input {
     color: var(--accent);
     font-size: 17px;
     text-shadow: 0 0 7px rgba(217, 177, 104, 0.42);
+}
+
+.layer-swatch-heatmap {
+    color: var(--sun);
+    font-size: 16px;
+    text-shadow: 0 0 7px var(--accent);
 }
 
 .layer-swatch-trails {
@@ -2088,6 +2156,42 @@ input {
 .legend-swatch {
     width: 20px;
     height: 20px;
+}
+
+.activity-heatmap-canvas {
+    opacity: 0.68;
+    filter: blur(4px) saturate(0.92);
+    pointer-events: none;
+}
+
+.activity-heatmap-legend {
+    display: inline-flex;
+    min-height: 28px;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 999px;
+    background: var(--panel);
+    box-shadow: 0 4px 14px var(--background);
+    color: var(--text);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.activity-heatmap-legend[hidden] {
+    display: none;
+}
+
+.activity-heatmap-ramp {
+    width: 64px;
+    height: 7px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent), var(--sun), var(--raid));
+    box-shadow: 0 0 7px var(--accent-soft);
 }
 
 .leaflet-bottom .compass-control {

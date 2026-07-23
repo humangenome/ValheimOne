@@ -4,6 +4,7 @@
     var POLL_INTERVAL_MS = 2000;
     var POLL_FAILURE_LIMIT = 3;
     var PINS_POLL_INTERVAL_MS = 60000;
+    var HEATMAP_POLL_INTERVAL_MS = 60000;
     var ENTITIES_POLL_INTERVAL_MS = 10000;
     var CONSOLE_LOG_POLL_INTERVAL_MS = 2000;
     var CONSOLE_STATS_POLL_INTERVAL_MS = 5000;
@@ -404,6 +405,8 @@
         structure_runestone: false,
         misc: false,
         fog: true,
+        heatmap: false,
+        heatmapWindow: "24h",
         regions: true,
         tint: true,
         minimap: false,
@@ -617,6 +620,13 @@
     var fogLoadSequence = 0;
     var fogCoverElement = null;
     var fogCoverTimer = 0;
+    var heatmapLayer = null;
+    var heatmapLegendElement = null;
+    var heatmapWindowControlElement = null;
+    var heatmapPollTimer = 0;
+    var heatmapRequestPending = false;
+    var heatmapRequestSequence = 0;
+    var latestHeatmap = null;
     var requestedTab = loadRequestedTab();
     var activeTab = "map";
     var consoleAvailable = false;
@@ -659,6 +669,7 @@
         players: 0,
         pois: 0,
         fog: 0,
+        heatmap: 0,
         status: 0
     };
 
@@ -2555,6 +2566,8 @@
         entityPollTimer = 0;
         window.clearTimeout(entityFocusPollTimer);
         entityFocusPollTimer = 0;
+        window.clearTimeout(heatmapPollTimer);
+        heatmapPollTimer = 0;
         stopAllLazyPoiPolling();
     }
 
@@ -2727,6 +2740,9 @@
                 }
                 if (["default", "topo", "chart"].indexOf(saved.mapStyle) !== -1) {
                     settings.mapStyle = saved.mapStyle;
+                }
+                if (["24h", "7d"].indexOf(saved.heatmapWindow) !== -1) {
+                    settings.heatmapWindow = saved.heatmapWindow;
                 }
                 if (typeof saved.poiOpacity === "number" &&
                     Number.isFinite(saved.poiOpacity)) {
@@ -4348,6 +4364,9 @@
         map.createPane("basePane");
         map.getPane("basePane").style.zIndex = "190";
         map.getPane("basePane").style.pointerEvents = "none";
+        map.createPane("heatmapPane");
+        map.getPane("heatmapPane").style.zIndex = "340";
+        map.getPane("heatmapPane").style.pointerEvents = "none";
         map.createPane("fogPane");
         map.getPane("fogPane").style.zIndex = "350";
         map.getPane("fogPane").style.pointerEvents = "none";
@@ -4404,10 +4423,12 @@
             pane: "tintPane",
             stroke: false
         });
+        heatmapLayer = createActivityHeatmapLayer();
         initialiseDataLayers();
         bindMapPopupEvents();
         ensureFollowPill();
         createLayersControl();
+        createHeatmapLegendControl();
         createCompassControl();
         createScaleBarControl();
         createMeasureControl();
@@ -4508,6 +4529,289 @@
             z: (mapMetrics.textureSize / 2 - (-latLng.lat / mapMetrics.unitsPerPixel)) *
                 mapMetrics.pixelSize
         };
+    }
+
+    function createActivityHeatmapLayer() {
+        var HeatmapLayer = L.Layer.extend({
+            initialize: function () {
+                this._canvas = null;
+                this._source = null;
+                this._payload = null;
+            },
+            onAdd: function (activeMap) {
+                this._canvas = L.DomUtil.create(
+                    "canvas",
+                    "activity-heatmap-canvas",
+                    activeMap.getPane("heatmapPane")
+                );
+                activeMap.on("moveend zoomend resize", this._redraw, this);
+                this._redraw();
+            },
+            onRemove: function (activeMap) {
+                activeMap.off("moveend zoomend resize", this._redraw, this);
+                if (this._canvas && this._canvas.parentNode) {
+                    this._canvas.parentNode.removeChild(this._canvas);
+                }
+                this._canvas = null;
+            },
+            setData: function (payload) {
+                this._payload = payload;
+                this._source = payload ? buildHeatmapSource(payload) : null;
+                this._redraw();
+            },
+            _redraw: function () {
+                if (!this._map || !this._canvas) {
+                    return;
+                }
+
+                var size = this._map.getSize();
+                var ratio = Math.min(2, window.devicePixelRatio || 1);
+                var width = Math.max(1, Math.round(size.x * ratio));
+                var height = Math.max(1, Math.round(size.y * ratio));
+                if (this._canvas.width !== width || this._canvas.height !== height) {
+                    this._canvas.width = width;
+                    this._canvas.height = height;
+                    this._canvas.style.width = size.x + "px";
+                    this._canvas.style.height = size.y + "px";
+                }
+
+                L.DomUtil.setPosition(
+                    this._canvas,
+                    this._map.containerPointToLayerPoint([0, 0])
+                );
+                var context = this._canvas.getContext("2d");
+                context.setTransform(1, 0, 0, 1, 0, 0);
+                context.clearRect(0, 0, width, height);
+                if (!this._source || !this._payload) {
+                    return;
+                }
+
+                var radius = this._payload.worldRadius;
+                var northWest = this._map.latLngToContainerPoint(
+                    worldToLatLng(-radius, radius)
+                );
+                var southEast = this._map.latLngToContainerPoint(
+                    worldToLatLng(radius, -radius)
+                );
+                context.imageSmoothingEnabled = true;
+                context.imageSmoothingQuality = "high";
+                context.drawImage(
+                    this._source,
+                    northWest.x * ratio,
+                    northWest.y * ratio,
+                    (southEast.x - northWest.x) * ratio,
+                    (southEast.y - northWest.y) * ratio
+                );
+            }
+        });
+        return new HeatmapLayer();
+    }
+
+    function themeRgb(variableName) {
+        var value = window.getComputedStyle(document.documentElement)
+            .getPropertyValue(variableName).trim();
+        var hex = value.match(/^#([0-9a-f]{6})$/i);
+        if (hex) {
+            return [
+                parseInt(hex[1].slice(0, 2), 16),
+                parseInt(hex[1].slice(2, 4), 16),
+                parseInt(hex[1].slice(4, 6), 16)
+            ];
+        }
+
+        var rgb = value.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+        return rgb
+            ? [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])]
+            : null;
+    }
+
+    function mixRgb(from, to, amount) {
+        return [
+            Math.round(from[0] + (to[0] - from[0]) * amount),
+            Math.round(from[1] + (to[1] - from[1]) * amount),
+            Math.round(from[2] + (to[2] - from[2]) * amount)
+        ];
+    }
+
+    function buildHeatmapSource(payload) {
+        var canvas = document.createElement("canvas");
+        canvas.width = payload.size;
+        canvas.height = payload.size;
+        var context = canvas.getContext("2d");
+        var image = context.createImageData(payload.size, payload.size);
+        var lowColor = themeRgb("--accent");
+        var middleColor = themeRgb("--sun");
+        var highColor = themeRgb("--raid");
+        if (!lowColor || !middleColor || !highColor || payload.maxCount <= 0) {
+            return canvas;
+        }
+
+        var maximumLog = Math.log1p(payload.maxCount);
+        payload.cells.forEach(function (cell) {
+            var intensity = maximumLog > 0 ? Math.log1p(cell[2]) / maximumLog : 0;
+            intensity = Math.max(0, Math.min(1, intensity));
+            var color = intensity < 0.5
+                ? mixRgb(lowColor, middleColor, intensity * 2)
+                : mixRgb(middleColor, highColor, (intensity - 0.5) * 2);
+            var imageY = payload.size - cell[1] - 1;
+            var offset = ((imageY * payload.size) + cell[0]) * 4;
+            image.data[offset] = color[0];
+            image.data[offset + 1] = color[1];
+            image.data[offset + 2] = color[2];
+            image.data[offset + 3] = Math.round((0.08 + (0.25 * Math.sqrt(intensity))) * 255);
+        });
+        context.putImageData(image, 0, 0);
+        return canvas;
+    }
+
+    function createHeatmapLegendControl() {
+        var HeatmapLegend = L.Control.extend({
+            options: { position: "bottomright" },
+            onAdd: function () {
+                var container = L.DomUtil.create(
+                    "div",
+                    "leaflet-control activity-heatmap-legend"
+                );
+                var low = document.createElement("span");
+                var ramp = document.createElement("span");
+                var high = document.createElement("span");
+                low.textContent = "Low";
+                ramp.className = "activity-heatmap-ramp";
+                ramp.setAttribute("aria-hidden", "true");
+                high.textContent = "High";
+                container.setAttribute("aria-label", "Activity heatmap intensity, low to high");
+                container.appendChild(low);
+                container.appendChild(ramp);
+                container.appendChild(high);
+                container.hidden = true;
+                heatmapLegendElement = container;
+                L.DomEvent.disableClickPropagation(container);
+                L.DomEvent.disableScrollPropagation(container);
+                return container;
+            }
+        });
+        new HeatmapLegend().addTo(map);
+        syncHeatmapControls();
+    }
+
+    function normalizeHeatmap(payload, requestedWindow) {
+        if (!payload || payload.window !== requestedWindow ||
+            Number(payload.size) !== 128 ||
+            !Number.isFinite(Number(payload.worldRadius)) ||
+            Number(payload.worldRadius) <= 0 ||
+            !Number.isFinite(Number(payload.maxCount)) ||
+            Number(payload.maxCount) < 0 ||
+            !Number.isFinite(Number(payload.generatedUnixMs)) ||
+            !Array.isArray(payload.cells) || payload.cells.length > 128 * 128) {
+            return null;
+        }
+
+        var cells = [];
+        var seen = new Set();
+        var maximumCount = 0;
+        for (var index = 0; index < payload.cells.length; index++) {
+            var cell = payload.cells[index];
+            if (!Array.isArray(cell) || cell.length !== 3) {
+                return null;
+            }
+            var ix = Number(cell[0]);
+            var iz = Number(cell[1]);
+            var count = Number(cell[2]);
+            var key = ix + ":" + iz;
+            if (!Number.isInteger(ix) || ix < 0 || ix >= 128 ||
+                !Number.isInteger(iz) || iz < 0 || iz >= 128 ||
+                !Number.isInteger(count) || count <= 0 || seen.has(key)) {
+                return null;
+            }
+            seen.add(key);
+            maximumCount = Math.max(maximumCount, count);
+            cells.push([ix, iz, count]);
+        }
+
+        return {
+            window: requestedWindow,
+            size: 128,
+            worldRadius: Number(payload.worldRadius),
+            maxCount: Math.max(maximumCount, Math.floor(Number(payload.maxCount))),
+            generatedUnixMs: Math.floor(Number(payload.generatedUnixMs)),
+            cells: cells
+        };
+    }
+
+    function heatmapIsEnabled() {
+        return hasLiveAccess() && layerSettings.heatmap === true &&
+            Boolean(map && heatmapLayer);
+    }
+
+    function scheduleHeatmapPoll(delay) {
+        window.clearTimeout(heatmapPollTimer);
+        heatmapPollTimer = 0;
+        if (!heatmapIsEnabled() || pollCircuitOpen) {
+            return;
+        }
+        heatmapPollTimer = window.setTimeout(function () {
+            heatmapPollTimer = 0;
+            pollHeatmap();
+        }, delay);
+    }
+
+    function startHeatmapPolling() {
+        if (!heatmapIsEnabled() || pollCircuitOpen || heatmapPollTimer ||
+            heatmapRequestPending) {
+            return;
+        }
+        scheduleHeatmapPoll(0);
+    }
+
+    function stopHeatmapPolling() {
+        if (heatmapPollTimer || heatmapRequestPending) {
+            heatmapRequestSequence++;
+        }
+        window.clearTimeout(heatmapPollTimer);
+        heatmapPollTimer = 0;
+        recordPollSuccess("heatmap");
+        setFeedState("heatmap", true);
+    }
+
+    async function pollHeatmap() {
+        if (!heatmapIsEnabled() || heatmapRequestPending || document.hidden ||
+            pollCircuitOpen) {
+            return;
+        }
+
+        heatmapRequestPending = true;
+        var requestedWindow = layerSettings.heatmapWindow;
+        var sequence = ++heatmapRequestSequence;
+        try {
+            var payload = await fetchJson(
+                "/api/heatmap?window=" + encodeURIComponent(requestedWindow)
+            );
+            if (sequence !== heatmapRequestSequence || !heatmapIsEnabled() ||
+                requestedWindow !== layerSettings.heatmapWindow) {
+                return;
+            }
+            var normalized = normalizeHeatmap(payload, requestedWindow);
+            if (!normalized) {
+                throw new Error("Invalid heatmap response");
+            }
+            latestHeatmap = normalized;
+            heatmapLayer.setData(normalized);
+            feedLastUpdated.heatmap = Date.now();
+            recordPollSuccess("heatmap");
+            setFeedState("heatmap", true);
+        } catch (error) {
+            if (sequence === heatmapRequestSequence && heatmapIsEnabled()) {
+                recordPollFailure("heatmap");
+                setFeedState("heatmap", false);
+            }
+        } finally {
+            heatmapRequestPending = false;
+            if (heatmapIsEnabled()) {
+                var staleRequest = sequence !== heatmapRequestSequence ||
+                    requestedWindow !== layerSettings.heatmapWindow;
+                scheduleHeatmapPoll(staleRequest ? 0 : HEATMAP_POLL_INTERVAL_MS);
+            }
+        }
     }
 
     function formatMapCoordinates(world) {
@@ -6869,6 +7173,7 @@
 
         layersRows.textContent = "";
         legendContent = null;
+        heatmapWindowControlElement = null;
         renderJumpChips();
 
         var liveFeeds = hasLiveAccess() ? ["players", "entities"] : ["players"];
@@ -6934,11 +7239,24 @@
             appendLayerStatus(placesBody, "POIs: no data yet");
         }
 
-        var overlayFeeds = hasLiveAccess() ? ["fog", "entities"] : ["fog"];
+        var overlayFeeds = hasLiveAccess()
+            ? ["fog", "entities", "heatmap"]
+            : ["fog"];
         var overlaysBody = appendLayerSection("overlays", "Overlays", overlayFeeds);
         appendMapStyleControl(overlaysBody);
         if (fogAvailable) {
             appendLayerRow(overlaysBody, "fog", "Fog", "≈", "fog", { counted: false });
+        }
+        if (hasLiveAccess()) {
+            appendLayerRow(
+                overlaysBody,
+                "heatmap",
+                "Activity Heatmap",
+                "▦",
+                "heatmap",
+                { counted: false }
+            );
+            appendHeatmapWindowControl(overlaysBody);
         }
         appendLayerRow(
             overlaysBody,
@@ -7065,6 +7383,73 @@
         row.appendChild(title);
         row.appendChild(segments);
         parent.appendChild(row);
+    }
+
+    function appendHeatmapWindowControl(parent) {
+        var row = document.createElement("div");
+        var title = document.createElement("span");
+        var segments = document.createElement("div");
+        row.className = "heatmap-window-control";
+        row.hidden = !layerSettings.heatmap;
+        title.className = "heatmap-window-title";
+        title.textContent = "Window";
+        segments.className = "heatmap-window-segments";
+        segments.setAttribute("role", "group");
+        segments.setAttribute("aria-label", "Activity heatmap window");
+        [["24h", "24h"], ["7d", "7d"]].forEach(function (choice) {
+            var button = document.createElement("button");
+            var isSelected = layerSettings.heatmapWindow === choice[0];
+            button.type = "button";
+            button.className = "heatmap-window-option" +
+                (isSelected ? " is-selected" : "");
+            button.dataset.heatmapWindow = choice[0];
+            button.textContent = choice[1];
+            button.setAttribute("aria-pressed", String(isSelected));
+            button.addEventListener("click", function () {
+                selectHeatmapWindow(choice[0]);
+            });
+            segments.appendChild(button);
+        });
+        row.appendChild(title);
+        row.appendChild(segments);
+        parent.appendChild(row);
+        heatmapWindowControlElement = row;
+    }
+
+    function selectHeatmapWindow(windowName) {
+        if (["24h", "7d"].indexOf(windowName) === -1 ||
+            layerSettings.heatmapWindow === windowName) {
+            return;
+        }
+
+        layerSettings.heatmapWindow = windowName;
+        saveLayerSettings();
+        latestHeatmap = null;
+        heatmapRequestSequence++;
+        window.clearTimeout(heatmapPollTimer);
+        heatmapPollTimer = 0;
+        if (heatmapLayer) {
+            heatmapLayer.setData(null);
+        }
+        syncHeatmapControls();
+        startHeatmapPolling();
+    }
+
+    function syncHeatmapControls() {
+        var enabled = heatmapIsEnabled();
+        if (heatmapWindowControlElement) {
+            heatmapWindowControlElement.hidden = !enabled;
+            heatmapWindowControlElement.querySelectorAll("[data-heatmap-window]")
+                .forEach(function (button) {
+                    var isSelected = button.dataset.heatmapWindow ===
+                        layerSettings.heatmapWindow;
+                    button.classList.toggle("is-selected", isSelected);
+                    button.setAttribute("aria-pressed", String(isSelected));
+                });
+        }
+        if (heatmapLegendElement) {
+            heatmapLegendElement.hidden = !enabled;
+        }
     }
 
     function setSectionLayers(section, isEnabled) {
@@ -7431,6 +7816,14 @@
             }
             return { state: "amber", title: "fog loading" };
         }
+        if (feed === "heatmap") {
+            if (!heatmapIsEnabled()) {
+                return { state: "grey", title: "heatmap off" };
+            }
+            if (!feedLastUpdated.heatmap) {
+                return { state: "amber", title: "heatmap loading" };
+            }
+        }
 
         var updatedAt = feedLastUpdated[feed] || 0;
         if (!updatedAt) {
@@ -7454,7 +7847,8 @@
         var expected = {
             entities: ENTITIES_POLL_INTERVAL_MS,
             pins: PINS_POLL_INTERVAL_MS,
-            webpins: PINS_POLL_INTERVAL_MS
+            webpins: PINS_POLL_INTERVAL_MS,
+            heatmap: HEATMAP_POLL_INTERVAL_MS
         }[feed];
         var age = Date.now() - updatedAt;
         return {
@@ -8081,6 +8475,14 @@
             );
         });
         setLayerVisible(fogOverlay, fogAvailable && layerSettings.fog);
+        var heatmapVisible = heatmapIsEnabled();
+        setLayerVisible(heatmapLayer, heatmapVisible);
+        syncHeatmapControls();
+        if (heatmapVisible) {
+            startHeatmapPolling();
+        } else {
+            stopHeatmapPolling();
+        }
         updateRegionLayerVisibility();
         setLayerVisible(tintOverlay, layerSettings.tint);
         setLayerVisible(
@@ -12836,6 +13238,7 @@
 
         resumePollingAfterEventStream();
         pollPins();
+        startHeatmapPolling();
         scheduleStatsPolling(0);
         updateEntityPolling(true);
         updateEntityFocusPolling(true);

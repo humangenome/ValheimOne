@@ -18,6 +18,7 @@ public sealed class LiveMapModule : IFeatureModule
     private readonly string _dataDirectory;
     private readonly object _webPinStoreLock = new object();
     private WebPinStore? _webPinStore;
+    private ActivityHeatmap? _activityHeatmap;
     private bool _shutdown;
 
     public LiveMapModule(
@@ -183,6 +184,17 @@ public sealed class LiveMapModule : IFeatureModule
         }
     }
 
+    internal ActivityHeatmap? ActivityHeatmap
+    {
+        get
+        {
+            lock (_webPinStoreLock)
+            {
+                return _activityHeatmap;
+            }
+        }
+    }
+
     public void ApplyPatches(Harmony harmony)
     {
         VoCommands.ApplyPatches(harmony);
@@ -208,12 +220,14 @@ public sealed class LiveMapModule : IFeatureModule
             _activityLog,
             _log,
             () => _feature.Enabled.Value,
-            () => WebPinStore);
+            () => WebPinStore,
+            () => ActivityHeatmap);
     }
 
     public void Shutdown()
     {
         WebPinStore? store;
+        ActivityHeatmap? activityHeatmap;
         lock (_webPinStoreLock)
         {
             if (_shutdown)
@@ -225,14 +239,18 @@ public sealed class LiveMapModule : IFeatureModule
             _registry.EffectiveValuesChanged -= SynchronizeWebPinStore;
             store = _webPinStore;
             _webPinStore = null;
+            activityHeatmap = _activityHeatmap;
+            _activityHeatmap = null;
         }
 
         store?.Dispose();
+        activityHeatmap?.Dispose();
     }
 
     private void SynchronizeWebPinStore()
     {
         WebPinStore? storeToDispose = null;
+        ActivityHeatmap? heatmapToDispose = null;
         lock (_webPinStoreLock)
         {
             if (_shutdown)
@@ -243,14 +261,18 @@ public sealed class LiveMapModule : IFeatureModule
             if (_feature.Enabled.Value)
             {
                 _webPinStore ??= new WebPinStore(_dataDirectory, _log);
+                _activityHeatmap ??= new ActivityHeatmap(_dataDirectory, _log);
             }
             else
             {
                 storeToDispose = _webPinStore;
                 _webPinStore = null;
+                heatmapToDispose = _activityHeatmap;
+                _activityHeatmap = null;
             }
         }
 
         storeToDispose?.Dispose();
+        heatmapToDispose?.Dispose();
     }
 }

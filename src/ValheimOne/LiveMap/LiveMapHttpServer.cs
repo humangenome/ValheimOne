@@ -46,6 +46,7 @@ internal sealed class LiveMapHttpServer
     private readonly Action _noteBasesRequested;
     private readonly Func<MapTableSnapshot> _getMapTableSnapshot;
     private readonly Func<WebPinStore?> _getWebPinStore;
+    private readonly Func<ActivityHeatmap?> _getActivityHeatmap;
     private readonly Func<EntityMapSnapshot> _getEntitySnapshot;
     private readonly Func<EntityFocusSnapshot> _getEntityFocusSnapshot;
     private readonly Action<bool, bool> _noteEntitiesRequested;
@@ -97,6 +98,7 @@ internal sealed class LiveMapHttpServer
         Action noteBasesRequested,
         Func<MapTableSnapshot> getMapTableSnapshot,
         Func<WebPinStore?> getWebPinStore,
+        Func<ActivityHeatmap?> getActivityHeatmap,
         Func<EntityMapSnapshot> getEntitySnapshot,
         Func<EntityFocusSnapshot> getEntityFocusSnapshot,
         Action<bool, bool> noteEntitiesRequested,
@@ -126,6 +128,7 @@ internal sealed class LiveMapHttpServer
         _noteBasesRequested = noteBasesRequested;
         _getMapTableSnapshot = getMapTableSnapshot;
         _getWebPinStore = getWebPinStore;
+        _getActivityHeatmap = getActivityHeatmap;
         _getEntitySnapshot = getEntitySnapshot;
         _getEntityFocusSnapshot = getEntityFocusSnapshot;
         _noteEntitiesRequested = noteEntitiesRequested;
@@ -373,6 +376,10 @@ internal sealed class LiveMapHttpServer
             else if (isGet && path == "/api/trail")
             {
                 ServeTrail(request, response, viewLevel);
+            }
+            else if (isGet && path == "/api/heatmap")
+            {
+                ServeHeatmap(request, response, viewLevel);
             }
             else if (isGet && path == "/api/height")
             {
@@ -2245,6 +2252,67 @@ internal sealed class LiveMapHttpServer
             chat.UnixMs.ToString(CultureInfo.InvariantCulture));
         json.Append('}');
         return json.ToString();
+    }
+
+    private void ServeHeatmap(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        ViewLevel viewLevel)
+    {
+        if (viewLevel == ViewLevel.Public)
+        {
+            WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
+        string window = (request.QueryString["window"] ?? "24h").Trim().ToLowerInvariant();
+        if (window.Length == 0)
+        {
+            window = "24h";
+        }
+        else if (!string.Equals(window, "24h", StringComparison.Ordinal) &&
+                 !string.Equals(window, "7d", StringComparison.Ordinal))
+        {
+            WriteJson(response, HttpStatusCode.BadRequest, "{\"error\":\"bad request\"}");
+            return;
+        }
+
+        ActivityHeatmap? heatmap = _getActivityHeatmap();
+        if (heatmap == null)
+        {
+            WriteJson(response, HttpStatusCode.ServiceUnavailable, "{\"error\":\"not ready\"}");
+            return;
+        }
+
+        long generatedUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        ActivityHeatmapSnapshot snapshot = heatmap.Snapshot(window, generatedUnixMs);
+        var json = new StringBuilder(128 + (snapshot.Cells.Length * 24));
+        json.Append("{\"window\":").Append(JsonWriter.Quote(snapshot.Window));
+        json.Append(",\"size\":").Append(
+            ActivityHeatmap.GridSize.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"worldRadius\":").Append(
+            WorldMapRenderer.WorldRadius.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"maxCount\":").Append(
+            snapshot.MaximumCount.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"generatedUnixMs\":").Append(
+            snapshot.GeneratedUnixMs.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"cells\":[");
+        for (int index = 0; index < snapshot.Cells.Length; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            ActivityHeatmapCell cell = snapshot.Cells[index];
+            json.Append('[').Append(cell.X.ToString(CultureInfo.InvariantCulture));
+            json.Append(',').Append(cell.Z.ToString(CultureInfo.InvariantCulture));
+            json.Append(',').Append(cell.Count.ToString(CultureInfo.InvariantCulture));
+            json.Append(']');
+        }
+
+        json.Append("]}");
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
 
     private void ServeEntities(

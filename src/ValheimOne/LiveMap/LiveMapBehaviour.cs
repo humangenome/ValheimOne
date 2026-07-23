@@ -18,6 +18,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private ModLogger? _log;
     private Func<bool>? _enabledCheck;
     private Func<WebPinStore?>? _getWebPinStore;
+    private Func<ActivityHeatmap?>? _getActivityHeatmap;
+    private ActivityHeatmap? _activityHeatmap;
     private WorldMapRenderer? _renderer;
     private FogTracker? _fogTracker;
     private MapTableReader? _mapTableReader;
@@ -83,7 +85,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         ActivityLogModule activityLog,
         ModLogger log,
         Func<bool> enabledCheck,
-        Func<WebPinStore?> getWebPinStore)
+        Func<WebPinStore?> getWebPinStore,
+        Func<ActivityHeatmap?> getActivityHeatmap)
     {
         var behaviour = host.AddComponent<LiveMapBehaviour>();
         behaviour._config = config;
@@ -91,6 +94,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         behaviour._log = log;
         behaviour._enabledCheck = enabledCheck;
         behaviour._getWebPinStore = getWebPinStore;
+        behaviour._getActivityHeatmap = getActivityHeatmap;
         behaviour._shutdownScheduler = new ServerShutdownScheduler(log);
         behaviour._consoleBridge = new ConsoleBridge(null, log, behaviour._shutdownScheduler);
         Instance = behaviour;
@@ -255,6 +259,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _resourcePoiTracker = resourcePoiTracker;
         PlayerBaseTracker playerBaseTracker = new PlayerBaseTracker(log);
         _playerBaseTracker = playerBaseTracker;
+        _activityHeatmap = _getActivityHeatmap?.Invoke();
 
         _idle = GameAccess.GetPeers(network).Count == 0;
         RefreshSnapshot();
@@ -277,6 +282,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             playerBaseTracker.NoteBasesRequested,
             () => _mapTableReader?.Snapshot ?? MapTableSnapshot.Empty,
             _getWebPinStore!,
+            _getActivityHeatmap!,
             () => entityTracker.Snapshot,
             () => entityTracker.FocusSnapshot,
             entityTracker.NoteEntitiesRequested,
@@ -462,6 +468,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             Vector3 position = peer.m_refPos;
             long id = peer.m_characterID.UserID;
             _positionHistory.Record(PositionHistory.PlayerKey(id), position.x, position.z, nowMs);
+            _activityHeatmap?.Record(position.x, position.z, nowMs);
             presentIds.Add(id);
             if (!_motion.TryGetValue(id, out PlayerMotionState? motion))
             {
@@ -645,6 +652,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _mapTableReader = null;
         _entityTracker = null;
         _resourcePoiTracker = null;
+        _activityHeatmap = null;
         _playerBaseTracker?.Stop();
         _playerBaseTracker = null;
         _fogTracker?.Stop();
