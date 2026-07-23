@@ -19,6 +19,7 @@ internal sealed class ConsoleBridge
     private const int MaximumCommandOutputLines = 50;
     private const float MaximumShipTowDistance = 5000f;
     private const float ShipPlayerGuardDistance = 12f;
+    private const int ShoutType = 2;
     private const string TimeoutError = "timed out waiting for main thread";
 
     private static readonly Lazy<FieldInfo> CommandsField = new(
@@ -115,6 +116,13 @@ internal sealed class ConsoleBridge
         return Submit(
             () => TowShipOnMainThread(shipId, x, z, _log),
             error => ShipTowResult.Failure(error));
+    }
+
+    public ConsoleActionResult BroadcastChat(string text)
+    {
+        return Submit(
+            () => BroadcastChatOnMainThread(text, _log),
+            error => ConsoleActionResult.Failure(error));
     }
 
     public ShutdownActionResult ArmShutdown(int seconds, string message)
@@ -361,6 +369,38 @@ internal sealed class ConsoleBridge
             "unban",
             (network, value) => network.Unban(value),
             log);
+    }
+
+    internal static ConsoleActionResult BroadcastChatOnMainThread(
+        string text,
+        ModLogger? log)
+    {
+        ZRoutedRpc? routedRpc = ZRoutedRpc.instance;
+        if (routedRpc == null)
+        {
+            return ConsoleActionResult.Failure("server unavailable");
+        }
+
+        long captureId = MapPingPatch.ExpectServerChat(text);
+        try
+        {
+            UserInfo userInfo = ServerUserInfo.Create("Server");
+            routedRpc.InvokeRoutedRPC(
+                ZRoutedRpc.Everybody,
+                "ChatMessage",
+                Vector3.zero,
+                ShoutType,
+                userInfo,
+                text);
+            MapPingPatch.RecordServerChat(captureId);
+            return ConsoleActionResult.Success();
+        }
+        catch (Exception exception)
+        {
+            MapPingPatch.CancelServerChat(captureId);
+            LogException(log, "could not broadcast web chat message", exception);
+            return ConsoleActionResult.Failure(GetExceptionMessage(exception));
+        }
     }
 
     private static ConsoleActionResult RunTargetAction(

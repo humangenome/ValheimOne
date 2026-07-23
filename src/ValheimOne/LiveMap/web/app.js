@@ -41,6 +41,7 @@
     var COORDINATE_SEARCH_PULSE_MS = 4000;
     var CHAT_BUBBLE_LIFETIME_MS = 8000;
     var CHAT_BUBBLE_LIMIT = 8;
+    var CHAT_HISTORY_LIMIT = 32;
     var SAVED_BADGE_REFRESH_MS = 30000;
     var SAVED_STALE_MS = 30 * 60 * 1000;
     var DAY_TOAST_DURATION_MS = 4000;
@@ -601,6 +602,8 @@
     var currentView = null;
     var sagaEvents = [];
     var sagaChatEvents = [];
+    var chatHistory = [];
+    var chatSendPending = false;
     var sagaCursor = 0;
     var sagaEnabled = null;
     var sagaLoaded = false;
@@ -684,6 +687,15 @@
         bossProgression: document.getElementById("boss-progression"),
         bannedCount: document.getElementById("console-banned-count"),
         bannedList: document.getElementById("console-banned-list"),
+        chatContent: document.getElementById("chat-content"),
+        chatForm: document.getElementById("chat-form"),
+        chatInput: document.getElementById("chat-input"),
+        chatList: document.getElementById("chat-list"),
+        chatNote: document.getElementById("chat-note"),
+        chatPanel: document.getElementById("chat-panel"),
+        chatSend: document.getElementById("chat-send"),
+        chatSendNotice: document.getElementById("chat-send-notice"),
+        chatToggle: document.getElementById("chat-toggle"),
         commandForm: document.getElementById("console-command-form"),
         commandInput: document.getElementById("console-command"),
         commandReference: document.getElementById("console-command-reference"),
@@ -6130,6 +6142,62 @@
         activeChatBubbles.slice().forEach(removeChatBubble);
     }
 
+    function formatChatTime(unixMs) {
+        var date = new Date(unixMs);
+        var hours = String(date.getHours()).padStart(2, "0");
+        var minutes = String(date.getMinutes()).padStart(2, "0");
+        return hours + ":" + minutes;
+    }
+
+    function renderChatHistory() {
+        var distanceFromBottom = elements.chatList.scrollHeight -
+            elements.chatList.scrollTop - elements.chatList.clientHeight;
+        var followLatest = distanceFromBottom <= 24;
+        elements.chatList.textContent = "";
+        elements.chatNote.hidden = chatHistory.length > 0;
+        chatHistory.forEach(function (chat) {
+            var item = document.createElement("li");
+            var meta = document.createElement("div");
+            var time = document.createElement("time");
+            var sender = document.createElement("strong");
+            var kind = document.createElement("span");
+            var message = document.createElement("p");
+            item.className = "chat-entry" + (chat.shout ? " is-shout" : "");
+            meta.className = "chat-entry-meta";
+            time.className = "chat-entry-time";
+            time.dateTime = new Date(chat.unixMs).toISOString();
+            time.textContent = formatChatTime(chat.unixMs);
+            sender.className = "chat-entry-sender";
+            sender.textContent = chat.playerName;
+            kind.className = "chat-entry-kind";
+            kind.textContent = chat.shout ? "Shout" : "Say";
+            message.className = "chat-entry-text";
+            message.textContent = chat.text;
+            meta.appendChild(time);
+            meta.appendChild(sender);
+            meta.appendChild(kind);
+            item.appendChild(meta);
+            item.appendChild(message);
+            elements.chatList.appendChild(item);
+        });
+        if (followLatest) {
+            elements.chatList.scrollTop = elements.chatList.scrollHeight;
+        }
+    }
+
+    function appendChatHistory(chat) {
+        if (chatHistory.some(function (entry) { return entry.sequence === chat.sequence; })) {
+            return;
+        }
+
+        chatHistory.push(chat);
+        chatHistory.sort(function (left, right) {
+            return left.sequence - right.sequence;
+        });
+        chatHistory = chatHistory.slice(-CHAT_HISTORY_LIMIT);
+        renderChatHistory();
+    }
+
     function handleChatPayload(payload) {
         if (currentView === "public" || !payload || typeof payload !== "object") {
             return;
@@ -6160,6 +6228,7 @@
             x: x,
             z: z
         };
+        appendChatHistory(chat);
         var sagaId = "chat:" + chat.unixMs + ":" + chat.sequence;
         if (!sagaChatEvents.some(function (event) { return event.id === sagaId; })) {
             sagaChatEvents.push({
@@ -6179,6 +6248,58 @@
             renderSagaFeed();
         }
         renderChatBubble(chat);
+    }
+
+    function setChatSendNotice(message) {
+        elements.chatSendNotice.textContent = message || "";
+        elements.chatSendNotice.hidden = !message;
+    }
+
+    async function sendAdminChat() {
+        if (chatSendPending || currentView !== "admin") {
+            return;
+        }
+
+        var text = elements.chatInput.value.trim();
+        if (!text) {
+            setChatSendNotice("Enter a message first");
+            return;
+        }
+        if (text.length > 256) {
+            setChatSendNotice("Messages must be 256 characters or fewer");
+            return;
+        }
+
+        chatSendPending = true;
+        elements.chatInput.disabled = true;
+        elements.chatSend.disabled = true;
+        setChatSendNotice("");
+        try {
+            var payload = await fetchConsoleJson("/api/admin/chat", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-LiveMap-Token": token,
+                    "X-Operator": webPinOperatorAuthor()
+                },
+                body: JSON.stringify({ text: text })
+            });
+            if (!payload || payload.ok !== true) {
+                throw new Error(payload && payload.error ? payload.error : "Message rejected");
+            }
+            elements.chatInput.value = "";
+        } catch (error) {
+            setChatSendNotice(
+                error && error.message ? error.message : "Message could not be sent"
+            );
+        } finally {
+            chatSendPending = false;
+            elements.chatInput.disabled = false;
+            elements.chatSend.disabled = false;
+            if (currentView === "admin") {
+                elements.chatInput.focus();
+            }
+        }
     }
 
     function copyFromButton(button) {
@@ -12579,6 +12700,15 @@
         }
     }
 
+    function setChatCollapsed(isCollapsed) {
+        elements.chatPanel.classList.toggle("is-collapsed", isCollapsed);
+        elements.chatContent.hidden = isCollapsed;
+        elements.chatToggle.setAttribute("aria-expanded", String(!isCollapsed));
+        if (!isCollapsed) {
+            renderChatHistory();
+        }
+    }
+
     function leaderboardIsExpanded() {
         return hasLiveAccess() && !elements.leaderboardPanel.hidden &&
             !elements.leaderboardPanel.classList.contains("is-collapsed");
@@ -13055,12 +13185,15 @@
         sagaRequestPending = false;
         sagaEvents = [];
         sagaChatEvents = [];
+        chatHistory = [];
         sagaCursor = 0;
         sagaEnabled = null;
         sagaLoaded = false;
         sagaLoadFailed = false;
         pendingSagaPayloads = [];
         clearChatBubbles();
+        setChatCollapsed(true);
+        renderChatHistory();
         setSagaCollapsed(true);
         renderSagaFeed();
     }
@@ -13075,8 +13208,13 @@
             ? "Shared view"
             : "Public view";
         elements.watchButton.hidden = nextView === "public";
+        elements.chatPanel.hidden = nextView === "public";
+        elements.chatForm.hidden = nextView !== "admin";
         elements.sagaPanel.hidden = nextView === "public";
         elements.leaderboardPanel.hidden = nextView === "public";
+        if (nextView !== "admin") {
+            setChatSendNotice("");
+        }
         if (nextView === currentView) {
             ensureSagaActivity();
             return;
@@ -13568,13 +13706,22 @@
     elements.sagaToggle.addEventListener("click", function () {
         setSagaCollapsed(!elements.sagaPanel.classList.contains("is-collapsed"));
     });
+    elements.chatToggle.addEventListener("click", function () {
+        setChatCollapsed(!elements.chatPanel.classList.contains("is-collapsed"));
+    });
+    elements.chatForm.addEventListener("submit", function (event) {
+        event.preventDefault();
+        sendAdminChat();
+    });
     elements.leaderboardToggle.addEventListener("click", function () {
         setLeaderboardCollapsed(
             !elements.leaderboardPanel.classList.contains("is-collapsed")
         );
     });
     setSagaCollapsed(true);
+    setChatCollapsed(true);
     setLeaderboardCollapsed(true);
+    renderChatHistory();
     elements.sidebarState.addEventListener("change", function () {
         if (!elements.sidebarState.checked ||
             !window.matchMedia("(max-width: 759px)").matches) {

@@ -179,6 +179,31 @@
             </ul>
         </section>
 
+        <section id="chat-panel" class="saga-panel chat-panel is-collapsed"
+                 aria-labelledby="chat-heading" hidden>
+            <button id="chat-toggle" class="saga-toggle" type="button"
+                    aria-label="Toggle Chat" aria-controls="chat-content"
+                    aria-expanded="false">
+                <span id="chat-heading" class="saga-heading-copy">Chat</span>
+                <span id="chat-chevron" class="saga-chevron" aria-hidden="true">›</span>
+            </button>
+            <div id="chat-content" class="saga-content chat-content" hidden>
+                <p id="chat-note" class="saga-note">No chat received yet</p>
+                <ol id="chat-list" class="chat-list" role="log" aria-live="polite"></ol>
+                <form id="chat-form" class="chat-form" hidden>
+                    <div class="chat-compose">
+                        <input id="chat-input" type="text" maxlength="256"
+                               autocomplete="off" aria-label="Server chat message"
+                               placeholder="Message the server…">
+                        <button id="chat-send" class="console-primary-button"
+                                type="submit">Send</button>
+                    </div>
+                    <p id="chat-send-notice" class="chat-send-notice"
+                       role="status" aria-live="polite" hidden></p>
+                </form>
+            </div>
+        </section>
+
         <section id="leaderboard-panel" class="saga-panel leaderboard-panel is-collapsed"
                  aria-labelledby="leaderboard-heading" hidden>
             <button id="leaderboard-toggle" class="saga-toggle" type="button"

@@ -6,6 +6,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Added
 
+- LiveMap admin and shared views now include a live Chat panel, while admins can send audited server shouts back into the game without enabling the web console.
 - LiveMap admin and shared views now include a wipe-scoped Leaderboard for character playtime, deaths, and distance traveled, with public views kept private.
 - LiveMap admin and shared views now include a default-off Activity Heatmap overlay with private aggregate 24-hour and 7-day activity windows, while public views receive no heatmap access.
 - LiveMap admins can tow unattended ships from their map popup, with moves blocked when players are within 12 meters or the destination is more than 5 kilometers away.

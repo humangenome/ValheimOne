@@ -39,7 +39,8 @@ internal readonly struct MapChatSnapshot
         string playerName,
         string text,
         bool shout,
-        long unixMs)
+        long unixMs,
+        bool serverOriginated = false)
     {
         Sequence = sequence;
         X = x;
@@ -48,6 +49,7 @@ internal readonly struct MapChatSnapshot
         Text = text;
         Shout = shout;
         UnixMs = unixMs;
+        ServerOriginated = serverOriginated;
     }
 
     public long Sequence { get; }
@@ -63,6 +65,8 @@ internal readonly struct MapChatSnapshot
     public bool Shout { get; }
 
     public long UnixMs { get; }
+
+    public bool ServerOriginated { get; }
 }
 
 internal static class MapPingPatch
@@ -73,6 +77,28 @@ internal static class MapPingPatch
     private const int RecentPingCapacity = 16;
     private const int RecentChatCapacity = 32;
     private const int MaximumChatTextLength = 256;
+    private const long ServerChatCaptureLifetimeMilliseconds = 10_000L;
+    private const string ServerUserId = "Server_0";
+
+    private sealed class PendingServerChatCapture
+    {
+        public PendingServerChatCapture(long id, string text, long expiresUnixMs)
+        {
+            Id = id;
+            Text = text;
+            ExpiresUnixMs = expiresUnixMs;
+        }
+
+        public long Id { get; }
+
+        public string Text { get; }
+
+        public long ExpiresUnixMs { get; set; }
+
+        public bool Captured { get; set; }
+
+        public bool Injected { get; set; }
+    }
 
     private static readonly int ChatMessageHash = "ChatMessage".GetStableHashCode();
     private static readonly object RecentPingsLock = new object();
@@ -81,6 +107,8 @@ internal static class MapPingPatch
     private static readonly object RecentChatsLock = new object();
     private static readonly MapChatSnapshot[] RecentChats =
         new MapChatSnapshot[RecentChatCapacity];
+    private static readonly List<PendingServerChatCapture> PendingServerChats =
+        new List<PendingServerChatCapture>();
 
     private static Func<bool>? _enabledCheck;
     private static Func<bool>? _mirrorChatCheck;
@@ -91,6 +119,7 @@ internal static class MapPingPatch
     private static long _nextChatSequence;
     private static int _nextChatIndex;
     private static int _chatCount;
+    private static long _nextServerChatCaptureId;
     private static int _failureLogged;
 
     public static void ApplyPatches(
@@ -159,11 +188,7 @@ internal static class MapPingPatch
         destination.Clear();
         if (!ChatMirroringEnabled())
         {
-            ClearRecentChats();
-            lock (RecentChatsLock)
-            {
-                return _nextChatSequence;
-            }
+            ClearRecentPlayerChats();
         }
 
         lock (RecentChatsLock)
@@ -188,6 +213,64 @@ internal static class MapPingPatch
         ClearChatBufferWhenDisabled();
     }
 
+    public static long ExpectServerChat(string text)
+    {
+        long nowUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        lock (RecentChatsLock)
+        {
+            RemoveExpiredServerChatCapturesLocked(nowUnixMs);
+            long captureId = ++_nextServerChatCaptureId;
+            PendingServerChats.Add(new PendingServerChatCapture(
+                captureId,
+                TrimAndLimitChatText(text),
+                nowUnixMs + ServerChatCaptureLifetimeMilliseconds));
+            return captureId;
+        }
+    }
+
+    public static void RecordServerChat(long captureId)
+    {
+        long nowUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        lock (RecentChatsLock)
+        {
+            PendingServerChatCapture? capture = FindServerChatCaptureLocked(captureId);
+            if (capture == null)
+            {
+                return;
+            }
+
+            if (capture.Captured)
+            {
+                PendingServerChats.Remove(capture);
+                return;
+            }
+
+            AppendChatLocked(
+                0f,
+                0f,
+                "Server",
+                capture.Text,
+                shout: true,
+                nowUnixMs,
+                serverOriginated: true);
+            capture.Injected = true;
+            capture.ExpiresUnixMs = nowUnixMs + ServerChatCaptureLifetimeMilliseconds;
+            RemoveExpiredServerChatCapturesLocked(nowUnixMs);
+        }
+    }
+
+    public static void CancelServerChat(long captureId)
+    {
+        lock (RecentChatsLock)
+        {
+            PendingServerChatCapture? capture = FindServerChatCaptureLocked(captureId);
+            if (capture != null)
+            {
+                PendingServerChats.Remove(capture);
+            }
+        }
+    }
+
     private static void HandleRoutedRpcPostfix(ZRoutedRpc.RoutedRPCData data)
     {
         try
@@ -208,7 +291,7 @@ internal static class MapPingPatch
             bool mirrorChat = ChatMirroringEnabled();
             if (!mirrorChat)
             {
-                ClearRecentChats();
+                ClearRecentPlayerChats();
             }
 
             if (type != PingType && type != SayType && type != ShoutType)
@@ -223,7 +306,7 @@ internal static class MapPingPatch
             }
 
             string name = parameters.ReadString();
-            _ = parameters.ReadString();
+            string userId = parameters.ReadString();
             string text = parameters.ReadString();
 
             long unixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -238,26 +321,31 @@ internal static class MapPingPatch
                 // Recheck after decoding so a hot reload that disables mirroring cannot race a write.
                 if (!ChatMirroringEnabled())
                 {
-                    ClearRecentChats();
+                    ClearRecentPlayerChats();
                     return;
                 }
 
+                string playerName = (name ?? string.Empty).Trim();
+                bool serverOriginated = type == ShoutType &&
+                                        string.Equals(playerName, "Server", StringComparison.Ordinal) &&
+                                        string.Equals(userId, ServerUserId, StringComparison.Ordinal);
                 lock (RecentChatsLock)
                 {
-                    long sequence = ++_nextChatSequence;
-                    RecentChats[_nextChatIndex] = new MapChatSnapshot(
-                        sequence,
+                    if (serverOriginated &&
+                        TryMatchServerChatCaptureLocked(text, unixMs, out bool suppress) &&
+                        suppress)
+                    {
+                        return;
+                    }
+
+                    AppendChatLocked(
                         position.x,
                         position.z,
-                        (name ?? string.Empty).Trim(),
+                        playerName,
                         text,
                         type == ShoutType,
-                        unixMs);
-                    _nextChatIndex = (_nextChatIndex + 1) % RecentChatCapacity;
-                    if (_chatCount < RecentChatCapacity)
-                    {
-                        _chatCount++;
-                    }
+                        unixMs,
+                        serverOriginated);
                 }
 
                 return;
@@ -306,22 +394,127 @@ internal static class MapPingPatch
     {
         if (!ChatMirroringEnabled())
         {
-            ClearRecentChats();
+            ClearRecentPlayerChats();
         }
     }
 
-    private static void ClearRecentChats()
+    private static void ClearRecentPlayerChats()
     {
         lock (RecentChatsLock)
         {
-            if (_chatCount == 0)
+            int firstIndex =
+                (_nextChatIndex - _chatCount + RecentChatCapacity) % RecentChatCapacity;
+            bool containsPlayerChat = false;
+            for (int offset = 0; offset < _chatCount; offset++)
+            {
+                if (!RecentChats[(firstIndex + offset) % RecentChatCapacity].ServerOriginated)
+                {
+                    containsPlayerChat = true;
+                    break;
+                }
+            }
+
+            if (!containsPlayerChat)
             {
                 return;
             }
 
+            var retained = new MapChatSnapshot[RecentChatCapacity];
+            int retainedCount = 0;
+            for (int offset = 0; offset < _chatCount; offset++)
+            {
+                MapChatSnapshot chat =
+                    RecentChats[(firstIndex + offset) % RecentChatCapacity];
+                if (chat.ServerOriginated)
+                {
+                    retained[retainedCount++] = chat;
+                }
+            }
+
             Array.Clear(RecentChats, 0, RecentChats.Length);
-            _nextChatIndex = 0;
-            _chatCount = 0;
+            Array.Copy(retained, RecentChats, retainedCount);
+            _nextChatIndex = retainedCount % RecentChatCapacity;
+            _chatCount = retainedCount;
+        }
+    }
+
+    private static void AppendChatLocked(
+        float x,
+        float z,
+        string playerName,
+        string text,
+        bool shout,
+        long unixMs,
+        bool serverOriginated)
+    {
+        long sequence = ++_nextChatSequence;
+        RecentChats[_nextChatIndex] = new MapChatSnapshot(
+            sequence,
+            x,
+            z,
+            playerName,
+            text,
+            shout,
+            unixMs,
+            serverOriginated);
+        _nextChatIndex = (_nextChatIndex + 1) % RecentChatCapacity;
+        if (_chatCount < RecentChatCapacity)
+        {
+            _chatCount++;
+        }
+    }
+
+    private static PendingServerChatCapture? FindServerChatCaptureLocked(long captureId)
+    {
+        for (int index = 0; index < PendingServerChats.Count; index++)
+        {
+            PendingServerChatCapture capture = PendingServerChats[index];
+            if (capture.Id == captureId)
+            {
+                return capture;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryMatchServerChatCaptureLocked(
+        string text,
+        long nowUnixMs,
+        out bool suppress)
+    {
+        suppress = false;
+        RemoveExpiredServerChatCapturesLocked(nowUnixMs);
+        for (int index = 0; index < PendingServerChats.Count; index++)
+        {
+            PendingServerChatCapture capture = PendingServerChats[index];
+            if (capture.Captured ||
+                !string.Equals(capture.Text, text, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            capture.Captured = true;
+            if (capture.Injected)
+            {
+                PendingServerChats.RemoveAt(index);
+                suppress = true;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private static void RemoveExpiredServerChatCapturesLocked(long nowUnixMs)
+    {
+        for (int index = PendingServerChats.Count - 1; index >= 0; index--)
+        {
+            if (PendingServerChats[index].ExpiresUnixMs <= nowUnixMs)
+            {
+                PendingServerChats.RemoveAt(index);
+            }
         }
     }
 

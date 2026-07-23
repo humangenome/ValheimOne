@@ -389,8 +389,13 @@ public sealed class ActivityLogModule : IFeatureModule
 
     private static string NormalizeSource(string? value)
     {
-        return string.Equals(value, "panel", StringComparison.OrdinalIgnoreCase)
-            ? "panel"
+        if (string.Equals(value, "panel", StringComparison.OrdinalIgnoreCase))
+        {
+            return "panel";
+        }
+
+        return string.Equals(value, "web", StringComparison.OrdinalIgnoreCase)
+            ? "web"
             : "token";
     }
 

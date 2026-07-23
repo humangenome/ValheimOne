@@ -21,6 +21,9 @@ internal sealed class LiveMapHttpServer
     private const int MaximumInlineLocationPoisPerGroup = 400;
     private const float MaximumPingWorldRadius = 10500f;
     private const int MaximumPingLabelLength = 32;
+    private const int MaximumAdminChatTextLength = 256;
+    private const int MaximumAdminChatSendsPerWindow = 5;
+    private const long AdminChatSendWindowTicks = 10L * TimeSpan.TicksPerSecond;
     private const long ResourceRefreshMilliseconds = 180L * 1000L;
     private const int MaximumWebPinWritesPerSecond = 5;
     private const long WebPinWriteWindowTicks = TimeSpan.TicksPerSecond;
@@ -68,6 +71,8 @@ internal sealed class LiveMapHttpServer
     private readonly object _fogPngLock = new object();
     private readonly object _exploredPctLock = new object();
     private readonly object _webPinWriteRateLock = new object();
+    private readonly object _adminChatRateLock = new object();
+    private readonly Queue<long> _adminChatSendTicks = new Queue<long>();
     private readonly Dictionary<string, (long WindowStartTicks, int Count)> _webPinWriteRates =
         new Dictionary<string, (long WindowStartTicks, int Count)>(StringComparer.Ordinal);
     private HttpListener? _listener;
@@ -326,8 +331,11 @@ internal sealed class LiveMapHttpServer
                 }
 
                 bool isTowPath = string.Equals(path, "/api/admin/tow", StringComparison.Ordinal);
+                bool isChatPath = string.Equals(path, "/api/admin/chat", StringComparison.Ordinal);
                 if (_consoleBridge == null ||
-                    (!isTowPath && (!_config.ConsoleEnabled || _logRingBuffer == null)))
+                    (!isChatPath &&
+                     !isTowPath &&
+                     (!_config.ConsoleEnabled || _logRingBuffer == null)))
                 {
                     WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
                     return;
@@ -475,6 +483,10 @@ internal sealed class LiveMapHttpServer
             else if (isGet && path == "/api/admin/banlist")
             {
                 ServeBanList(response);
+            }
+            else if (isPost && path == "/api/admin/chat")
+            {
+                ServeAdminChat(request, response);
             }
             else if (isPost && path == "/api/admin/save")
             {
@@ -1469,6 +1481,136 @@ internal sealed class LiveMapHttpServer
             ? "{\"ok\":true}"
             : "{\"ok\":false,\"error\":" + JsonWriter.Quote(result.Error) + "}";
         WriteJson(response, HttpStatusCode.OK, json);
+    }
+
+    private void ServeAdminChat(
+        HttpListenerRequest request,
+        HttpListenerResponse response)
+    {
+        if (!TryReadAdminChatRequest(request, response, out string text) ||
+            !TryAcceptAdminChatSend(response))
+        {
+            return;
+        }
+
+        ConsoleActionResult result = _consoleBridge!.BroadcastChat(text);
+        if (!result.Ok)
+        {
+            WriteAdminChatError(response, HttpStatusCode.ServiceUnavailable, "chat unavailable");
+            return;
+        }
+
+        ReadAuditIdentity(request, out string operatorName, out _);
+        _activityLog.RecordAdminAction(
+            operatorName,
+            "chat",
+            text,
+            "ok",
+            text,
+            "web");
+        WriteJson(response, HttpStatusCode.OK, "{\"ok\":true}");
+    }
+
+    private static bool TryReadAdminChatRequest(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        out string text)
+    {
+        text = string.Empty;
+        if (!TryReadRequestBody(request, out string json, out bool tooLarge))
+        {
+            WriteAdminChatError(
+                response,
+                tooLarge ? HttpStatusCode.RequestEntityTooLarge : HttpStatusCode.BadRequest,
+                tooLarge ? "payload too large" : "bad request");
+            return false;
+        }
+
+        if (!TryReadJsonStringProperty(json, "text", out text))
+        {
+            WriteAdminChatError(response, HttpStatusCode.BadRequest, "text is required");
+            return false;
+        }
+
+        text = StripControlCharacters(text.Trim()).Trim();
+        if (text.Length == 0)
+        {
+            WriteAdminChatError(response, HttpStatusCode.BadRequest, "text is required");
+            return false;
+        }
+
+        if (text.Length > MaximumAdminChatTextLength)
+        {
+            WriteAdminChatError(
+                response,
+                HttpStatusCode.BadRequest,
+                "text must be 256 characters or fewer");
+            return false;
+        }
+
+        return true;
+    }
+
+    private bool TryAcceptAdminChatSend(HttpListenerResponse response)
+    {
+        long nowTicks = DateTime.UtcNow.Ticks;
+        bool rateLimited;
+        lock (_adminChatRateLock)
+        {
+            if (_adminChatSendTicks.Count > 0 && nowTicks < _adminChatSendTicks.Peek())
+            {
+                _adminChatSendTicks.Clear();
+            }
+
+            while (_adminChatSendTicks.Count > 0 &&
+                   nowTicks - _adminChatSendTicks.Peek() >= AdminChatSendWindowTicks)
+            {
+                _adminChatSendTicks.Dequeue();
+            }
+
+            rateLimited = _adminChatSendTicks.Count >= MaximumAdminChatSendsPerWindow;
+            if (!rateLimited)
+            {
+                _adminChatSendTicks.Enqueue(nowTicks);
+            }
+        }
+
+        if (!rateLimited)
+        {
+            return true;
+        }
+
+        WriteAdminChatError(response, (HttpStatusCode)429, "rate limited");
+        return false;
+    }
+
+    private static string StripControlCharacters(string value)
+    {
+        StringBuilder? sanitized = null;
+        for (int index = 0; index < value.Length; index++)
+        {
+            char character = value[index];
+            if (char.IsControl(character))
+            {
+                sanitized ??= new StringBuilder(value.Length).Append(value, 0, index);
+                continue;
+            }
+
+            sanitized?.Append(character);
+        }
+
+        return sanitized?.ToString() ?? value;
+    }
+
+    private static void WriteAdminChatError(
+        HttpListenerResponse response,
+        HttpStatusCode status,
+        string error)
+    {
+        WriteJson(
+            response,
+            status,
+            "{\"ok\":false,\"error\":" + JsonWriter.Quote(error) + "}");
     }
 
     private void ServeBanList(HttpListenerResponse response)
