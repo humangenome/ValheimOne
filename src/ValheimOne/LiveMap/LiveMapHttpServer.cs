@@ -56,6 +56,9 @@ internal sealed class LiveMapHttpServer
     private readonly Func<EntityFocusSnapshot> _getEntityFocusSnapshot;
     private readonly Action<bool, bool> _noteEntitiesRequested;
     private readonly Action<string> _noteEntityFocusRequested;
+    private readonly Func<DungeonRegistrySnapshot> _getDungeonSnapshot;
+    private readonly Func<DungeonRegistrySnapshot> _ensureDungeonsScanned;
+    private readonly Func<float, float, float, string?> _getDungeonId;
     private readonly PositionHistory _positionHistory;
     private readonly Func<string> _getFogMode;
     private readonly Func<float> _getEffectiveUpdateSeconds;
@@ -112,6 +115,9 @@ internal sealed class LiveMapHttpServer
         Func<EntityFocusSnapshot> getEntityFocusSnapshot,
         Action<bool, bool> noteEntitiesRequested,
         Action<string> noteEntityFocusRequested,
+        Func<DungeonRegistrySnapshot> getDungeonSnapshot,
+        Func<DungeonRegistrySnapshot> ensureDungeonsScanned,
+        Func<float, float, float, string?> getDungeonId,
         PositionHistory positionHistory,
         Func<string> getFogMode,
         Func<float> getEffectiveUpdateSeconds,
@@ -144,6 +150,9 @@ internal sealed class LiveMapHttpServer
         _getEntityFocusSnapshot = getEntityFocusSnapshot;
         _noteEntitiesRequested = noteEntitiesRequested;
         _noteEntityFocusRequested = noteEntityFocusRequested;
+        _getDungeonSnapshot = getDungeonSnapshot;
+        _ensureDungeonsScanned = ensureDungeonsScanned;
+        _getDungeonId = getDungeonId;
         _positionHistory = positionHistory;
         _getFogMode = getFogMode;
         _getEffectiveUpdateSeconds = getEffectiveUpdateSeconds;
@@ -392,6 +401,14 @@ internal sealed class LiveMapHttpServer
             {
                 ServePlayers(response, viewLevel);
             }
+            else if (isGet && path == "/api/dungeons")
+            {
+                ServeDungeons(response, viewLevel);
+            }
+            else if (isGet && TryGetDungeonPathId(path, out string dungeonId))
+            {
+                ServeDungeon(response, viewLevel, dungeonId);
+            }
             else if (isGet && path == "/api/activity")
             {
                 ServeActivity(request, response, viewLevel);
@@ -574,6 +591,34 @@ internal sealed class LiveMapHttpServer
 
         viewLevel = ViewLevel.Public;
         return _publicView;
+    }
+
+    private static bool TryGetDungeonPathId(string path, out string dungeonId)
+    {
+        const string prefix = "/api/dungeons/";
+        dungeonId = string.Empty;
+        if (!path.StartsWith(prefix, StringComparison.Ordinal) ||
+            path.Length == prefix.Length)
+        {
+            return false;
+        }
+
+        string escapedId = path.Substring(prefix.Length);
+        if (escapedId.IndexOf('/') >= 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            dungeonId = Uri.UnescapeDataString(escapedId);
+        }
+        catch (UriFormatException)
+        {
+            return false;
+        }
+
+        return dungeonId.Length > 0 && dungeonId.IndexOf('/') < 0;
     }
 
     private bool HasConsoleToken(HttpListenerRequest request)
@@ -2085,6 +2130,9 @@ internal sealed class LiveMapHttpServer
         bool seesAllPlayers = SeesAllPlayers(viewLevel);
         bool hasSharedMapAccess = viewLevel != ViewLevel.Public;
         bool showNames = hasSharedMapAccess || _publicShowPlayerNames;
+        Dictionary<string, string>? dungeonLabels = hasSharedMapAccess
+            ? BuildDungeonLabels(_getDungeonSnapshot())
+            : null;
         long snapshotAgeMs = snapshot.UnixMs == 0
             ? 0
             : Math.Max(0L, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - snapshot.UnixMs);
@@ -2131,6 +2179,16 @@ internal sealed class LiveMapHttpServer
                 json.Append(",\"dead\":").Append(player.Dead ? "true" : "false");
                 json.Append(",\"pvp\":").Append(player.Pvp ? "true" : "false");
                 json.Append(",\"inBed\":").Append(player.InBed ? "true" : "false");
+                string? dungeonId = _getDungeonId(player.X, player.Y, player.Z);
+                if (dungeonId != null &&
+                    dungeonLabels != null &&
+                    dungeonLabels.TryGetValue(dungeonId, out string dungeonLabel))
+                {
+                    json.Append(",\"inDungeon\":{\"id\":").Append(
+                        JsonWriter.Quote(dungeonId));
+                    json.Append(",\"label\":").Append(JsonWriter.Quote(dungeonLabel));
+                    json.Append('}');
+                }
             }
 
             json.Append('}');
@@ -2146,6 +2204,257 @@ internal sealed class LiveMapHttpServer
 
         json.Append('}');
         return json.ToString();
+    }
+
+    private static Dictionary<string, string> BuildDungeonLabels(
+        DungeonRegistrySnapshot snapshot)
+    {
+        var labels = new Dictionary<string, string>(
+            snapshot.Dungeons.Count,
+            StringComparer.Ordinal);
+        for (int index = 0; index < snapshot.Dungeons.Count; index++)
+        {
+            DungeonSnapshot dungeon = snapshot.Dungeons[index];
+            labels[dungeon.Id] = dungeon.Label;
+        }
+
+        return labels;
+    }
+
+    private void ServeDungeons(HttpListenerResponse response, ViewLevel viewLevel)
+    {
+        if (viewLevel == ViewLevel.Public)
+        {
+            WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
+        DungeonRegistrySnapshot snapshot = _ensureDungeonsScanned();
+        LiveMapSnapshot playerSnapshot = _getSnapshot();
+        Dictionary<string, int> playersInside = CountPlayersInside(playerSnapshot);
+        var json = new StringBuilder(128 + (snapshot.Dungeons.Count * 192));
+        json.Append("{\"unixMs\":").Append(
+            snapshot.RefreshedUnixMs.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"scanning\":").Append(snapshot.Scanning ? "true" : "false");
+        json.Append(",\"ready\":").Append(
+            snapshot.InitialScanComplete ? "true" : "false");
+        json.Append(",\"dungeons\":[");
+        for (int index = 0; index < snapshot.Dungeons.Count; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            DungeonSnapshot dungeon = snapshot.Dungeons[index];
+            playersInside.TryGetValue(dungeon.Id, out int playerCount);
+            json.Append('{');
+            AppendDungeonMetadataJson(json, dungeon, playerCount);
+            json.Append('}');
+        }
+
+        json.Append("]}");
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private void ServeDungeon(
+        HttpListenerResponse response,
+        ViewLevel viewLevel,
+        string requestedId)
+    {
+        if (viewLevel == ViewLevel.Public)
+        {
+            WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
+        DungeonRegistrySnapshot snapshot = _ensureDungeonsScanned();
+        DungeonSnapshot? dungeon = null;
+        for (int index = 0; index < snapshot.Dungeons.Count; index++)
+        {
+            DungeonSnapshot candidate = snapshot.Dungeons[index];
+            if (string.Equals(candidate.Id, requestedId, StringComparison.Ordinal))
+            {
+                dungeon = candidate;
+                break;
+            }
+        }
+
+        if (dungeon == null)
+        {
+            WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
+        LiveMapSnapshot playerSnapshot = _getSnapshot();
+        bool seesAllPlayers = SeesAllPlayers(viewLevel);
+        int playerCount = 0;
+        var visiblePlayers = new List<LiveMapPlayerSnapshot>();
+        for (int index = 0; index < playerSnapshot.Players.Length; index++)
+        {
+            LiveMapPlayerSnapshot player = playerSnapshot.Players[index];
+            string? dungeonId = _getDungeonId(player.X, player.Y, player.Z);
+            if (!string.Equals(dungeonId, dungeon.Id, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            playerCount++;
+            if (seesAllPlayers || player.IsPublic)
+            {
+                visiblePlayers.Add(player);
+            }
+        }
+
+        var json = new StringBuilder(
+            320 +
+            ((dungeon.Interior?.Rooms.Count ?? 0) * 112) +
+            (visiblePlayers.Count * 80));
+        json.Append("{\"unixMs\":").Append(
+            snapshot.RefreshedUnixMs.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"scanning\":").Append(snapshot.Scanning ? "true" : "false");
+        json.Append(",\"ready\":").Append(
+            snapshot.InitialScanComplete ? "true" : "false");
+        json.Append(',');
+        AppendDungeonMetadataJson(json, dungeon, playerCount);
+        json.Append(",\"interior\":");
+        AppendDungeonInteriorJson(json, dungeon);
+        json.Append(",\"livePlayers\":[");
+        for (int index = 0; index < visiblePlayers.Count; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            LiveMapPlayerSnapshot player = visiblePlayers[index];
+            json.Append("{\"name\":").Append(JsonWriter.Quote(player.Name));
+            json.Append(",\"x\":").Append(JsonWriter.Number(player.X));
+            json.Append(",\"y\":").Append(JsonWriter.Number(player.Y));
+            json.Append(",\"z\":").Append(JsonWriter.Number(player.Z));
+            json.Append('}');
+        }
+
+        json.Append("]}");
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private Dictionary<string, int> CountPlayersInside(LiveMapSnapshot snapshot)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (int index = 0; index < snapshot.Players.Length; index++)
+        {
+            LiveMapPlayerSnapshot player = snapshot.Players[index];
+            string? dungeonId = _getDungeonId(player.X, player.Y, player.Z);
+            if (dungeonId == null)
+            {
+                continue;
+            }
+
+            counts.TryGetValue(dungeonId, out int count);
+            counts[dungeonId] = count + 1;
+        }
+
+        return counts;
+    }
+
+    private static void AppendDungeonMetadataJson(
+        StringBuilder json,
+        DungeonSnapshot dungeon,
+        int playersInside)
+    {
+        json.Append("\"id\":").Append(JsonWriter.Quote(dungeon.Id));
+        json.Append(",\"type\":").Append(JsonWriter.Quote(dungeon.Type));
+        json.Append(",\"label\":").Append(JsonWriter.Quote(dungeon.Label));
+        json.Append(",\"entrance\":{\"x\":").Append(
+            JsonWriter.Number(dungeon.EntranceX));
+        json.Append(",\"y\":").Append(JsonWriter.Number(dungeon.EntranceY));
+        json.Append(",\"z\":").Append(JsonWriter.Number(dungeon.EntranceZ));
+        json.Append('}');
+        json.Append(",\"zone\":{\"x\":").Append(
+            dungeon.ZoneX.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"y\":").Append(
+            dungeon.ZoneY.ToString(CultureInfo.InvariantCulture));
+        json.Append('}');
+        json.Append(",\"generated\":").Append(dungeon.Generated ? "true" : "false");
+        json.Append(",\"hasInterior\":").Append(
+            dungeon.HasInterior ? "true" : "false");
+        json.Append(",\"roomCount\":").Append(
+            (dungeon.Interior?.Rooms.Count ?? 0).ToString(
+                CultureInfo.InvariantCulture));
+        json.Append(",\"playersInside\":").Append(
+            playersInside.ToString(CultureInfo.InvariantCulture));
+    }
+
+    private static void AppendDungeonInteriorJson(
+        StringBuilder json,
+        DungeonSnapshot dungeon)
+    {
+        DungeonInteriorSnapshot? interior = dungeon.Interior;
+        if (!dungeon.Generated || interior == null)
+        {
+            json.Append("null");
+            return;
+        }
+
+        json.Append('{');
+        json.Append("\"generatorPrefab\":").Append(
+            JsonWriter.Quote(interior.GeneratorPrefab));
+        json.Append(",\"procedural\":").Append(
+            interior.Procedural ? "true" : "false");
+        json.Append(",\"origin\":{\"x\":").Append(JsonWriter.Number(interior.OriginX));
+        json.Append(",\"y\":").Append(JsonWriter.Number(interior.OriginY));
+        json.Append(",\"z\":").Append(JsonWriter.Number(interior.OriginZ));
+        json.Append('}');
+        json.Append(",\"entrance\":{\"x\":").Append(
+            JsonWriter.Number(interior.OriginX));
+        json.Append(",\"y\":").Append(JsonWriter.Number(interior.OriginY));
+        json.Append(",\"z\":").Append(JsonWriter.Number(interior.OriginZ));
+        json.Append('}');
+        DungeonBoundsSnapshot bounds = interior.Bounds;
+        json.Append(",\"bounds\":{\"minX\":").Append(JsonWriter.Number(bounds.MinX));
+        json.Append(",\"maxX\":").Append(JsonWriter.Number(bounds.MaxX));
+        json.Append(",\"minZ\":").Append(JsonWriter.Number(bounds.MinZ));
+        json.Append(",\"maxZ\":").Append(JsonWriter.Number(bounds.MaxZ));
+        json.Append(",\"minY\":").Append(JsonWriter.Number(bounds.MinY));
+        json.Append(",\"maxY\":").Append(JsonWriter.Number(bounds.MaxY));
+        json.Append('}');
+        json.Append(",\"rooms\":[");
+        for (int index = 0; index < interior.Rooms.Count; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            DungeonRoomSnapshot room = interior.Rooms[index];
+            json.Append("{\"name\":").Append(JsonWriter.Quote(room.Name));
+            json.Append(",\"x\":").Append(JsonWriter.Number(room.X));
+            json.Append(",\"y\":").Append(JsonWriter.Number(room.Y));
+            json.Append(",\"z\":").Append(JsonWriter.Number(room.Z));
+            json.Append(",\"sizeX\":").Append(
+                room.SizeX.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"sizeZ\":").Append(
+                room.SizeZ.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"rotYDeg\":").Append(JsonWriter.Number(
+                Math.Round(GetRoomYawDegrees(room), 1)));
+            json.Append('}');
+        }
+
+        json.Append("]}");
+    }
+
+    private static double GetRoomYawDegrees(DungeonRoomSnapshot room)
+    {
+        double numerator =
+            2.0 * ((room.RotationW * room.RotationY) +
+                   (room.RotationX * room.RotationZ));
+        double denominator =
+            1.0 -
+            (2.0 * ((room.RotationY * room.RotationY) +
+                    (room.RotationZ * room.RotationZ)));
+        double yaw = Math.Atan2(numerator, denominator) * (180.0 / Math.PI);
+        return yaw < 0.0 ? yaw + 360.0 : yaw;
     }
 
     private void ServeTrail(

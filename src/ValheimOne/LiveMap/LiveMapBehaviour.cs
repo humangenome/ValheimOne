@@ -337,6 +337,13 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             () => entityTracker.FocusSnapshot,
             entityTracker.NoteEntitiesRequested,
             entityTracker.NoteFocusRequested,
+            () => DungeonSnapshot,
+            EnsureDungeonsScanned,
+            (x, y, z) => TryGetDungeonId(
+                new Vector3(x, y, z),
+                out string dungeonId)
+                    ? dungeonId
+                    : null,
             _positionHistory,
             () => _fogMode,
             GetEffectivePlayerUpdateSeconds,
