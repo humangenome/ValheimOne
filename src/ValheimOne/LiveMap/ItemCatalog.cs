@@ -23,12 +23,19 @@ internal sealed class ItemCatalog
     private const int MaximumCacheBytes = 64 * 1024 * 1024;
     private const string CacheFileName = "catalog.json";
 
+    private static ItemCatalog? _current;
+
+    private readonly ConsoleItem[] _consoleItems;
+    private readonly Dictionary<string, ConsoleItem> _consoleItemsByToken;
+    private readonly Dictionary<string, List<ConsoleItem>> _reverseRecipes;
+
     private ItemCatalog(
         byte[] content,
         int itemCount,
         int recipeCount,
         int conversionCount,
-        int droppedByEdgeCount)
+        int droppedByEdgeCount,
+        ConsoleItem[] consoleItems)
     {
         Content = content;
         ETag = ComputeETag(content);
@@ -36,7 +43,12 @@ internal sealed class ItemCatalog
         RecipeCount = recipeCount;
         ConversionCount = conversionCount;
         DroppedByEdgeCount = droppedByEdgeCount;
+        _consoleItems = consoleItems;
+        _consoleItemsByToken = BuildTokenLookup(_consoleItems);
+        _reverseRecipes = BuildReverseRecipes(_consoleItems);
     }
+
+    public static ItemCatalog? Current => _current;
 
     public byte[] Content { get; }
 
@@ -61,6 +73,7 @@ internal sealed class ItemCatalog
         string path = Path.Combine(dataDirectory, CacheFileName);
         if (TryLoad(path, gameVersion, log, out ItemCatalog? cached))
         {
+            _current = cached;
             LogSummary(log, cached!, timer.ElapsedMilliseconds, "cache hit");
             return cached!;
         }
@@ -72,10 +85,99 @@ internal sealed class ItemCatalog
             result.ItemCount,
             result.RecipeCount,
             result.ConversionCount,
-            result.DroppedByEdgeCount);
+            result.DroppedByEdgeCount,
+            result.ConsoleItems);
+        _current = catalog;
         TryPersist(path, result.Json, log);
         LogSummary(log, catalog, timer.ElapsedMilliseconds, "extracted");
         return catalog;
+    }
+
+    public bool TryResolveItem(
+        string query,
+        out ConsoleItem? item,
+        out List<ConsoleItem> candidates)
+    {
+        item = null;
+        candidates = new List<ConsoleItem>();
+        string value = (query ?? string.Empty).Trim();
+        if (value.Length == 0)
+        {
+            return false;
+        }
+
+        if (_consoleItemsByToken.TryGetValue(value, out ConsoleItem? tokenMatch))
+        {
+            item = tokenMatch;
+            return true;
+        }
+
+        CollectMatches(
+            candidates,
+            entry => string.Equals(entry.Name, value, StringComparison.OrdinalIgnoreCase));
+        if (ResolveUnique(candidates, out item))
+        {
+            return true;
+        }
+
+        if (candidates.Count > 1)
+        {
+            return false;
+        }
+
+        CollectMatches(
+            candidates,
+            entry => entry.Name.StartsWith(value, StringComparison.OrdinalIgnoreCase) ||
+                     entry.Token.StartsWith(value, StringComparison.OrdinalIgnoreCase));
+        if (ResolveUnique(candidates, out item))
+        {
+            return true;
+        }
+
+        if (candidates.Count > 1)
+        {
+            return false;
+        }
+
+        CollectMatches(
+            candidates,
+            entry => entry.Name.IndexOf(value, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                     entry.Token.IndexOf(value, StringComparison.OrdinalIgnoreCase) >= 0);
+        return ResolveUnique(candidates, out item);
+    }
+
+    public IReadOnlyList<ConsoleItem> GetReverseRecipeUses(ConsoleItem item)
+    {
+        return _reverseRecipes.TryGetValue(item.Token, out List<ConsoleItem>? uses)
+            ? uses
+            : Array.Empty<ConsoleItem>();
+    }
+
+    private void CollectMatches(List<ConsoleItem> matches, Predicate<ConsoleItem> predicate)
+    {
+        matches.Clear();
+        for (int index = 0; index < _consoleItems.Length; index++)
+        {
+            ConsoleItem entry = _consoleItems[index];
+            if (predicate(entry))
+            {
+                matches.Add(entry);
+            }
+        }
+    }
+
+    private static bool ResolveUnique(
+        List<ConsoleItem> candidates,
+        out ConsoleItem? item)
+    {
+        if (candidates.Count == 1)
+        {
+            item = candidates[0];
+            return true;
+        }
+
+        item = null;
+        return false;
     }
 
     private static BuildResult Build(
@@ -150,12 +252,14 @@ internal sealed class ItemCatalog
                 "yyyy-MM-dd'T'HH:mm:ss.fff'Z'",
                 CultureInfo.InvariantCulture);
             string json = Serialize(gameVersion, generatedUtc, sortedItems);
+            ConsoleItem[] consoleItems = BuildConsoleItems(sortedItems);
             return new BuildResult(
                 json,
                 sortedItems.Count,
                 recipeCount,
                 conversionCount,
-                droppedByEdgeCount);
+                droppedByEdgeCount,
+                consoleItems);
         }
         finally
         {
@@ -927,12 +1031,14 @@ internal sealed class ItemCatalog
                 throw new FormatException("Item catalog cache has invalid record counts.");
             }
 
+            ConsoleItem[] consoleItems = ParseConsoleItems(json, itemCount);
             catalog = new ItemCatalog(
                 Encoding.UTF8.GetBytes(json),
                 itemCount,
                 recipeCount,
                 conversionEdges / 2,
-                droppedByEdgeCount);
+                droppedByEdgeCount,
+                consoleItems);
             return true;
         }
         catch (Exception exception)
@@ -968,6 +1074,218 @@ internal sealed class ItemCatalog
         }
 
         return count;
+    }
+
+    private static ConsoleItem[] BuildConsoleItems(List<CatalogItem> catalogItems)
+    {
+        var items = new ConsoleItem[catalogItems.Count];
+        for (int itemIndex = 0; itemIndex < catalogItems.Count; itemIndex++)
+        {
+            CatalogItem source = catalogItems[itemIndex];
+            var recipes = new ConsoleRecipe[source.Recipes.Count];
+            for (int recipeIndex = 0; recipeIndex < source.Recipes.Count; recipeIndex++)
+            {
+                CatalogRecipe sourceRecipe = source.Recipes[recipeIndex];
+                var ingredients =
+                    new ConsoleIngredient[sourceRecipe.Ingredients.Count];
+                for (int ingredientIndex = 0;
+                     ingredientIndex < sourceRecipe.Ingredients.Count;
+                     ingredientIndex++)
+                {
+                    CatalogIngredient sourceIngredient =
+                        sourceRecipe.Ingredients[ingredientIndex];
+                    ingredients[ingredientIndex] = new ConsoleIngredient
+                    {
+                        Prefab = sourceIngredient.Prefab,
+                        Name = sourceIngredient.Name,
+                        Amount = sourceIngredient.Amount,
+                        AmountPerLevel = sourceIngredient.AmountPerLevel,
+                    };
+                }
+
+                recipes[recipeIndex] = new ConsoleRecipe
+                {
+                    Enabled = sourceRecipe.Enabled,
+                    Amount = sourceRecipe.Amount,
+                    Station = sourceRecipe.StationPrefab.Length == 0
+                        ? null
+                        : new ConsoleStation
+                        {
+                            Prefab = sourceRecipe.StationPrefab,
+                            Name = sourceRecipe.StationName,
+                        },
+                    MinimumStationLevel = sourceRecipe.MinimumStationLevel,
+                    Ingredients = ingredients,
+                };
+            }
+
+            var sources = new ConsoleSource[source.Sources.Count];
+            for (int sourceIndex = 0; sourceIndex < source.Sources.Count; sourceIndex++)
+            {
+                CatalogConversion conversion = source.Sources[sourceIndex];
+                sources[sourceIndex] = new ConsoleSource
+                {
+                    Method = conversion.Method,
+                    Station = new ConsoleStation
+                    {
+                        Prefab = conversion.StationPrefab,
+                        Name = conversion.StationName,
+                    },
+                    Input = new ConsoleItemReference
+                    {
+                        Prefab = conversion.ItemPrefab,
+                        Name = conversion.ItemName,
+                    },
+                    Amount = conversion.Amount,
+                };
+            }
+
+            var drops = new ConsoleDrop[source.DroppedBy.Count];
+            for (int dropIndex = 0; dropIndex < source.DroppedBy.Count; dropIndex++)
+            {
+                CatalogDrop drop = source.DroppedBy[dropIndex];
+                drops[dropIndex] = new ConsoleDrop
+                {
+                    Creature = drop.CreatureToken,
+                    Name = drop.CreatureName,
+                    Chance = drop.Chance,
+                };
+            }
+
+            items[itemIndex] = new ConsoleItem
+            {
+                Token = source.Token,
+                Name = source.Name,
+                Type = source.Type,
+                MaxQuality = source.MaxQuality,
+                ToolTier = source.ToolTier,
+                Weight = source.Weight,
+                MaxStackSize = source.MaxStackSize,
+                Teleportable = source.Teleportable,
+                Armor = source.HasArmor
+                    ? new ConsoleArmor
+                    {
+                        Base = source.Armor,
+                        PerLevel = source.ArmorPerLevel,
+                    }
+                    : null,
+                Damage = HasDamage(source.Damage) || HasDamage(source.DamagePerLevel)
+                    ? new ConsoleDamageSummary
+                    {
+                        Base = BuildConsoleDamage(source.Damage),
+                        PerLevel = BuildConsoleDamage(source.DamagePerLevel),
+                    }
+                    : null,
+                Recipes = recipes,
+                Sources = sources,
+                DroppedBy = drops,
+            };
+        }
+
+        Array.Sort(items, CompareConsoleItems);
+        return items;
+    }
+
+    private static ConsoleDamage BuildConsoleDamage(HitData.DamageTypes damage)
+    {
+        return new ConsoleDamage
+        {
+            Generic = damage.m_damage,
+            Blunt = damage.m_blunt,
+            Slash = damage.m_slash,
+            Pierce = damage.m_pierce,
+            Chop = damage.m_chop,
+            Pickaxe = damage.m_pickaxe,
+            Fire = damage.m_fire,
+            Frost = damage.m_frost,
+            Lightning = damage.m_lightning,
+            Poison = damage.m_poison,
+            Spirit = damage.m_spirit,
+        };
+    }
+
+    private static ConsoleItem[] ParseConsoleItems(string json, int expectedItemCount)
+    {
+        ConsoleItem[] items = ItemCatalogJsonParser.ParseConsoleItems(json);
+        if (items.Length != expectedItemCount)
+        {
+            throw new FormatException("Item catalog cache has an invalid item count.");
+        }
+
+        var seenTokens = new HashSet<string>(StringComparer.Ordinal);
+        for (int index = 0; index < items.Length; index++)
+        {
+            items[index].Normalize();
+            if (items[index].Token.Length == 0 ||
+                !seenTokens.Add(items[index].Token))
+            {
+                throw new FormatException("Item catalog cache contains an invalid item token.");
+            }
+        }
+
+        Array.Sort(items, CompareConsoleItems);
+        return items;
+    }
+
+    private static Dictionary<string, ConsoleItem> BuildTokenLookup(ConsoleItem[] items)
+    {
+        var lookup = new Dictionary<string, ConsoleItem>(
+            items.Length,
+            StringComparer.Ordinal);
+        for (int index = 0; index < items.Length; index++)
+        {
+            lookup[items[index].Token] = items[index];
+        }
+
+        return lookup;
+    }
+
+    private static Dictionary<string, List<ConsoleItem>> BuildReverseRecipes(
+        ConsoleItem[] items)
+    {
+        var reverse = new Dictionary<string, List<ConsoleItem>>(StringComparer.Ordinal);
+        for (int itemIndex = 0; itemIndex < items.Length; itemIndex++)
+        {
+            ConsoleItem output = items[itemIndex];
+            var seenInputs = new HashSet<string>(StringComparer.Ordinal);
+            for (int recipeIndex = 0; recipeIndex < output.Recipes.Length; recipeIndex++)
+            {
+                ConsoleRecipe recipe = output.Recipes[recipeIndex];
+                if (!recipe.Enabled)
+                {
+                    continue;
+                }
+
+                for (int ingredientIndex = 0;
+                     ingredientIndex < recipe.Ingredients.Length;
+                     ingredientIndex++)
+                {
+                    string token = recipe.Ingredients[ingredientIndex].Prefab;
+                    if (token.Length == 0 || !seenInputs.Add(token))
+                    {
+                        continue;
+                    }
+
+                    if (!reverse.TryGetValue(token, out List<ConsoleItem>? uses))
+                    {
+                        uses = new List<ConsoleItem>();
+                        reverse.Add(token, uses);
+                    }
+
+                    uses.Add(output);
+                }
+            }
+        }
+
+        return reverse;
+    }
+
+    private static int CompareConsoleItems(ConsoleItem left, ConsoleItem right)
+    {
+        int comparison = StringComparer.OrdinalIgnoreCase.Compare(left.Name, right.Name);
+        return comparison != 0
+            ? comparison
+            : StringComparer.Ordinal.Compare(left.Token, right.Token);
     }
 
     private static void TryPersist(string path, string json, ModLogger log)
@@ -1041,6 +1359,161 @@ internal sealed class ItemCatalog
             .Replace('\r', ' ')
             .Replace('\n', ' ')
             .Trim();
+    }
+
+    internal sealed class ConsoleItem
+    {
+        public string Token { get; set; } = string.Empty;
+
+        public string Name { get; set; } = string.Empty;
+
+        public string Type { get; set; } = string.Empty;
+
+        public int MaxQuality { get; set; }
+
+        public int ToolTier { get; set; }
+
+        public float Weight { get; set; }
+
+        public int MaxStackSize { get; set; }
+
+        public bool Teleportable { get; set; }
+
+        public ConsoleArmor? Armor { get; set; }
+
+        public ConsoleDamageSummary? Damage { get; set; }
+
+        public ConsoleRecipe[] Recipes { get; set; } = Array.Empty<ConsoleRecipe>();
+
+        public ConsoleSource[] Sources { get; set; } = Array.Empty<ConsoleSource>();
+
+        public ConsoleDrop[] DroppedBy { get; set; } = Array.Empty<ConsoleDrop>();
+
+        public void Normalize()
+        {
+            Token = (Token ?? string.Empty).Trim();
+            Name = string.IsNullOrWhiteSpace(Name) ? Token : Name.Trim();
+            Type = (Type ?? string.Empty).Trim();
+            Recipes ??= Array.Empty<ConsoleRecipe>();
+            Sources ??= Array.Empty<ConsoleSource>();
+            DroppedBy ??= Array.Empty<ConsoleDrop>();
+            for (int index = 0; index < Recipes.Length; index++)
+            {
+                Recipes[index].Normalize();
+            }
+        }
+    }
+
+    internal sealed class ConsoleArmor
+    {
+        public float Base { get; set; }
+
+        public float PerLevel { get; set; }
+    }
+
+    internal sealed class ConsoleDamageSummary
+    {
+        public ConsoleDamage Base { get; set; } = new ConsoleDamage();
+
+        public ConsoleDamage PerLevel { get; set; } = new ConsoleDamage();
+    }
+
+    internal sealed class ConsoleDamage
+    {
+        public float Generic { get; set; }
+
+        public float Blunt { get; set; }
+
+        public float Slash { get; set; }
+
+        public float Pierce { get; set; }
+
+        public float Chop { get; set; }
+
+        public float Pickaxe { get; set; }
+
+        public float Fire { get; set; }
+
+        public float Frost { get; set; }
+
+        public float Lightning { get; set; }
+
+        public float Poison { get; set; }
+
+        public float Spirit { get; set; }
+    }
+
+    internal sealed class ConsoleRecipe
+    {
+        public bool Enabled { get; set; }
+
+        public int Amount { get; set; }
+
+        public ConsoleStation? Station { get; set; }
+
+        public int MinimumStationLevel { get; set; }
+
+        public ConsoleIngredient[] Ingredients { get; set; } = Array.Empty<ConsoleIngredient>();
+
+        public void Normalize()
+        {
+            Ingredients ??= Array.Empty<ConsoleIngredient>();
+            for (int index = 0; index < Ingredients.Length; index++)
+            {
+                Ingredients[index].Normalize();
+            }
+        }
+    }
+
+    internal sealed class ConsoleStation
+    {
+        public string Prefab { get; set; } = string.Empty;
+
+        public string Name { get; set; } = string.Empty;
+    }
+
+    internal sealed class ConsoleIngredient
+    {
+        public string Prefab { get; set; } = string.Empty;
+
+        public string Name { get; set; } = string.Empty;
+
+        public int Amount { get; set; }
+
+        public int AmountPerLevel { get; set; }
+
+        public void Normalize()
+        {
+            Prefab = (Prefab ?? string.Empty).Trim();
+            Name = string.IsNullOrWhiteSpace(Name) ? Prefab : Name.Trim();
+        }
+    }
+
+    internal sealed class ConsoleSource
+    {
+        public string Method { get; set; } = string.Empty;
+
+        public ConsoleStation? Station { get; set; }
+
+        public ConsoleItemReference? Input { get; set; }
+
+        public int Amount { get; set; }
+    }
+
+    internal sealed class ConsoleItemReference
+    {
+        public string Prefab { get; set; } = string.Empty;
+
+        public string Name { get; set; } = string.Empty;
+    }
+
+    internal sealed class ConsoleDrop
+    {
+        public string Creature { get; set; } = string.Empty;
+
+        public string Name { get; set; } = string.Empty;
+
+        public float Chance { get; set; }
     }
 
     private sealed class CatalogItem
@@ -1222,13 +1695,15 @@ internal sealed class ItemCatalog
             int itemCount,
             int recipeCount,
             int conversionCount,
-            int droppedByEdgeCount)
+            int droppedByEdgeCount,
+            ConsoleItem[] consoleItems)
         {
             Json = json;
             ItemCount = itemCount;
             RecipeCount = recipeCount;
             ConversionCount = conversionCount;
             DroppedByEdgeCount = droppedByEdgeCount;
+            ConsoleItems = consoleItems;
         }
 
         public string Json { get; }
@@ -1240,5 +1715,7 @@ internal sealed class ItemCatalog
         public int ConversionCount { get; }
 
         public int DroppedByEdgeCount { get; }
+
+        public ConsoleItem[] ConsoleItems { get; }
     }
 }

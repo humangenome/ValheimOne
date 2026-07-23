@@ -2261,6 +2261,20 @@
             heading.appendChild(identity);
             heading.appendChild(tags);
             option.appendChild(heading);
+        } else if (suggestion.kind === "item") {
+            name.textContent = suggestion.itemName;
+            identity.appendChild(name);
+            var token = document.createElement("span");
+            token.className = "console-suggestion-usage";
+            token.textContent = suggestion.itemToken;
+            identity.appendChild(token);
+            var itemTag = document.createElement("span");
+            itemTag.className = "console-category-tag";
+            itemTag.textContent = "Item";
+            tags.appendChild(itemTag);
+            heading.appendChild(identity);
+            heading.appendChild(tags);
+            option.appendChild(heading);
         } else {
             var command = suggestion.command;
             name.textContent = command.name;
@@ -2401,6 +2415,99 @@
         return { command: command, query: query };
     }
 
+    function findItemSuggestionContext(input) {
+        var lowerInput = input.toLowerCase();
+        var matches = consoleCommands.filter(function (command) {
+            var commandName = command.name.toLowerCase();
+            return command.itemArg && lowerInput.indexOf(commandName) === 0 &&
+                input.length > command.name.length && /\s/.test(input.charAt(command.name.length));
+        }).sort(function (left, right) {
+            return right.name.length - left.name.length;
+        });
+        if (matches.length === 0) {
+            return null;
+        }
+
+        var command = matches[0];
+        return {
+            command: command,
+            query: input.slice(command.name.length).replace(/^\s+/, "")
+        };
+    }
+
+    function renderItemSuggestionHint(text) {
+        var hintGroup = document.createElement("div");
+        var hintHeader = document.createElement("div");
+        var hint = document.createElement("div");
+        hintGroup.className = "console-suggestion-group";
+        hintGroup.setAttribute("role", "group");
+        hintGroup.setAttribute("aria-labelledby", "console-suggestion-item-group");
+        hintHeader.id = "console-suggestion-item-group";
+        hintHeader.className = "console-suggestion-category";
+        hintHeader.textContent = "Items";
+        hint.className = "console-suggestion console-suggestion-hint";
+        hint.setAttribute("role", "option");
+        hint.setAttribute("aria-selected", "false");
+        hint.setAttribute("aria-disabled", "true");
+        hint.textContent = text;
+        hintGroup.appendChild(hintHeader);
+        hintGroup.appendChild(hint);
+        elements.suggestionList.appendChild(hintGroup);
+        showSuggestionList();
+    }
+
+    function renderItemSuggestions(context) {
+        if (!catalogPayload) {
+            renderItemSuggestionHint("Loading item catalog…");
+            var requestedInput = elements.commandInput.value;
+            loadCatalog().then(function () {
+                if (elements.commandInput.value === requestedInput) {
+                    renderCommandSuggestions();
+                }
+            }).catch(function () {
+                if (elements.commandInput.value === requestedInput) {
+                    closeSuggestions();
+                    renderItemSuggestionHint("Item catalog unavailable");
+                }
+            });
+            return;
+        }
+
+        var query = context.query.toLocaleLowerCase();
+        var matches = catalogItems.map(function (item) {
+            var name = String(item.name || item.token || "").trim();
+            var token = String(item.token || "").trim();
+            var lowerName = name.toLocaleLowerCase();
+            var lowerToken = token.toLocaleLowerCase();
+            var nameIndex = lowerName.indexOf(query);
+            var tokenIndex = lowerToken.indexOf(query);
+            return {
+                kind: "item",
+                command: context.command,
+                itemName: name,
+                itemToken: token,
+                rank: nameIndex === 0 || tokenIndex === 0 ? 0 : 1,
+                matches: !query || nameIndex !== -1 || tokenIndex !== -1
+            };
+        }).filter(function (suggestion) {
+            return suggestion.itemName && suggestion.itemToken && suggestion.matches;
+        }).sort(function (left, right) {
+            return left.rank - right.rank || left.itemName.localeCompare(right.itemName, "en", {
+                sensitivity: "base"
+            }) || left.itemToken.localeCompare(right.itemToken);
+        }).slice(0, 10);
+
+        if (matches.length === 0) {
+            renderItemSuggestionHint("No matching items");
+            return;
+        }
+
+        consoleSuggestions = matches;
+        appendSuggestionGroup("items", matches);
+        showSuggestionList();
+        setConsoleSuggestionIndex(0);
+    }
+
     function commandSuggestionQuery(input) {
         if (!input) {
             return "";
@@ -2445,6 +2552,12 @@
             return;
         }
 
+        var itemContext = findItemSuggestionContext(input);
+        if (itemContext) {
+            renderItemSuggestions(itemContext);
+            return;
+        }
+
         var query = commandSuggestionQuery(input);
         if (!query) {
             return;
@@ -2478,7 +2591,9 @@
 
         elements.commandInput.value = suggestion.kind === "player"
             ? suggestion.command.name + " " + suggestion.playerName + " "
-            : suggestion.command.name + " ";
+            : (suggestion.kind === "item"
+                ? suggestion.command.name + " " + suggestion.itemName + " "
+                : suggestion.command.name + " ");
         closeSuggestions();
         elements.commandInput.focus();
     }
@@ -2504,6 +2619,7 @@
                 category: "server",
                 examples: [],
                 playerArg: false,
+                itemArg: false,
                 whitelisted: true
             };
             byName[name.toLowerCase()] = command;
@@ -2528,6 +2644,7 @@
                     category: "server",
                     examples: [],
                     playerArg: false,
+                    itemArg: false,
                     whitelisted: false
                 };
                 byName[key] = command;
@@ -2545,6 +2662,7 @@
                 return Boolean(example);
             }) : [];
             command.playerArg = entry && entry.playerArg === true;
+            command.itemArg = entry && entry.itemArg === true;
         });
 
         commands.sort(function (left, right) {

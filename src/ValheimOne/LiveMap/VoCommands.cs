@@ -215,6 +215,9 @@ internal static class VoCommands
                 case "entities":
                     RunEntities(args);
                     break;
+                case "item":
+                    RunItem(args);
+                    break;
                 default:
                     Write(args, $"Unknown vo command '{args[1]}'. Use 'vo help'.");
                     break;
@@ -832,6 +835,217 @@ internal static class VoCommands
         {
             Write(args, "  The last completed scan found no tracked ships, carts, or portals.");
         }
+    }
+
+    private static void RunItem(Terminal.ConsoleEventArgs args)
+    {
+        string query = JoinArguments(args, 2).Trim();
+        if (query.Length == 0)
+        {
+            Write(args, "Usage: vo item <name>");
+            return;
+        }
+
+        ItemCatalog? catalog = ItemCatalog.Current;
+        if (catalog == null)
+        {
+            Write(args, "Item catalog unavailable: LiveMap has not finished starting.");
+            return;
+        }
+
+        if (!catalog.TryResolveItem(
+                query,
+                out ItemCatalog.ConsoleItem? item,
+                out List<ItemCatalog.ConsoleItem> candidates) ||
+            item == null)
+        {
+            if (candidates.Count == 0)
+            {
+                Write(args, $"No catalog item matches '{query}'.");
+                return;
+            }
+
+            Write(args, $"Ambiguous item '{query}'. Matches:");
+            int maximum = Math.Min(8, candidates.Count);
+            for (int index = 0; index < maximum; index++)
+            {
+                ItemCatalog.ConsoleItem candidate = candidates[index];
+                Write(args, $"  {candidate.Name} ({candidate.Token})");
+            }
+
+            if (candidates.Count > maximum)
+            {
+                Write(args, $"  (+{candidates.Count - maximum} more)");
+            }
+
+            return;
+        }
+
+        Write(args, $"{item.Name} ({item.Token})");
+        Write(
+            args,
+            $"  Type: {item.Type} | Weight: {FormatCatalogNumber(item.Weight)} | " +
+            $"Stack: {item.MaxStackSize} | Teleportable: {(item.Teleportable ? "yes" : "no")}");
+        Write(args, $"  Max quality: {item.MaxQuality} | Tool tier: {item.ToolTier}");
+
+        if (item.Damage != null)
+        {
+            string damage = FormatItemDamage(item.Damage);
+            if (damage.Length > 0)
+            {
+                Write(args, "  Damage: " + damage);
+            }
+        }
+
+        if (item.Armor != null)
+        {
+            string armor = FormatCatalogNumber(item.Armor.Base);
+            if (item.Armor.PerLevel != 0f)
+            {
+                armor += " (" + FormatCatalogDelta(item.Armor.PerLevel) + "/quality)";
+            }
+
+            Write(args, "  Armor: " + armor);
+        }
+
+        for (int recipeIndex = 0; recipeIndex < item.Recipes.Length; recipeIndex++)
+        {
+            ItemCatalog.ConsoleRecipe recipe = item.Recipes[recipeIndex];
+            if (!recipe.Enabled)
+            {
+                continue;
+            }
+
+            var ingredients = new List<string>(recipe.Ingredients.Length);
+            for (int ingredientIndex = 0;
+                 ingredientIndex < recipe.Ingredients.Length;
+                 ingredientIndex++)
+            {
+                ItemCatalog.ConsoleIngredient ingredient = recipe.Ingredients[ingredientIndex];
+                ingredients.Add($"{ingredient.Name} x{ingredient.Amount}");
+            }
+
+            string ingredientText = ingredients.Count > 0
+                ? string.Join(", ", ingredients)
+                : "no ingredients";
+            if (recipe.Station == null || string.IsNullOrWhiteSpace(recipe.Station.Name))
+            {
+                Write(args, $"  Crafted by hand: {ingredientText}");
+            }
+            else
+            {
+                Write(
+                    args,
+                    $"  Crafted at {recipe.Station.Name} lvl {recipe.MinimumStationLevel}: " +
+                    ingredientText);
+            }
+        }
+
+        for (int sourceIndex = 0; sourceIndex < item.Sources.Length; sourceIndex++)
+        {
+            ItemCatalog.ConsoleSource source = item.Sources[sourceIndex];
+            if (source.Input == null)
+            {
+                continue;
+            }
+
+            string stationName = source.Station == null ||
+                                 string.IsNullOrWhiteSpace(source.Station.Name)
+                ? UppercaseFirst(source.Method)
+                : source.Station.Name;
+            string inputName = string.IsNullOrWhiteSpace(source.Input.Name)
+                ? source.Input.Prefab
+                : source.Input.Name;
+            Write(args, $"  {stationName}: {source.Amount}x {inputName}");
+        }
+
+        if (item.DroppedBy.Length > 0)
+        {
+            var drops = new List<string>(item.DroppedBy.Length);
+            for (int index = 0; index < item.DroppedBy.Length; index++)
+            {
+                ItemCatalog.ConsoleDrop drop = item.DroppedBy[index];
+                string name = string.IsNullOrWhiteSpace(drop.Name)
+                    ? drop.Creature
+                    : drop.Name;
+                if (drop.Chance > 0f)
+                {
+                    name += " (" +
+                            (drop.Chance * 100f).ToString("0.#", CultureInfo.InvariantCulture) +
+                            "%)";
+                }
+
+                drops.Add(name);
+            }
+
+            Write(args, "  Dropped by: " + string.Join(", ", drops));
+        }
+
+        IReadOnlyList<ItemCatalog.ConsoleItem> uses = catalog.GetReverseRecipeUses(item);
+        int shownUses = Math.Min(3, uses.Count);
+        var useNames = new List<string>(shownUses);
+        for (int index = 0; index < shownUses; index++)
+        {
+            useNames.Add(uses[index].Name);
+        }
+
+        string usedIn = useNames.Count == 0 ? "none" : string.Join(", ", useNames);
+        if (uses.Count > shownUses)
+        {
+            usedIn += $" (+{uses.Count - shownUses} more)";
+        }
+
+        Write(args, "  Used in: " + usedIn);
+    }
+
+    private static string FormatItemDamage(ItemCatalog.ConsoleDamageSummary summary)
+    {
+        ItemCatalog.ConsoleDamage baseDamage = summary.Base ?? new ItemCatalog.ConsoleDamage();
+        ItemCatalog.ConsoleDamage perLevel =
+            summary.PerLevel ?? new ItemCatalog.ConsoleDamage();
+        var values = new List<string>();
+        AddItemDamage(values, "Generic", baseDamage.Generic, perLevel.Generic);
+        AddItemDamage(values, "Blunt", baseDamage.Blunt, perLevel.Blunt);
+        AddItemDamage(values, "Slash", baseDamage.Slash, perLevel.Slash);
+        AddItemDamage(values, "Pierce", baseDamage.Pierce, perLevel.Pierce);
+        AddItemDamage(values, "Chop", baseDamage.Chop, perLevel.Chop);
+        AddItemDamage(values, "Pickaxe", baseDamage.Pickaxe, perLevel.Pickaxe);
+        AddItemDamage(values, "Fire", baseDamage.Fire, perLevel.Fire);
+        AddItemDamage(values, "Frost", baseDamage.Frost, perLevel.Frost);
+        AddItemDamage(values, "Lightning", baseDamage.Lightning, perLevel.Lightning);
+        AddItemDamage(values, "Poison", baseDamage.Poison, perLevel.Poison);
+        AddItemDamage(values, "Spirit", baseDamage.Spirit, perLevel.Spirit);
+        return string.Join(", ", values);
+    }
+
+    private static void AddItemDamage(
+        List<string> values,
+        string name,
+        float baseValue,
+        float perLevel)
+    {
+        if (baseValue == 0f && perLevel == 0f)
+        {
+            return;
+        }
+
+        string value = name + " " + FormatCatalogNumber(baseValue);
+        if (perLevel != 0f)
+        {
+            value += " (" + FormatCatalogDelta(perLevel) + "/quality)";
+        }
+
+        values.Add(value);
+    }
+
+    private static string FormatCatalogNumber(float value)
+    {
+        return value.ToString("0.##", CultureInfo.InvariantCulture);
+    }
+
+    private static string FormatCatalogDelta(float value)
+    {
+        return value.ToString(value > 0f ? "+0.##" : "0.##", CultureInfo.InvariantCulture);
     }
 
     private static List<ZNetPeer> GetConnectedPlayerPeers()

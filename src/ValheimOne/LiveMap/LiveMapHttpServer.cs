@@ -1507,6 +1507,7 @@ internal sealed class LiveMapHttpServer
 
         json.Append(']');
         json.Append(",\"playerArg\":").Append(definition?.PlayerArg == true ? "true" : "false");
+        json.Append(",\"itemArg\":").Append(definition?.ItemArg == true ? "true" : "false");
         json.Append('}');
         needsComma = true;
     }

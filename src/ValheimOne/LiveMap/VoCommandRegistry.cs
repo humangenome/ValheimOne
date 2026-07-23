@@ -11,7 +11,8 @@ internal sealed class VoCommandDefinition
         string description,
         string category,
         string[] examples,
-        bool playerArg = false)
+        bool playerArg = false,
+        bool itemArg = false)
     {
         Name = name;
         Usage = usage;
@@ -19,6 +20,7 @@ internal sealed class VoCommandDefinition
         Category = category;
         Examples = examples;
         PlayerArg = playerArg;
+        ItemArg = itemArg;
     }
 
     public string Name { get; }
@@ -32,6 +34,8 @@ internal sealed class VoCommandDefinition
     public string[] Examples { get; }
 
     public bool PlayerArg { get; }
+
+    public bool ItemArg { get; }
 }
 
 internal static class VoCommandRegistry
@@ -132,6 +136,13 @@ internal static class VoCommandRegistry
             "Show counts from the latest LiveMap entity scan and request a refresh.",
             "world",
             new[] { "vo entities" }),
+        new VoCommandDefinition(
+            "item",
+            "vo item <name>",
+            "Show catalog details, recipes, sources, drops, and recipe uses for an item.",
+            "world",
+            new[] { "vo item Iron", "vo item Black metal", "vo item SwordIron" },
+            itemArg: true),
         new VoCommandDefinition(
             "stats",
             "vo stats",
