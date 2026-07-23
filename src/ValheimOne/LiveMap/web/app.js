@@ -22,6 +22,8 @@
     var WORLD_UNITS = 256;
     var OVERVIEW_CLUSTER_ZOOM = 2;
     var OVERVIEW_CLUSTER_GRID_PX = 64;
+    var DUNGEON_MATCH_DISTANCE_M = 8;
+    var DUNGEON_REGISTRY_POLL_INTERVAL_MS = 5000;
     var RESOURCE_POI_POLL_INTERVAL_MS = 5000;
     var RESOURCE_POI_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
     var BASE_POI_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
@@ -647,6 +649,21 @@
     var leaderboardRequestPending = false;
     var leaderboardRequestSequence = 0;
     var leaderboardPollTimer = 0;
+    var dungeonRegistryState = {
+        dungeons: [],
+        loaded: false,
+        pending: false,
+        ready: false,
+        scanning: false,
+        timer: 0
+    };
+    var dungeonDetailCache = new Map();
+    var dungeonDetailPollTimer = 0;
+    var dungeonDetailRequestPending = false;
+    var dungeonDetailRequestSequence = 0;
+    var activeDungeonId = "";
+    var dungeonReturnFocus = null;
+    var dungeonResizeObserver = null;
     var lastPoiRequestedView = null;
     var poiRequestSequence = 0;
     var poiLoadPending = false;
@@ -780,6 +797,22 @@
         consoleTab: document.getElementById("console-tab"),
         dayToast: document.getElementById("day-toast"),
         dayNumber: document.getElementById("day-number"),
+        dungeonBackdrop: document.getElementById("dungeon-backdrop"),
+        dungeonCanvas: document.getElementById("dungeon-canvas"),
+        dungeonCanvasShell: document.getElementById("dungeon-canvas-shell"),
+        dungeonClose: document.getElementById("dungeon-close"),
+        dungeonElevation: document.getElementById("dungeon-elevation"),
+        dungeonEmpty: document.getElementById("dungeon-empty"),
+        dungeonEmptyCopy: document.getElementById("dungeon-empty-copy"),
+        dungeonEntranceInfo: document.getElementById("dungeon-entrance-info"),
+        dungeonError: document.getElementById("dungeon-error"),
+        dungeonGenerated: document.getElementById("dungeon-generated"),
+        dungeonLiveStatus: document.getElementById("dungeon-live-status"),
+        dungeonLoading: document.getElementById("dungeon-loading"),
+        dungeonRooms: document.getElementById("dungeon-rooms"),
+        dungeonScale: document.getElementById("dungeon-scale"),
+        dungeonTitle: document.getElementById("dungeon-title"),
+        dungeonType: document.getElementById("dungeon-type"),
         exploredChip: document.getElementById("explored-chip"),
         exploredLabel: document.getElementById("sidebar-explored-label"),
         joinCode: document.getElementById("join-code"),
@@ -3529,6 +3562,10 @@
         entityFocusPollTimer = 0;
         window.clearTimeout(heatmapPollTimer);
         heatmapPollTimer = 0;
+        window.clearTimeout(dungeonRegistryState.timer);
+        dungeonRegistryState.timer = 0;
+        window.clearTimeout(dungeonDetailPollTimer);
+        dungeonDetailPollTimer = 0;
         clearLeaderboardPoll();
         stopAllLazyPoiPolling();
     }
@@ -3989,9 +4026,14 @@
                 button.type = "button";
                 button.className = "vo-popup-action" +
                     (action.active ? " is-active" : "") +
+                    (action.pending ? " is-pending" : "") +
                     (action.danger ? " is-danger" : "");
                 button.textContent = action.label;
                 button.setAttribute("data-popup-action", action.action);
+                button.disabled = action.disabled === true;
+                if (action.pending) {
+                    button.setAttribute("aria-busy", "true");
+                }
                 if (action.kind) {
                     button.setAttribute("data-trail-kind", action.kind);
                 }
@@ -4187,6 +4229,8 @@
                 if (ship) {
                     armShipTow(ship);
                 }
+            } else if (action === "dungeon-open" && hasLiveAccess()) {
+                openDungeonInterior(key);
             } else if (action === "watch" && kind === "player") {
                 enterCinema(key);
             } else if (action === "jump-tombstone") {
@@ -9637,6 +9681,16 @@
         updateLazyPoiLoading();
     }
 
+    function normalizeDungeonReference(value) {
+        if (!value || typeof value !== "object") {
+            return null;
+        }
+
+        var id = typeof value.id === "string" ? value.id.trim() : "";
+        var label = typeof value.label === "string" ? value.label.trim() : "";
+        return id && label ? { id: id, label: label } : null;
+    }
+
     function normalizePlayers(payload) {
         if (!payload || !Array.isArray(payload.players)) {
             return [];
@@ -9671,6 +9725,7 @@
                 health: finiteNumberOrNull(player.health),
                 id: playerId,
                 inBed: typeof player.inBed === "boolean" ? player.inBed : null,
+                inDungeon: normalizeDungeonReference(player.inDungeon),
                 key: key,
                 maxHealth: finiteNumberOrNull(player.maxHealth),
                 name: rawName,
@@ -9702,13 +9757,23 @@
         if (showHeading) {
             chevron.style.transform = "rotate(" + motion.headingDeg.toFixed(1) + "deg)";
         }
+
+        var dungeonBadge = markerElement.querySelector(".player-marker-dungeon");
+        if (dungeonBadge) {
+            dungeonBadge.hidden = !record.player.inDungeon;
+            dungeonBadge.title = record.player.inDungeon
+                ? "In: " + record.player.inDungeon.label
+                : "";
+        }
+        markerElement.classList.toggle("is-in-dungeon", Boolean(record.player.inDungeon));
     }
 
     function createPlayerMarker(player) {
         var icon = L.divIcon({
             className: "player-div-icon",
             html: '<span class="player-marker-shell"><span class="player-marker-dot"></span>' +
-                '<span class="player-marker-chevron" style="transform: rotate(0deg)" hidden></span></span>',
+                '<span class="player-marker-chevron" style="transform: rotate(0deg)" hidden></span>' +
+                '<span class="player-marker-dungeon" hidden>∩</span></span>',
             iconAnchor: [12, 12],
             iconSize: [24, 24]
         });
@@ -9726,7 +9791,8 @@
             direction: "top",
             offset: [0, -7],
             opacity: 1,
-            permanent: !player.anonymous
+            permanent: !player.anonymous,
+            interactive: true
         });
         bindMapPopup(marker, function () {
             return buildPlayerPopup(record.player);
@@ -10777,6 +10843,20 @@
             button.appendChild(identity);
             button.appendChild(coordinates);
             item.appendChild(button);
+            if (player.inDungeon) {
+                var dungeonTag = document.createElement("button");
+                dungeonTag.type = "button";
+                dungeonTag.className = "player-dungeon-roster-tag";
+                dungeonTag.textContent = "In: " + player.inDungeon.label;
+                dungeonTag.title = "View " + player.inDungeon.label + " interior";
+                dungeonTag.addEventListener("click", function (event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openDungeonInterior(player.inDungeon.id);
+                });
+                item.classList.add("has-dungeon");
+                item.appendChild(dungeonTag);
+            }
             elements.playerList.appendChild(item);
         });
     }
@@ -10793,12 +10873,29 @@
 
     function buildPlayerTooltip(player) {
         var tooltip = document.createElement("span");
-        tooltip.textContent = player.displayName;
+        var name = document.createElement("span");
+        tooltip.className = "player-tooltip-content";
+        name.className = "player-tooltip-name";
+        name.textContent = player.displayName;
+        tooltip.appendChild(name);
         if (player.inBed === true) {
             var sleeping = document.createElement("span");
             sleeping.className = "player-tooltip-state";
             sleeping.textContent = " · ☾ Sleeping";
             tooltip.appendChild(sleeping);
+        }
+        if (player.inDungeon) {
+            var dungeonTag = document.createElement("button");
+            dungeonTag.type = "button";
+            dungeonTag.className = "player-dungeon-tag";
+            dungeonTag.textContent = "In: " + player.inDungeon.label;
+            dungeonTag.title = "View dungeon interior";
+            dungeonTag.addEventListener("click", function (event) {
+                event.preventDefault();
+                event.stopPropagation();
+                openDungeonInterior(player.inDungeon.id);
+            });
+            tooltip.appendChild(dungeonTag);
         }
         return tooltip;
     }
@@ -11140,7 +11237,19 @@
 
     function buildPlayerPopup(player) {
         var motion = playerMotion(player);
-        var rows = [positionPopupRow(player.x, player.z)];
+        var rows = [];
+        if (player.inDungeon) {
+            rows.push({
+                action: {
+                    action: "dungeon-open",
+                    key: player.inDungeon.id,
+                    label: "View"
+                },
+                label: "In",
+                value: player.inDungeon.label
+            });
+        }
+        rows.push(positionPopupRow(player.x, player.z));
         if (hasPlayerHealth(player)) {
             rows.push({
                 label: "Health",
@@ -11341,10 +11450,161 @@
     }
 
     function dungeonPoiPlayerCount(record) {
-        if (!firstPlayersPayloadReceived || !isDungeonEntrancePoiGroup(record.group)) {
+        if (!isDungeonEntrancePoiGroup(record.group)) {
+            return 0;
+        }
+        var dungeon = dungeonForEntrance(record);
+        if (dungeon) {
+            return dungeon.playersInside;
+        }
+        if (!firstPlayersPayloadReceived) {
             return 0;
         }
         return nearbyPlayers(record.x, record.z, 15).length;
+    }
+
+    function resetDungeonRegistry() {
+        window.clearTimeout(dungeonRegistryState.timer);
+        dungeonRegistryState = {
+            dungeons: [],
+            loaded: false,
+            pending: false,
+            ready: false,
+            scanning: false,
+            timer: 0
+        };
+    }
+
+    function scheduleDungeonRegistryPoll(delay) {
+        window.clearTimeout(dungeonRegistryState.timer);
+        dungeonRegistryState.timer = 0;
+        if (!hasLiveAccess() || dungeonRegistryState.ready || pollCircuitOpen) {
+            return;
+        }
+        dungeonRegistryState.timer = window.setTimeout(function () {
+            dungeonRegistryState.timer = 0;
+            requestDungeonRegistry();
+        }, Math.max(0, delay));
+    }
+
+    function normalizeDungeonRegistryEntry(dungeon) {
+        if (!dungeon || typeof dungeon !== "object" ||
+            typeof dungeon.id !== "string" || !dungeon.id.trim() ||
+            !dungeon.entrance || !Number.isFinite(Number(dungeon.entrance.x)) ||
+            !Number.isFinite(Number(dungeon.entrance.z))) {
+            return null;
+        }
+
+        return {
+            entrance: {
+                x: Number(dungeon.entrance.x),
+                y: finiteNumberOrNull(dungeon.entrance.y),
+                z: Number(dungeon.entrance.z)
+            },
+            generated: dungeon.generated === true,
+            hasInterior: dungeon.hasInterior === true,
+            id: dungeon.id.trim(),
+            label: typeof dungeon.label === "string" ? dungeon.label.trim() : "",
+            playersInside: Math.max(0, Math.floor(Number(dungeon.playersInside) || 0)),
+            roomCount: Math.max(0, Math.floor(Number(dungeon.roomCount) || 0)),
+            type: typeof dungeon.type === "string" ? dungeon.type.trim() : ""
+        };
+    }
+
+    async function requestDungeonRegistry() {
+        if (!hasLiveAccess() || dungeonRegistryState.pending ||
+            dungeonRegistryState.ready || pollCircuitOpen) {
+            return;
+        }
+        if (document.hidden) {
+            scheduleDungeonRegistryPoll(DUNGEON_REGISTRY_POLL_INTERVAL_MS);
+            return;
+        }
+
+        var state = dungeonRegistryState;
+        state.pending = true;
+        try {
+            var payload = await fetchJson("/api/dungeons");
+            if (state !== dungeonRegistryState || !hasLiveAccess()) {
+                return;
+            }
+
+            state.dungeons = (payload && Array.isArray(payload.dungeons)
+                ? payload.dungeons
+                : []).map(normalizeDungeonRegistryEntry).filter(Boolean);
+            state.loaded = true;
+            state.ready = payload && payload.ready === true;
+            state.scanning = payload && payload.scanning === true;
+            refreshOpenPopupContent();
+        } catch (error) {
+            if (state === dungeonRegistryState) {
+                state.scanning = !state.ready;
+            }
+        } finally {
+            if (state !== dungeonRegistryState) {
+                return;
+            }
+            state.pending = false;
+            if (!state.ready && hasLiveAccess()) {
+                scheduleDungeonRegistryPoll(DUNGEON_REGISTRY_POLL_INTERVAL_MS);
+            }
+            refreshOpenPopupContent();
+        }
+    }
+
+    function ensureDungeonRegistry() {
+        if (!hasLiveAccess() || dungeonRegistryState.ready ||
+            dungeonRegistryState.pending || dungeonRegistryState.timer) {
+            return;
+        }
+        requestDungeonRegistry();
+    }
+
+    function dungeonForEntrance(record) {
+        if (!record || !dungeonRegistryState.ready) {
+            return null;
+        }
+
+        var nearest = null;
+        var nearestDistance = DUNGEON_MATCH_DISTANCE_M;
+        dungeonRegistryState.dungeons.forEach(function (dungeon) {
+            var distance = worldDistance(
+                record.x,
+                record.z,
+                dungeon.entrance.x,
+                dungeon.entrance.z
+            );
+            if (distance <= nearestDistance) {
+                nearest = dungeon;
+                nearestDistance = distance;
+            }
+        });
+        return nearest;
+    }
+
+    function dungeonPopupAction(record) {
+        ensureDungeonRegistry();
+        if (!dungeonRegistryState.ready) {
+            return {
+                action: "dungeon-open",
+                disabled: true,
+                label: "Surveying…",
+                pending: true
+            };
+        }
+
+        var dungeon = dungeonForEntrance(record);
+        return dungeon
+            ? {
+                action: "dungeon-open",
+                key: dungeon.id,
+                label: "View Interior"
+            }
+            : {
+                action: "dungeon-open",
+                disabled: true,
+                label: "Interior unavailable"
+            };
     }
 
     function buildPoiPopup(record) {
@@ -11376,7 +11636,12 @@
             rows.push({ label: "Vikings inside", value: String(dungeonPlayerCount) });
         }
         rows.push(positionPopupRow(record.x, record.z));
+        var actions = [];
+        if (hasLiveAccess() && isDungeonEntrancePoiGroup(record.group)) {
+            actions.push(dungeonPopupAction(record));
+        }
         return popupShell({
+            actions: actions,
             feed: "pois",
             glyph: POI_GROUPS[record.group].glyph,
             iconKey: bossIconKey(record),
@@ -11385,6 +11650,589 @@
             surveyUnixMs: resource ? resourcePoiSurveyUnixMs(record.group) : 0,
             title: record.title
         });
+    }
+
+    function dungeonMetadataById(id) {
+        var registryMatch = dungeonRegistryState.dungeons.find(function (dungeon) {
+            return dungeon.id === id;
+        });
+        if (registryMatch) {
+            return registryMatch;
+        }
+
+        var playerMatch = latestPlayers.find(function (player) {
+            return player.inDungeon && player.inDungeon.id === id;
+        });
+        return playerMatch
+            ? {
+                generated: null,
+                id: id,
+                label: playerMatch.inDungeon.label,
+                playersInside: null,
+                roomCount: null,
+                type: ""
+            }
+            : null;
+    }
+
+    function setDungeonStage(stage) {
+        elements.dungeonLoading.hidden = stage !== "loading";
+        elements.dungeonCanvasShell.hidden = stage !== "canvas";
+        elements.dungeonEmpty.hidden = stage !== "empty";
+        elements.dungeonError.hidden = stage !== "error";
+    }
+
+    function renderDungeonHeader(dungeon, loading) {
+        dungeon = dungeon || {};
+        elements.dungeonTitle.textContent =
+            typeof dungeon.label === "string" && dungeon.label
+                ? dungeon.label
+                : "Dungeon interior";
+        elements.dungeonType.textContent = loading
+            ? "Surveying"
+            : textOrDash(dungeon.type);
+
+        var roomCount = Math.max(0, Math.floor(Number(dungeon.roomCount) || 0));
+        elements.dungeonRooms.textContent = loading
+            ? "— rooms"
+            : roomCount + (roomCount === 1 ? " room" : " rooms");
+        elements.dungeonGenerated.textContent = loading
+            ? "Surveying"
+            : dungeon.generated === true ? "Generated" : "Unvisited";
+        elements.dungeonGenerated.classList.toggle(
+            "is-unvisited",
+            !loading && dungeon.generated !== true
+        );
+
+        var playersInside = Math.max(
+            0,
+            Math.floor(Number(dungeon.playersInside) || 0)
+        );
+        elements.dungeonLiveStatus.textContent = loading
+            ? "Reading the runes…"
+            : playersInside + (playersInside === 1
+                ? " viking inside"
+                : " vikings inside");
+    }
+
+    function dungeonEntranceText(entrance) {
+        if (!entrance || !Number.isFinite(Number(entrance.x)) ||
+            !Number.isFinite(Number(entrance.z))) {
+            return "Entrance coordinates unavailable";
+        }
+
+        var text = "Entrance · X " + Math.round(Number(entrance.x)) +
+            " · Z " + Math.round(Number(entrance.z));
+        if (Number.isFinite(Number(entrance.y))) {
+            text += " · Y " + Math.round(Number(entrance.y));
+        }
+        return text;
+    }
+
+    function dungeonRoomsFromPayload(dungeon) {
+        var rooms = dungeon && dungeon.interior &&
+            Array.isArray(dungeon.interior.rooms)
+            ? dungeon.interior.rooms
+            : [];
+        return rooms.filter(function (room) {
+            return room && Number.isFinite(Number(room.x)) &&
+                Number.isFinite(Number(room.y)) &&
+                Number.isFinite(Number(room.z)) &&
+                Number.isFinite(Number(room.sizeX)) &&
+                Number.isFinite(Number(room.sizeZ)) &&
+                Number(room.sizeX) > 0 && Number(room.sizeZ) > 0;
+        }).map(function (room) {
+            return {
+                name: typeof room.name === "string" ? room.name : "",
+                rotYDeg: Number.isFinite(Number(room.rotYDeg))
+                    ? Number(room.rotYDeg)
+                    : 0,
+                sizeX: Number(room.sizeX),
+                sizeZ: Number(room.sizeZ),
+                x: Number(room.x),
+                y: Number(room.y),
+                z: Number(room.z)
+            };
+        });
+    }
+
+    function dungeonPlayersFromPayload(dungeon) {
+        var players = dungeon && Array.isArray(dungeon.livePlayers)
+            ? dungeon.livePlayers
+            : [];
+        return players.filter(function (player) {
+            return player && Number.isFinite(Number(player.x)) &&
+                Number.isFinite(Number(player.z));
+        }).map(function (player) {
+            return {
+                name: typeof player.name === "string" ? player.name : "",
+                x: Number(player.x),
+                y: finiteNumberOrNull(player.y),
+                z: Number(player.z)
+            };
+        });
+    }
+
+    function rotatedRoomCorners(room, overlapM) {
+        var radians = room.rotYDeg * Math.PI / 180;
+        var cosine = Math.cos(radians);
+        var sine = Math.sin(radians);
+        var halfX = (room.sizeX / 2) + overlapM;
+        var halfZ = (room.sizeZ / 2) + overlapM;
+        return [
+            { x: -halfX, z: -halfZ },
+            { x: halfX, z: -halfZ },
+            { x: halfX, z: halfZ },
+            { x: -halfX, z: halfZ }
+        ].map(function (corner) {
+            return {
+                x: room.x + (corner.x * cosine) - (corner.z * sine),
+                z: room.z + (corner.x * sine) + (corner.z * cosine)
+            };
+        });
+    }
+
+    function dungeonRoomFill(roomY, minY, maxY) {
+        var range = Math.max(0.001, maxY - minY);
+        var elevation = Math.max(0, Math.min(1, (roomY - minY) / range));
+        var low = [210, 185, 139];
+        var high = [190, 161, 205];
+        var red = Math.round(low[0] + ((high[0] - low[0]) * elevation));
+        var green = Math.round(low[1] + ((high[1] - low[1]) * elevation));
+        var blue = Math.round(low[2] + ((high[2] - low[2]) * elevation));
+        return "rgba(" + red + "," + green + "," + blue + ",0.9)";
+    }
+
+    function niceDungeonScaleMeters(targetMeters) {
+        if (!Number.isFinite(targetMeters) || targetMeters <= 0) {
+            return 1;
+        }
+
+        var power = Math.pow(10, Math.floor(Math.log(targetMeters) / Math.LN10));
+        var normalized = targetMeters / power;
+        var step = normalized >= 5 ? 5 : normalized >= 2 ? 2 : 1;
+        return step * power;
+    }
+
+    function drawDungeonCanvas(dungeon) {
+        if (!dungeon || elements.dungeonCanvasShell.hidden) {
+            return;
+        }
+
+        var canvas = elements.dungeonCanvas;
+        var rooms = dungeonRoomsFromPayload(dungeon);
+        if (!canvas || rooms.length === 0) {
+            return;
+        }
+
+        var width = Math.max(320, Math.floor(canvas.clientWidth));
+        var height = Math.max(280, Math.floor(canvas.clientHeight));
+        var pixelRatio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+        canvas.width = Math.floor(width * pixelRatio);
+        canvas.height = Math.floor(height * pixelRatio);
+        var context = canvas.getContext("2d");
+        context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+        context.clearRect(0, 0, width, height);
+
+        var background = context.createLinearGradient(0, 0, 0, height);
+        background.addColorStop(0, "#3a2d20");
+        background.addColorStop(1, "#241b14");
+        context.fillStyle = background;
+        context.fillRect(0, 0, width, height);
+        context.strokeStyle = "rgba(217,177,104,0.055)";
+        context.lineWidth = 1;
+        for (var gridX = 16; gridX < width; gridX += 24) {
+            context.beginPath();
+            context.moveTo(gridX, 0);
+            context.lineTo(gridX, height);
+            context.stroke();
+        }
+        for (var gridY = 16; gridY < height; gridY += 24) {
+            context.beginPath();
+            context.moveTo(0, gridY);
+            context.lineTo(width, gridY);
+            context.stroke();
+        }
+
+        var entrance = dungeon.interior.entrance || dungeon.interior.origin;
+        var players = dungeonPlayersFromPayload(dungeon);
+        var bounds = [];
+        rooms.forEach(function (room) {
+            bounds = bounds.concat(rotatedRoomCorners(room, 0.35));
+        });
+        if (entrance && Number.isFinite(Number(entrance.x)) &&
+            Number.isFinite(Number(entrance.z))) {
+            bounds.push({ x: Number(entrance.x), z: Number(entrance.z) });
+        }
+        players.forEach(function (player) {
+            bounds.push({ x: player.x, z: player.z });
+        });
+
+        var minX = Math.min.apply(null, bounds.map(function (point) {
+            return point.x;
+        }));
+        var maxX = Math.max.apply(null, bounds.map(function (point) {
+            return point.x;
+        }));
+        var minZ = Math.min.apply(null, bounds.map(function (point) {
+            return point.z;
+        }));
+        var maxZ = Math.max.apply(null, bounds.map(function (point) {
+            return point.z;
+        }));
+        if (maxX - minX < 10) {
+            var missingX = 10 - (maxX - minX);
+            minX -= missingX / 2;
+            maxX += missingX / 2;
+        }
+        if (maxZ - minZ < 10) {
+            var missingZ = 10 - (maxZ - minZ);
+            minZ -= missingZ / 2;
+            maxZ += missingZ / 2;
+        }
+
+        var padding = Math.min(58, Math.max(38, width * 0.065));
+        var scale = Math.min(
+            (width - (padding * 2)) / Math.max(1, maxX - minX),
+            (height - (padding * 2)) / Math.max(1, maxZ - minZ)
+        );
+        var centerX = (minX + maxX) / 2;
+        var centerZ = (minZ + maxZ) / 2;
+        function project(x, z) {
+            return {
+                x: (width / 2) + ((x - centerX) * scale),
+                y: (height / 2) - ((z - centerZ) * scale)
+            };
+        }
+
+        var roomYs = rooms.map(function (room) {
+            return room.y;
+        });
+        var minY = Math.min.apply(null, roomYs);
+        var maxY = Math.max.apply(null, roomYs);
+        rooms.slice().sort(function (left, right) {
+            return left.y - right.y;
+        }).forEach(function (room) {
+            var center = project(room.x, room.z);
+            var overlapM = Math.min(0.35, Math.min(room.sizeX, room.sizeZ) / 8);
+            context.save();
+            context.translate(center.x, center.y);
+            context.rotate(-room.rotYDeg * Math.PI / 180);
+            context.fillStyle = dungeonRoomFill(room.y, minY, maxY);
+            context.strokeStyle = "rgba(70,48,31,0.9)";
+            context.lineWidth = Math.max(1, Math.min(2, scale * 0.08));
+            context.fillRect(
+                -((room.sizeX / 2) + overlapM) * scale,
+                -((room.sizeZ / 2) + overlapM) * scale,
+                (room.sizeX + (overlapM * 2)) * scale,
+                (room.sizeZ + (overlapM * 2)) * scale
+            );
+            context.strokeRect(
+                -(room.sizeX / 2) * scale,
+                -(room.sizeZ / 2) * scale,
+                room.sizeX * scale,
+                room.sizeZ * scale
+            );
+            context.restore();
+        });
+
+        if (entrance && Number.isFinite(Number(entrance.x)) &&
+            Number.isFinite(Number(entrance.z))) {
+            var entrancePoint = project(Number(entrance.x), Number(entrance.z));
+            context.save();
+            context.translate(entrancePoint.x, entrancePoint.y);
+            context.fillStyle = "#d9b168";
+            context.strokeStyle = "#271b12";
+            context.lineWidth = 2;
+            context.beginPath();
+            context.moveTo(0, -9);
+            context.lineTo(8, 7);
+            context.lineTo(-8, 7);
+            context.closePath();
+            context.fill();
+            context.stroke();
+            context.font = "700 10px " +
+                window.getComputedStyle(document.body).fontFamily;
+            context.textAlign = "center";
+            context.textBaseline = "top";
+            context.fillStyle = "#f0dcae";
+            context.shadowColor = "#120e0a";
+            context.shadowBlur = 3;
+            context.fillText("ENTRANCE", 0, 11);
+            context.restore();
+        }
+
+        players.forEach(function (player) {
+            var point = project(player.x, player.z);
+            context.save();
+            context.translate(point.x, point.y);
+            context.fillStyle = "#7eb1d6";
+            context.strokeStyle = "#f5e6c8";
+            context.lineWidth = 2;
+            context.shadowColor = "rgba(126,177,214,0.8)";
+            context.shadowBlur = 8;
+            context.beginPath();
+            context.arc(0, 0, 5.5, 0, Math.PI * 2);
+            context.fill();
+            context.stroke();
+            context.shadowBlur = 0;
+            if (player.name) {
+                context.font = "700 11px " +
+                    window.getComputedStyle(document.body).fontFamily;
+                var labelWidth = context.measureText(player.name).width + 10;
+                context.fillStyle = "rgba(24,17,12,0.9)";
+                context.fillRect(-labelWidth / 2, 9, labelWidth, 18);
+                context.strokeStyle = "rgba(217,177,104,0.6)";
+                context.lineWidth = 1;
+                context.strokeRect(-labelWidth / 2, 9, labelWidth, 18);
+                context.fillStyle = "#f2e4c8";
+                context.textAlign = "center";
+                context.textBaseline = "middle";
+                context.fillText(player.name, 0, 18);
+            }
+            context.restore();
+        });
+
+        context.save();
+        context.fillStyle = "#d9b168";
+        context.font = "700 11px " +
+            window.getComputedStyle(document.body).fontFamily;
+        context.textAlign = "center";
+        context.fillText("N", width - 28, 24);
+        context.beginPath();
+        context.moveTo(width - 28, 31);
+        context.lineTo(width - 28, 50);
+        context.moveTo(width - 34, 38);
+        context.lineTo(width - 28, 31);
+        context.lineTo(width - 22, 38);
+        context.strokeStyle = "#d9b168";
+        context.lineWidth = 2;
+        context.stroke();
+
+        var scaleMeters = niceDungeonScaleMeters(82 / scale);
+        var scalePixels = scaleMeters * scale;
+        var scaleLeft = 22;
+        var scaleBottom = height - 23;
+        context.beginPath();
+        context.moveTo(scaleLeft, scaleBottom - 6);
+        context.lineTo(scaleLeft, scaleBottom);
+        context.lineTo(scaleLeft + scalePixels, scaleBottom);
+        context.lineTo(scaleLeft + scalePixels, scaleBottom - 6);
+        context.strokeStyle = "#d9b168";
+        context.lineWidth = 2;
+        context.stroke();
+        context.fillStyle = "#f0dcae";
+        context.textAlign = "center";
+        context.fillText(
+            scaleMeters + " m",
+            scaleLeft + (scalePixels / 2),
+            scaleBottom - 10
+        );
+        context.restore();
+
+        var elevationRange = Math.max(0, maxY - minY);
+        elements.dungeonScale.textContent = "Scale · " + scaleMeters + " m";
+        elements.dungeonElevation.hidden = elevationRange < 0.5;
+        elements.dungeonElevation.textContent = elevationRange >= 0.5
+            ? "Elevation tint · low 0 m → high +" +
+                Math.round(elevationRange * 10) / 10 + " m"
+            : "";
+        canvas.setAttribute(
+            "aria-label",
+            (dungeon.label || "Dungeon") + " interior with " +
+                rooms.length + " rooms and " +
+                players.length + " visible players"
+        );
+    }
+
+    function renderDungeonPayload(dungeon) {
+        renderDungeonHeader(dungeon, false);
+        elements.dungeonError.textContent = "";
+        if (dungeon.generated !== true) {
+            setDungeonStage("empty");
+            elements.dungeonEmptyCopy.textContent =
+                "Interior not yet generated — no viking has been here";
+            elements.dungeonEntranceInfo.textContent =
+                dungeonEntranceText(dungeon.entrance);
+            return;
+        }
+
+        var rooms = dungeonRoomsFromPayload(dungeon);
+        if (!dungeon.interior || rooms.length === 0) {
+            setDungeonStage("empty");
+            elements.dungeonEmptyCopy.textContent =
+                "The entrance is known, but no interior rooms were found";
+            elements.dungeonEntranceInfo.textContent =
+                dungeonEntranceText(dungeon.entrance);
+            return;
+        }
+
+        setDungeonStage("canvas");
+        window.requestAnimationFrame(function () {
+            if (activeDungeonId === dungeon.id) {
+                drawDungeonCanvas(dungeon);
+            }
+        });
+    }
+
+    function renderDungeonLoading(metadata) {
+        renderDungeonHeader(metadata, true);
+        elements.dungeonError.textContent = "";
+        setDungeonStage("loading");
+    }
+
+    function renderDungeonError(message) {
+        elements.dungeonError.textContent =
+            message || "The dungeon survey could not be loaded";
+        elements.dungeonLiveStatus.textContent = "Survey unavailable";
+        setDungeonStage("error");
+    }
+
+    function scheduleDungeonDetailPoll(delay) {
+        window.clearTimeout(dungeonDetailPollTimer);
+        dungeonDetailPollTimer = 0;
+        if (!activeDungeonId || !hasLiveAccess() || pollCircuitOpen) {
+            return;
+        }
+        dungeonDetailPollTimer = window.setTimeout(function () {
+            dungeonDetailPollTimer = 0;
+            requestActiveDungeonDetail();
+        }, Math.max(0, delay));
+    }
+
+    async function requestActiveDungeonDetail() {
+        if (!activeDungeonId || !hasLiveAccess() || pollCircuitOpen) {
+            return;
+        }
+        if (document.hidden) {
+            scheduleDungeonDetailPoll(POLL_INTERVAL_MS);
+            return;
+        }
+        if (dungeonDetailRequestPending) {
+            return;
+        }
+
+        var dungeonId = activeDungeonId;
+        var requestSequence = dungeonDetailRequestSequence;
+        dungeonDetailRequestPending = true;
+        try {
+            var dungeon = await fetchJson(
+                "/api/dungeons/" + encodeURIComponent(dungeonId)
+            );
+            if (dungeonId !== activeDungeonId ||
+                requestSequence !== dungeonDetailRequestSequence) {
+                return;
+            }
+            if (!dungeon || typeof dungeon !== "object" ||
+                typeof dungeon.id !== "string") {
+                throw new Error("Invalid dungeon survey");
+            }
+            dungeonDetailCache.set(dungeonId, dungeon);
+            renderDungeonPayload(dungeon);
+        } catch (error) {
+            if (dungeonId === activeDungeonId &&
+                requestSequence === dungeonDetailRequestSequence &&
+                !dungeonDetailCache.has(dungeonId)) {
+                renderDungeonError(error && error.message);
+            } else if (dungeonId === activeDungeonId &&
+                requestSequence === dungeonDetailRequestSequence) {
+                elements.dungeonLiveStatus.textContent = "Live update delayed";
+            }
+        } finally {
+            if (requestSequence !== dungeonDetailRequestSequence) {
+                return;
+            }
+            dungeonDetailRequestPending = false;
+            if (dungeonId === activeDungeonId) {
+                scheduleDungeonDetailPoll(POLL_INTERVAL_MS);
+            }
+        }
+    }
+
+    function openDungeonInterior(dungeonId) {
+        if (!hasLiveAccess() || typeof dungeonId !== "string" || !dungeonId) {
+            return;
+        }
+
+        if (map && map._popup) {
+            map.closePopup();
+        }
+        dungeonReturnFocus = document.activeElement;
+        activeDungeonId = dungeonId;
+        dungeonDetailRequestSequence++;
+        dungeonDetailRequestPending = false;
+        window.clearTimeout(dungeonDetailPollTimer);
+        dungeonDetailPollTimer = 0;
+        elements.dungeonBackdrop.hidden = false;
+        document.body.classList.add("is-dungeon-open");
+
+        var cached = dungeonDetailCache.get(dungeonId);
+        if (cached) {
+            renderDungeonPayload(cached);
+        } else {
+            renderDungeonLoading(dungeonMetadataById(dungeonId));
+        }
+        scheduleDungeonDetailPoll(0);
+        window.requestAnimationFrame(function () {
+            elements.dungeonClose.focus();
+            if (cached && activeDungeonId === dungeonId) {
+                drawDungeonCanvas(cached);
+            }
+        });
+    }
+
+    function closeDungeonInterior(restoreFocus) {
+        if (elements.dungeonBackdrop.hidden) {
+            return;
+        }
+
+        activeDungeonId = "";
+        dungeonDetailRequestSequence++;
+        dungeonDetailRequestPending = false;
+        window.clearTimeout(dungeonDetailPollTimer);
+        dungeonDetailPollTimer = 0;
+        elements.dungeonBackdrop.hidden = true;
+        document.body.classList.remove("is-dungeon-open");
+        if (restoreFocus !== false && dungeonReturnFocus &&
+            document.documentElement.contains(dungeonReturnFocus) &&
+            typeof dungeonReturnFocus.focus === "function") {
+            dungeonReturnFocus.focus();
+        }
+        dungeonReturnFocus = null;
+    }
+
+    function bindDungeonEvents() {
+        elements.dungeonClose.addEventListener("click", function () {
+            closeDungeonInterior(true);
+        });
+        elements.dungeonBackdrop.addEventListener("click", function (event) {
+            if (event.target === elements.dungeonBackdrop) {
+                closeDungeonInterior(true);
+            }
+        });
+        document.addEventListener("keydown", function (event) {
+            if (event.key === "Escape" && !elements.dungeonBackdrop.hidden) {
+                event.preventDefault();
+                closeDungeonInterior(true);
+            }
+        });
+
+        if (typeof window.ResizeObserver === "function") {
+            dungeonResizeObserver = new window.ResizeObserver(function () {
+                var dungeon = dungeonDetailCache.get(activeDungeonId);
+                if (dungeon) {
+                    drawDungeonCanvas(dungeon);
+                }
+            });
+            dungeonResizeObserver.observe(elements.dungeonCanvasShell);
+        } else {
+            window.addEventListener("resize", function () {
+                var dungeon = dungeonDetailCache.get(activeDungeonId);
+                if (dungeon) {
+                    drawDungeonCanvas(dungeon);
+                }
+            });
+        }
     }
 
     function buildPinPopup(pin) {
@@ -14211,6 +15059,9 @@
             return;
         }
 
+        closeDungeonInterior(false);
+        resetDungeonRegistry();
+        dungeonDetailCache.clear();
         currentView = nextView;
         latestWebPins = [];
         webPinsRevision = null;
@@ -14568,6 +15419,13 @@
                 scheduleLazyPoiPoll(group, 0);
             }
         });
+        if (hasLiveAccess() && dungeonRegistryState.loaded &&
+            !dungeonRegistryState.ready && !dungeonRegistryState.pending) {
+            scheduleDungeonRegistryPoll(0);
+        }
+        if (activeDungeonId) {
+            scheduleDungeonDetailPoll(0);
+        }
     }
 
     function scheduleEventStreamRetry() {
@@ -14697,6 +15555,7 @@
     bindCinemaEvents();
     bindConsoleEvents();
     bindCodexEvents();
+    bindDungeonEvents();
     setActiveTab(requestedTab, false);
     bindPopupDocumentEvents();
     elements.sagaToggle.addEventListener("click", function () {
@@ -14756,6 +15615,11 @@
         window.clearInterval(savedBadgeTimer);
         window.clearTimeout(dayToastTimer);
         window.clearTimeout(codexSearchTimer);
+        window.clearTimeout(dungeonRegistryState.timer);
+        window.clearTimeout(dungeonDetailPollTimer);
+        if (dungeonResizeObserver) {
+            dungeonResizeObserver.disconnect();
+        }
         document.removeEventListener("visibilitychange", handleMarkerTweenVisibility);
         markerTweens.clear();
         window.cancelAnimationFrame(markerTweenFrame);

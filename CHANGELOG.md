@@ -6,6 +6,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Added
 
+- LiveMap dungeon entrances now offer a View Interior action with a canvas-rendered top-down room schematic, live player positions, and matching `In: <dungeon>` tags on map markers and the player roster.
 - LiveMap admin and shared views now expose `/api/dungeons` and `/api/dungeons/{id}` with interior room layouts, live players inside, and dungeon tags on player markers.
 - LiveMap now maintains a server-side dungeon registry with world-wide entrance discovery, generated-interior room layouts decoded from each dungeon's `roomData` ZDO, and bounds-based resolution of players inside.
 - The native and web consoles now support `vo item <name>` catalog summaries with recipe-use lookup and lazy item-name autocomplete.

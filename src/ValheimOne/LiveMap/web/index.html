@@ -471,6 +471,52 @@
         </div>
     </section>
 
+    <div id="dungeon-backdrop" class="dungeon-backdrop" hidden>
+        <section class="dungeon-dialog" role="dialog" aria-modal="true"
+                 aria-labelledby="dungeon-title">
+            <header class="dungeon-dialog-header">
+                <div class="dungeon-dialog-heading">
+                    <span class="dungeon-kicker">Dungeon Interior</span>
+                    <h2 id="dungeon-title">Dungeon interior</h2>
+                    <div class="dungeon-meta" aria-label="Dungeon details">
+                        <span id="dungeon-type">Surveying</span>
+                        <span id="dungeon-rooms">— rooms</span>
+                        <span id="dungeon-generated">Surveying</span>
+                    </div>
+                </div>
+                <button id="dungeon-close" class="dungeon-close" type="button"
+                        aria-label="Close dungeon interior">×</button>
+            </header>
+            <div class="dungeon-dialog-body">
+                <div id="dungeon-loading" class="dungeon-state" role="status">
+                    <span class="spinner" aria-hidden="true"></span>
+                    <strong>Surveying the interior…</strong>
+                    <span>Reading rooms, levels, and vikings inside</span>
+                </div>
+                <div id="dungeon-empty" class="dungeon-state dungeon-empty" hidden>
+                    <span class="dungeon-empty-glyph" aria-hidden="true">∩</span>
+                    <strong id="dungeon-empty-copy">
+                        Interior not yet generated — no viking has been here
+                    </strong>
+                    <span id="dungeon-entrance-info">Entrance coordinates unavailable</span>
+                </div>
+                <div id="dungeon-canvas-shell" class="dungeon-canvas-shell" hidden>
+                    <canvas id="dungeon-canvas" class="dungeon-canvas"></canvas>
+                    <div class="dungeon-canvas-key" aria-hidden="true">
+                        <span>North up</span>
+                        <span id="dungeon-scale">Scale · —</span>
+                        <span id="dungeon-elevation" hidden></span>
+                    </div>
+                </div>
+                <p id="dungeon-error" class="dungeon-error" role="alert" hidden></p>
+            </div>
+            <footer class="dungeon-dialog-footer">
+                <span id="dungeon-live-status">Reading the runes…</span>
+                <span>Live · refreshes with the map</span>
+            </footer>
+        </section>
+    </div>
+
     <div id="render-status" class="render-status" role="status" aria-live="polite">
         <div class="render-card">
             <span class="spinner" aria-hidden="true"></span>
