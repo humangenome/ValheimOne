@@ -23,6 +23,7 @@
     var OVERVIEW_CLUSTER_ZOOM = 2;
     var OVERVIEW_CLUSTER_GRID_PX = 64;
     var DUNGEON_MATCH_DISTANCE_M = 8;
+    var DUNGEON_MIN_VISIBLE_ROOM_DIMENSION_M = 0.65;
     var DUNGEON_REGISTRY_POLL_INTERVAL_MS = 5000;
     var RESOURCE_POI_POLL_INTERVAL_MS = 5000;
     var RESOURCE_POI_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
@@ -11625,6 +11626,9 @@
         var rows = [];
         var resource = isResourcePoiGroup(record.group);
         var stateText = resource ? resourcePoiStateText(record) : "";
+        var matchedDungeon = isDungeonEntrancePoiGroup(record.group)
+            ? dungeonForEntrance(record)
+            : null;
         var dungeonPlayerCount = dungeonPoiPlayerCount(record);
         if (stateText) {
             rows.push({ label: "State", value: stateText });
@@ -11648,7 +11652,9 @@
             kicker: poiPopupKicker(record.group),
             rows: rows,
             surveyUnixMs: resource ? resourcePoiSurveyUnixMs(record.group) : 0,
-            title: record.title
+            title: matchedDungeon && matchedDungeon.label
+                ? matchedDungeon.label
+                : record.title
         });
     }
 
@@ -11688,9 +11694,18 @@
             typeof dungeon.label === "string" && dungeon.label
                 ? dungeon.label
                 : "Dungeon interior";
+        var dungeonType = typeof dungeon.type === "string"
+            ? dungeon.type.trim()
+            : "";
+        var dungeonTypeDefinition = Object.prototype.hasOwnProperty.call(
+            POI_GROUPS,
+            dungeonType
+        ) ? POI_GROUPS[dungeonType] : null;
         elements.dungeonType.textContent = loading
             ? "Surveying"
-            : textOrDash(dungeon.type);
+            : dungeonTypeDefinition && dungeonTypeDefinition.label
+                ? dungeonTypeDefinition.label
+                : dungeonType ? prettifyEntityName(dungeonType) : "—";
 
         var roomCount = Math.max(0, Math.floor(Number(dungeon.roomCount) || 0));
         elements.dungeonRooms.textContent = loading
@@ -11740,15 +11755,22 @@
                 Number.isFinite(Number(room.z)) &&
                 Number.isFinite(Number(room.sizeX)) &&
                 Number.isFinite(Number(room.sizeZ)) &&
-                Number(room.sizeX) > 0 && Number(room.sizeZ) > 0;
+                Number(room.sizeX) >= 0 && Number(room.sizeZ) >= 0 &&
+                (Number(room.sizeX) > 0 || Number(room.sizeZ) > 0);
         }).map(function (room) {
             return {
                 name: typeof room.name === "string" ? room.name : "",
                 rotYDeg: Number.isFinite(Number(room.rotYDeg))
                     ? Number(room.rotYDeg)
                     : 0,
-                sizeX: Number(room.sizeX),
-                sizeZ: Number(room.sizeZ),
+                sizeX: Math.max(
+                    DUNGEON_MIN_VISIBLE_ROOM_DIMENSION_M,
+                    Number(room.sizeX)
+                ),
+                sizeZ: Math.max(
+                    DUNGEON_MIN_VISIBLE_ROOM_DIMENSION_M,
+                    Number(room.sizeZ)
+                ),
                 x: Number(room.x),
                 y: Number(room.y),
                 z: Number(room.z)
