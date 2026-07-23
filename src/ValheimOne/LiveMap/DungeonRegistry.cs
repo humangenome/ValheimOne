@@ -16,6 +16,7 @@ internal sealed class DungeonRegistry
     private const float FixedInteriorHalfHeight = 250f;
     private const float BoundsPadding = 1f;
     private const int MaximumRoomCount = 4096;
+    private const int PackedRoomRecordSize = 28;
 
     private readonly ZoneSystem _zoneSystem;
     private readonly ModLogger _log;
@@ -119,21 +120,14 @@ internal sealed class DungeonRegistry
             }
 
             int hash = scene.GetPrefabHash(prefab);
-            if (!_generatorPrefabs.ContainsKey(hash))
-            {
-                _generatorPrefabs.Add(
-                    hash,
-                    new DungeonGeneratorPrefab(prefab.name, generator.m_zoneSize));
-            }
+            _generatorPrefabs[hash] =
+                new DungeonGeneratorPrefab(prefab.name, generator.m_zoneSize);
         }
     }
 
     private void StartScan(float now)
     {
-        if (_generatorPrefabs.Count == 0)
-        {
-            DiscoverGeneratorPrefabs();
-        }
+        DiscoverGeneratorPrefabs();
 
         RefreshLocations();
         _pendingLocations.Clear();
@@ -258,8 +252,9 @@ internal sealed class DungeonRegistry
         {
             // Troll Cave, PlaceofMystery3, and the Putrid Holes are fixed
             // interiors in 0.221.12. Their generated location is still
-            // represented by fallback bounds.
-            _scannedDungeonIds.Add(location.Id);
+            // represented by fallback bounds. Do not cache a miss, because a
+            // newly placed procedural dungeon may publish its generator ZDO
+            // after the location's placed flag becomes visible.
             return;
         }
 
@@ -308,7 +303,14 @@ internal sealed class DungeonRegistry
             Quaternion rotation = generatorZdo.GetQuaternion(
                 key + "_rot",
                 Quaternion.identity);
-            AddRoom(dungeonDb, rooms, ref bounds, roomHash, position, rotation);
+            AddRoom(
+                dungeonDb,
+                rooms,
+                ref bounds,
+                roomHash,
+                position,
+                rotation,
+                NormalizeDegrees(rotation.eulerAngles.y));
         }
 
         layout = CreateLayout(generatorZdo, generatorPrefab, rooms, bounds);
@@ -331,8 +333,9 @@ internal sealed class DungeonRegistry
         using var stream = new MemoryStream(roomData, false);
         using var reader = new BinaryReader(stream);
         int roomCount = reader.ReadInt32();
-        long expectedLength = sizeof(int) + ((long)roomCount * 32L);
-        if (roomCount < 0 ||
+        long expectedLength =
+            sizeof(int) + ((long)roomCount * PackedRoomRecordSize);
+        if (roomCount <= 0 ||
             roomCount > MaximumRoomCount ||
             expectedLength != roomData.Length)
         {
@@ -349,12 +352,19 @@ internal sealed class DungeonRegistry
                 reader.ReadSingle(),
                 reader.ReadSingle(),
                 reader.ReadSingle());
-            var rotation = new Quaternion(
-                reader.ReadSingle(),
+            var euler = new Vector3(
                 reader.ReadSingle(),
                 reader.ReadSingle(),
                 reader.ReadSingle());
-            AddRoom(dungeonDb, rooms, ref bounds, roomHash, position, rotation);
+            Quaternion rotation = Quaternion.Euler(euler);
+            AddRoom(
+                dungeonDb,
+                rooms,
+                ref bounds,
+                roomHash,
+                position,
+                rotation,
+                NormalizeDegrees(euler.y));
         }
 
         layout = CreateLayout(generatorZdo, generatorPrefab, rooms, bounds);
@@ -367,7 +377,8 @@ internal sealed class DungeonRegistry
         ref BoundsAccumulator bounds,
         int roomHash,
         Vector3 position,
-        Quaternion rotation)
+        Quaternion rotation,
+        float rotationYDegrees)
     {
         DungeonRoomDefinition definition =
             GetRoomDefinition(dungeonDb, roomHash);
@@ -379,14 +390,22 @@ internal sealed class DungeonRegistry
                 position.x,
                 position.y,
                 position.z,
-                rotation.x,
-                rotation.y,
-                rotation.z,
-                rotation.w,
+                rotationYDegrees,
                 size.x,
                 size.y,
                 size.z));
         bounds.IncludeRoom(position, rotation, size);
+    }
+
+    private static float NormalizeDegrees(float degrees)
+    {
+        if (float.IsNaN(degrees) || float.IsInfinity(degrees))
+        {
+            return 0f;
+        }
+
+        float normalized = degrees % 360f;
+        return normalized < 0f ? normalized + 360f : normalized;
     }
 
     private DungeonRoomDefinition GetRoomDefinition(
@@ -1066,10 +1085,7 @@ internal sealed class DungeonRoomSnapshot
         float x,
         float y,
         float z,
-        float rotationX,
-        float rotationY,
-        float rotationZ,
-        float rotationW,
+        float rotationYDegrees,
         int sizeX,
         int sizeY,
         int sizeZ)
@@ -1079,10 +1095,7 @@ internal sealed class DungeonRoomSnapshot
         X = x;
         Y = y;
         Z = z;
-        RotationX = rotationX;
-        RotationY = rotationY;
-        RotationZ = rotationZ;
-        RotationW = rotationW;
+        RotationYDegrees = rotationYDegrees;
         SizeX = sizeX;
         SizeY = sizeY;
         SizeZ = sizeZ;
@@ -1098,13 +1111,7 @@ internal sealed class DungeonRoomSnapshot
 
     public float Z { get; }
 
-    public float RotationX { get; }
-
-    public float RotationY { get; }
-
-    public float RotationZ { get; }
-
-    public float RotationW { get; }
+    public float RotationYDegrees { get; }
 
     public int SizeX { get; }
 

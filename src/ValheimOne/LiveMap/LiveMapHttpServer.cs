@@ -2436,25 +2436,12 @@ internal sealed class LiveMapHttpServer
                 room.SizeX.ToString(CultureInfo.InvariantCulture));
             json.Append(",\"sizeZ\":").Append(
                 room.SizeZ.ToString(CultureInfo.InvariantCulture));
-            json.Append(",\"rotYDeg\":").Append(JsonWriter.Number(
-                Math.Round(GetRoomYawDegrees(room), 1)));
+            json.Append(",\"rotYDeg\":").Append(
+                JsonWriter.Number(room.RotationYDegrees));
             json.Append('}');
         }
 
         json.Append("]}");
-    }
-
-    private static double GetRoomYawDegrees(DungeonRoomSnapshot room)
-    {
-        double numerator =
-            2.0 * ((room.RotationW * room.RotationY) +
-                   (room.RotationX * room.RotationZ));
-        double denominator =
-            1.0 -
-            (2.0 * ((room.RotationY * room.RotationY) +
-                    (room.RotationZ * room.RotationZ)));
-        double yaw = Math.Atan2(numerator, denominator) * (180.0 / Math.PI);
-        return yaw < 0.0 ? yaw + 360.0 : yaw;
     }
 
     private void ServeTrail(
