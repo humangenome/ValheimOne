@@ -18,6 +18,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Fixed
 
+- Server-originated shouts no longer emit harmless player-lookup errors in the dedicated-server log.
 - Server-originated shutdown shouts and web map pings no longer emit a platform-ID parse error in each connected player's log.
 
 ## [0.11.0] - 2026-07-22

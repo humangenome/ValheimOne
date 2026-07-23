@@ -19,7 +19,6 @@ internal sealed class ConsoleBridge
     private const int MaximumCommandOutputLines = 50;
     private const float MaximumShipTowDistance = 5000f;
     private const float ShipPlayerGuardDistance = 12f;
-    private const int ShoutType = 2;
     private const string TimeoutError = "timed out waiting for main thread";
 
     private static readonly Lazy<FieldInfo> CommandsField = new(
@@ -375,8 +374,9 @@ internal sealed class ConsoleBridge
         string text,
         ModLogger? log)
     {
+        ZNet? network = ZNet.instance;
         ZRoutedRpc? routedRpc = ZRoutedRpc.instance;
-        if (routedRpc == null)
+        if (network == null || routedRpc == null)
         {
             return ConsoleActionResult.Failure("server unavailable");
         }
@@ -384,14 +384,7 @@ internal sealed class ConsoleBridge
         long captureId = MapPingPatch.ExpectServerChat(text);
         try
         {
-            UserInfo userInfo = ServerUserInfo.Create("Server");
-            routedRpc.InvokeRoutedRPC(
-                ZRoutedRpc.Everybody,
-                "ChatMessage",
-                Vector3.zero,
-                ShoutType,
-                userInfo,
-                text);
+            ServerUserInfo.BroadcastShoutToPlayers(network, routedRpc, text);
             MapPingPatch.RecordServerChat(captureId);
             return ConsoleActionResult.Success();
         }

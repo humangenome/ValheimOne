@@ -11,8 +11,6 @@ internal sealed class ServerShutdownScheduler
     public const int MaximumSeconds = 3600;
 
     private const int MaximumMessageLength = 256;
-    private const int ShoutType = 2;
-
     private static readonly int[] CountdownMarks = { 60, 30, 10 };
 
     private readonly ModLogger _log;
@@ -131,25 +129,23 @@ internal sealed class ServerShutdownScheduler
 
     private void BroadcastShout(string text)
     {
+        long captureId = MapPingPatch.ExpectServerChat(text);
         try
         {
+            ZNet? network = ZNet.instance;
             ZRoutedRpc? routedRpc = ZRoutedRpc.instance;
-            if (routedRpc == null)
+            if (network == null || routedRpc == null)
             {
+                MapPingPatch.CancelServerChat(captureId);
                 return;
             }
 
-            UserInfo userInfo = ServerUserInfo.Create();
-            routedRpc.InvokeRoutedRPC(
-                ZRoutedRpc.Everybody,
-                "ChatMessage",
-                Vector3.zero,
-                ShoutType,
-                userInfo,
-                text);
+            ServerUserInfo.BroadcastShoutToPlayers(network, routedRpc, text);
+            MapPingPatch.RecordServerChat(captureId);
         }
         catch (Exception exception)
         {
+            MapPingPatch.CancelServerChat(captureId);
             _log.Warning(
                 $"[LiveMap] could not broadcast shutdown message: " +
                 $"{exception.GetType().Name}: {exception.Message}");
