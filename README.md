@@ -12,13 +12,13 @@
 [![Valheim — Dedicated Server](https://img.shields.io/badge/Valheim-Dedicated_Server-1b2838.svg?logo=steam&logoColor=white)](https://store.steampowered.com/app/892970/)
 [![Client Mods: Optional](https://img.shields.io/badge/Client_Mods-Optional-brightgreen.svg)](#features)
 
-Everything your Valheim dedicated server is missing: a live map, a web console, Discord notifications, server-enforced settings, and a server query endpoint — with vanilla-compatible server features and synchronized client features where game ownership requires them.
+Everything your Valheim dedicated server is missing: a live map, a searchable Codex of Items, a web console, Discord notifications, server-enforced settings, and a server query endpoint — with vanilla-compatible server features and synchronized client features where game ownership requires them.
 
 _ValheimOne is a community project and is not affiliated with or endorsed by Iron Gate Studio._
 
 > **Official Hosting:** [SurvivalServers.com](https://www.survivalservers.com/services/game_servers/valheim/?utm_source=github&utm_medium=readme&utm_campaign=valheim_one) offers managed Valheim dedicated servers with BepInEx support for ValheimOne.
 
-**Status — released.** ValheimOne is available with the server enforcement chassis, twenty-six default-off gameplay modules, the Live Map (world render, players, POIs, pins, fog-of-war, admin and public views), the web admin console, and the standalone A2S query responder. Gameplay features are disabled by default; the `[Server]` transport infrastructure is enabled by default but does not alter gameplay on its own.
+**Status — released.** ValheimOne is available with the server enforcement chassis, twenty-six default-off gameplay modules, the Live Map (world render, players, POIs, pins, fog-of-war, admin and public views), the web admin console, and the standalone A2S query responder. The current unreleased build also adds the Codex of Items. Gameplay features are disabled by default; the `[Server]` transport infrastructure is enabled by default but does not alter gameplay on its own.
 
 ---
 
@@ -64,6 +64,16 @@ Use `vo shutdown <seconds> [message]` from the native or web console to schedule
 The command input autocompletes against the server's whitelist as you type:
 
 ![ValheimOne console command autocomplete](docs/screenshots/console-autocomplete.png)
+
+Use `vo item <name>` from the native or web console to query the same item data; the web console suggests and click-completes item names as you type the command.
+
+### Codex of Items
+
+Adds a Codex of Items tab to the admin, shared, and public map views: a searchable, category-filtered catalog of approximately 1,084 items extracted from the running server at startup. Entries cover weight, stack size, teleport restrictions, quality and tool tiers, damage and armor, complete recipes with crafting station and level requirements, jump links between ingredients, smelter/cooking/fermenter sources, creature drops, and used-in cross-references.
+
+![ValheimOne Codex of Items](docs/screenshots/codex-of-items.png)
+
+The versioned public `GET /api/catalog` endpoint serves the same static game data with a day-long `ETag` cache and contains no world or player information.
 
 ### Discord Notifications
 
