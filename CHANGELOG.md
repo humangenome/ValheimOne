@@ -4,6 +4,8 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-22
+
 ### Added
 
 - LiveMap dungeon entrances now offer a View Interior action with a canvas-rendered top-down room schematic, live player positions, and matching `In: <dungeon>` tags on map markers and the player roster.
