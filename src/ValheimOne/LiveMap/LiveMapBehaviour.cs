@@ -10,6 +10,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
 {
     private const float IdleUpdateSeconds = 30f;
     private const float FogUpdateSeconds = 2f;
+    private const double MaximumDistanceSampleGapSeconds = 30.0;
     private const int MaximumPendingPings = 4;
     private const int PingType = 3;
 
@@ -19,7 +20,9 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private Func<bool>? _enabledCheck;
     private Func<WebPinStore?>? _getWebPinStore;
     private Func<ActivityHeatmap?>? _getActivityHeatmap;
+    private Func<LeaderboardStore?>? _getLeaderboardStore;
     private ActivityHeatmap? _activityHeatmap;
+    private LeaderboardStore? _leaderboardStore;
     private WorldMapRenderer? _renderer;
     private FogTracker? _fogTracker;
     private MapTableReader? _mapTableReader;
@@ -86,7 +89,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         ModLogger log,
         Func<bool> enabledCheck,
         Func<WebPinStore?> getWebPinStore,
-        Func<ActivityHeatmap?> getActivityHeatmap)
+        Func<ActivityHeatmap?> getActivityHeatmap,
+        Func<LeaderboardStore?> getLeaderboardStore)
     {
         var behaviour = host.AddComponent<LiveMapBehaviour>();
         behaviour._config = config;
@@ -95,6 +99,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         behaviour._enabledCheck = enabledCheck;
         behaviour._getWebPinStore = getWebPinStore;
         behaviour._getActivityHeatmap = getActivityHeatmap;
+        behaviour._getLeaderboardStore = getLeaderboardStore;
         behaviour._shutdownScheduler = new ServerShutdownScheduler(log);
         behaviour._consoleBridge = new ConsoleBridge(null, log, behaviour._shutdownScheduler);
         Instance = behaviour;
@@ -260,6 +265,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         PlayerBaseTracker playerBaseTracker = new PlayerBaseTracker(log);
         _playerBaseTracker = playerBaseTracker;
         _activityHeatmap = _getActivityHeatmap?.Invoke();
+        _leaderboardStore = _getLeaderboardStore?.Invoke();
+        _leaderboardStore?.ConfigureWorldSeed(world.m_seed);
 
         _idle = GameAccess.GetPeers(network).Count == 0;
         RefreshSnapshot();
@@ -283,6 +290,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             () => _mapTableReader?.Snapshot ?? MapTableSnapshot.Empty,
             _getWebPinStore!,
             _getActivityHeatmap!,
+            _getLeaderboardStore!,
             () => entityTracker.Snapshot,
             () => entityTracker.FocusSnapshot,
             entityTracker.NoteEntitiesRequested,
@@ -470,6 +478,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             _positionHistory.Record(PositionHistory.PlayerKey(id), position.x, position.z, nowMs);
             _activityHeatmap?.Record(position.x, position.z, nowMs);
             presentIds.Add(id);
+            float leaderboardDistance = 0f;
             if (!_motion.TryGetValue(id, out PlayerMotionState? motion))
             {
                 motion = new PlayerMotionState
@@ -496,7 +505,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
                     float deltaX = position.x - motion.LastX;
                     float deltaZ = position.z - motion.LastZ;
                     float distance = (float)Math.Sqrt((deltaX * deltaX) + (deltaZ * deltaZ));
-                    if (distance > 200f)
+                    if (distance > 200f || deltaSeconds > MaximumDistanceSampleGapSeconds)
                     {
                         motion.SpeedMps = 0f;
                     }
@@ -511,6 +520,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
                         }
 
                         motion.DistanceTodayM += distance;
+                        leaderboardDistance = distance;
                     }
 
                     motion.LastX = position.x;
@@ -522,6 +532,14 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             if (!string.IsNullOrWhiteSpace(peer.m_playerName))
             {
                 motion.CharacterName = peer.m_playerName.Trim();
+                _leaderboardStore?.NoteSessionProgress(motion.CharacterName, nowMs);
+                if (leaderboardDistance > 0f)
+                {
+                    _leaderboardStore?.NoteDistance(
+                        motion.CharacterName,
+                        leaderboardDistance,
+                        nowMs);
+                }
             }
 
             motion.PositionShared = peer.m_publicRefPos;
@@ -653,6 +671,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _entityTracker = null;
         _resourcePoiTracker = null;
         _activityHeatmap = null;
+        _leaderboardStore = null;
         _playerBaseTracker?.Stop();
         _playerBaseTracker = null;
         _fogTracker?.Stop();

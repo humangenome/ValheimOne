@@ -47,6 +47,7 @@ internal sealed class LiveMapHttpServer
     private readonly Func<MapTableSnapshot> _getMapTableSnapshot;
     private readonly Func<WebPinStore?> _getWebPinStore;
     private readonly Func<ActivityHeatmap?> _getActivityHeatmap;
+    private readonly Func<LeaderboardStore?> _getLeaderboardStore;
     private readonly Func<EntityMapSnapshot> _getEntitySnapshot;
     private readonly Func<EntityFocusSnapshot> _getEntityFocusSnapshot;
     private readonly Action<bool, bool> _noteEntitiesRequested;
@@ -99,6 +100,7 @@ internal sealed class LiveMapHttpServer
         Func<MapTableSnapshot> getMapTableSnapshot,
         Func<WebPinStore?> getWebPinStore,
         Func<ActivityHeatmap?> getActivityHeatmap,
+        Func<LeaderboardStore?> getLeaderboardStore,
         Func<EntityMapSnapshot> getEntitySnapshot,
         Func<EntityFocusSnapshot> getEntityFocusSnapshot,
         Action<bool, bool> noteEntitiesRequested,
@@ -129,6 +131,7 @@ internal sealed class LiveMapHttpServer
         _getMapTableSnapshot = getMapTableSnapshot;
         _getWebPinStore = getWebPinStore;
         _getActivityHeatmap = getActivityHeatmap;
+        _getLeaderboardStore = getLeaderboardStore;
         _getEntitySnapshot = getEntitySnapshot;
         _getEntityFocusSnapshot = getEntityFocusSnapshot;
         _noteEntitiesRequested = noteEntitiesRequested;
@@ -380,6 +383,10 @@ internal sealed class LiveMapHttpServer
             else if (isGet && path == "/api/heatmap")
             {
                 ServeHeatmap(request, response, viewLevel);
+            }
+            else if (isGet && path == "/api/leaderboard")
+            {
+                ServeLeaderboard(response, viewLevel);
             }
             else if (isGet && path == "/api/height")
             {
@@ -2309,6 +2316,50 @@ internal sealed class LiveMapHttpServer
             json.Append(',').Append(cell.Z.ToString(CultureInfo.InvariantCulture));
             json.Append(',').Append(cell.Count.ToString(CultureInfo.InvariantCulture));
             json.Append(']');
+        }
+
+        json.Append("]}");
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private void ServeLeaderboard(HttpListenerResponse response, ViewLevel viewLevel)
+    {
+        if (viewLevel == ViewLevel.Public)
+        {
+            WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
+        LeaderboardStore? store = _getLeaderboardStore();
+        if (store == null)
+        {
+            WriteJson(response, HttpStatusCode.ServiceUnavailable, "{\"error\":\"not ready\"}");
+            return;
+        }
+
+        long generatedUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        LeaderboardSnapshot snapshot = store.Snapshot(generatedUnixMs, 50);
+        StringBuilder json = new StringBuilder(96 + (snapshot.Players.Length * 112));
+        json.Append("{\"generatedUnixMs\":").Append(
+            snapshot.GeneratedUnixMs.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"players\":[");
+        for (int index = 0; index < snapshot.Players.Length; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            LeaderboardPlayerSnapshot player = snapshot.Players[index];
+            json.Append("{\"name\":").Append(JsonWriter.Quote(player.Name));
+            json.Append(",\"playSeconds\":").Append(
+                player.PlaySeconds.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"deaths\":").Append(
+                player.Deaths.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"distanceMeters\":").Append(
+                JsonWriter.Number(Math.Round(player.DistanceMeters, 1)));
+            json.Append(",\"online\":").Append(player.Online ? "true" : "false");
+            json.Append('}');
         }
 
         json.Append("]}");

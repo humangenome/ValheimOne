@@ -5,6 +5,7 @@
     var POLL_FAILURE_LIMIT = 3;
     var PINS_POLL_INTERVAL_MS = 60000;
     var HEATMAP_POLL_INTERVAL_MS = 60000;
+    var LEADERBOARD_POLL_INTERVAL_MS = 60000;
     var ENTITIES_POLL_INTERVAL_MS = 10000;
     var CONSOLE_LOG_POLL_INTERVAL_MS = 2000;
     var CONSOLE_STATS_POLL_INTERVAL_MS = 5000;
@@ -608,6 +609,12 @@
     var sagaRequestSequence = 0;
     var pendingSagaPayloads = [];
     var sagaRelativeTimer = 0;
+    var leaderboardPlayers = [];
+    var leaderboardLoaded = false;
+    var leaderboardLoadFailed = false;
+    var leaderboardRequestPending = false;
+    var leaderboardRequestSequence = 0;
+    var leaderboardPollTimer = 0;
     var lastPoiRequestedView = null;
     var poiRequestSequence = 0;
     var poiLoadPending = false;
@@ -728,6 +735,12 @@
         mapTab: document.getElementById("map-tab"),
         mapStatus: document.getElementById("render-status"),
         mapStatusText: document.getElementById("render-status-text"),
+        leaderboardContent: document.getElementById("leaderboard-content"),
+        leaderboardList: document.getElementById("leaderboard-list"),
+        leaderboardNote: document.getElementById("leaderboard-note"),
+        leaderboardPanel: document.getElementById("leaderboard-panel"),
+        leaderboardTable: document.getElementById("leaderboard-table"),
+        leaderboardToggle: document.getElementById("leaderboard-toggle"),
         offlineBadge: document.getElementById("offline-badge"),
         playerCount: document.getElementById("player-count"),
         playerList: document.getElementById("player-list"),
@@ -2568,6 +2581,7 @@
         entityFocusPollTimer = 0;
         window.clearTimeout(heatmapPollTimer);
         heatmapPollTimer = 0;
+        clearLeaderboardPoll();
         stopAllLazyPoiPolling();
     }
 
@@ -12565,6 +12579,176 @@
         }
     }
 
+    function leaderboardIsExpanded() {
+        return hasLiveAccess() && !elements.leaderboardPanel.hidden &&
+            !elements.leaderboardPanel.classList.contains("is-collapsed");
+    }
+
+    function humanizeLeaderboardPlaytime(seconds) {
+        var totalMinutes = Math.max(0, Math.floor(Number(seconds) / 60));
+        var hours = Math.floor(totalMinutes / 60);
+        var minutes = totalMinutes % 60;
+        return hours > 0 ? hours + "h " + minutes + "m" : minutes + "m";
+    }
+
+    function renderLeaderboard() {
+        elements.leaderboardList.textContent = "";
+        var note = "";
+        if (!leaderboardLoaded) {
+            note = "Reading the runes…";
+        } else if (leaderboardLoadFailed) {
+            note = "Leaderboard unavailable";
+        } else if (leaderboardPlayers.length === 0) {
+            note = "No sagas recorded this wipe";
+        }
+
+        elements.leaderboardNote.hidden = !note;
+        elements.leaderboardNote.textContent = note;
+        elements.leaderboardTable.hidden = leaderboardPlayers.length === 0;
+        leaderboardPlayers.forEach(function (player, index) {
+            var item = document.createElement("li");
+            var rank = document.createElement("span");
+            var name = document.createElement("span");
+            var playtime = document.createElement("span");
+            var deaths = document.createElement("span");
+            var distance = document.createElement("span");
+            item.className = "leaderboard-entry" + (player.online ? " is-online" : "");
+            rank.className = "leaderboard-rank";
+            rank.textContent = String(index + 1);
+            name.className = "leaderboard-name";
+            name.textContent = player.name;
+            name.title = player.name;
+            playtime.className = "leaderboard-stat";
+            playtime.textContent = humanizeLeaderboardPlaytime(player.playSeconds);
+            deaths.className = "leaderboard-stat";
+            deaths.textContent = String(player.deaths);
+            distance.className = "leaderboard-stat";
+            distance.textContent = (player.distanceMeters / 1000).toFixed(1) + " km";
+            item.appendChild(rank);
+            item.appendChild(name);
+            item.appendChild(playtime);
+            item.appendChild(deaths);
+            item.appendChild(distance);
+            elements.leaderboardList.appendChild(item);
+        });
+    }
+
+    function normalizeLeaderboardPlayer(player) {
+        if (!player || typeof player !== "object" ||
+            typeof player.name !== "string" || !player.name.trim()) {
+            return null;
+        }
+
+        var playSeconds = Number(player.playSeconds);
+        var deaths = Number(player.deaths);
+        var distanceMeters = Number(player.distanceMeters);
+        if (!Number.isFinite(playSeconds) || playSeconds < 0 ||
+            !Number.isFinite(deaths) || deaths < 0 ||
+            !Number.isFinite(distanceMeters) || distanceMeters < 0) {
+            return null;
+        }
+
+        return {
+            deaths: Math.floor(deaths),
+            distanceMeters: distanceMeters,
+            name: player.name.trim(),
+            online: player.online === true,
+            playSeconds: Math.floor(playSeconds)
+        };
+    }
+
+    function handleLeaderboardPayload(payload) {
+        if (!payload || typeof payload !== "object" || !Array.isArray(payload.players)) {
+            throw new Error("Invalid leaderboard payload");
+        }
+
+        leaderboardPlayers = [];
+        payload.players.slice(0, 50).forEach(function (player) {
+            var normalized = normalizeLeaderboardPlayer(player);
+            if (normalized) {
+                leaderboardPlayers.push(normalized);
+            }
+        });
+        leaderboardLoaded = true;
+        leaderboardLoadFailed = false;
+        renderLeaderboard();
+    }
+
+    async function loadLeaderboard() {
+        if (!leaderboardIsExpanded() || leaderboardRequestPending ||
+            document.hidden || pollCircuitOpen) {
+            return;
+        }
+
+        leaderboardRequestPending = true;
+        var sequence = ++leaderboardRequestSequence;
+        if (!leaderboardLoaded) {
+            renderLeaderboard();
+        }
+        try {
+            var payload = await fetchJson("/api/leaderboard");
+            if (sequence !== leaderboardRequestSequence || !leaderboardIsExpanded()) {
+                recordPollSuccess("leaderboard");
+                return;
+            }
+            handleLeaderboardPayload(payload);
+            recordPollSuccess("leaderboard");
+        } catch (error) {
+            recordPollFailure("leaderboard");
+            if (sequence !== leaderboardRequestSequence || !leaderboardIsExpanded()) {
+                return;
+            }
+            leaderboardLoaded = true;
+            leaderboardLoadFailed = true;
+            renderLeaderboard();
+        } finally {
+            if (sequence === leaderboardRequestSequence) {
+                leaderboardRequestPending = false;
+            }
+        }
+    }
+
+    function clearLeaderboardPoll() {
+        window.clearTimeout(leaderboardPollTimer);
+        leaderboardPollTimer = 0;
+    }
+
+    function scheduleLeaderboardPoll(delay) {
+        clearLeaderboardPoll();
+        if (!leaderboardIsExpanded() || document.hidden || pollCircuitOpen) {
+            return;
+        }
+
+        leaderboardPollTimer = window.setTimeout(async function () {
+            leaderboardPollTimer = 0;
+            await loadLeaderboard();
+            scheduleLeaderboardPoll(LEADERBOARD_POLL_INTERVAL_MS);
+        }, Math.max(0, delay));
+    }
+
+    function setLeaderboardCollapsed(isCollapsed) {
+        elements.leaderboardPanel.classList.toggle("is-collapsed", isCollapsed);
+        elements.leaderboardContent.hidden = isCollapsed;
+        elements.leaderboardToggle.setAttribute("aria-expanded", String(!isCollapsed));
+        if (isCollapsed) {
+            clearLeaderboardPoll();
+        } else {
+            renderLeaderboard();
+            scheduleLeaderboardPoll(0);
+        }
+    }
+
+    function clearLeaderboard() {
+        leaderboardRequestSequence++;
+        leaderboardRequestPending = false;
+        leaderboardPlayers = [];
+        leaderboardLoaded = false;
+        leaderboardLoadFailed = false;
+        clearLeaderboardPoll();
+        setLeaderboardCollapsed(true);
+        renderLeaderboard();
+    }
+
     function sagaName(data) {
         if (data && typeof data.name === "string" && data.name.trim()) {
             return data.name.trim();
@@ -12892,6 +13076,7 @@
             : "Public view";
         elements.watchButton.hidden = nextView === "public";
         elements.sagaPanel.hidden = nextView === "public";
+        elements.leaderboardPanel.hidden = nextView === "public";
         if (nextView === currentView) {
             ensureSagaActivity();
             return;
@@ -12910,8 +13095,12 @@
         syncWebPinControl();
         if (currentView === "public") {
             clearSagaActivity();
+            clearLeaderboard();
         } else {
             ensureSagaActivity();
+            if (leaderboardIsExpanded()) {
+                scheduleLeaderboardPoll(0);
+            }
         }
         dismissMapContextMenu();
         if (currentView === "public" && cinemaState) {
@@ -13239,6 +13428,7 @@
         resumePollingAfterEventStream();
         pollPins();
         startHeatmapPolling();
+        scheduleLeaderboardPoll(0);
         scheduleStatsPolling(0);
         updateEntityPolling(true);
         updateEntityFocusPolling(true);
@@ -13378,7 +13568,13 @@
     elements.sagaToggle.addEventListener("click", function () {
         setSagaCollapsed(!elements.sagaPanel.classList.contains("is-collapsed"));
     });
+    elements.leaderboardToggle.addEventListener("click", function () {
+        setLeaderboardCollapsed(
+            !elements.leaderboardPanel.classList.contains("is-collapsed")
+        );
+    });
     setSagaCollapsed(true);
+    setLeaderboardCollapsed(true);
     elements.sidebarState.addEventListener("change", function () {
         if (!elements.sidebarState.checked ||
             !window.matchMedia("(max-width: 759px)").matches) {
@@ -13407,6 +13603,7 @@
         window.clearTimeout(hashUpdateTimer);
         window.clearTimeout(renderStatusFailureTimer);
         window.clearTimeout(mapLoadingTimeoutTimer);
+        clearLeaderboardPoll();
         clearRecurringPollTimers();
         window.clearInterval(sagaRelativeTimer);
         stopAllLazyPoiPolling();

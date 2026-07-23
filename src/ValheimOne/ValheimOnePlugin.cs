@@ -55,6 +55,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
         var liveMapModule = new ValheimOne.LiveMap.LiveMapModule(
             settings.Features,
             activityLogModule,
+            sessionEvents,
             dataDirectory);
         _liveMapModule = liveMapModule;
         IReadOnlyList<IFeatureModule> modules = new IFeatureModule[]

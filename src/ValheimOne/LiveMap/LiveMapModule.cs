@@ -13,21 +13,26 @@ public sealed class LiveMapModule : IFeatureModule
     private readonly FeatureDefinition _feature;
     private readonly LiveMapConfig _config;
     private readonly ActivityLogModule _activityLog;
+    private readonly ServerSessionEventSource _sessionEvents;
     private readonly ModLogger _log;
     private readonly FeatureRegistry _registry;
     private readonly string _dataDirectory;
-    private readonly object _webPinStoreLock = new object();
+    private readonly object _storeLock = new object();
     private WebPinStore? _webPinStore;
     private ActivityHeatmap? _activityHeatmap;
+    private LeaderboardStore? _leaderboardStore;
+    private LeaderboardBehaviour? _leaderboardBehaviour;
     private bool _shutdown;
 
     public LiveMapModule(
         FeatureRegistry registry,
         ActivityLogModule activityLog,
+        ServerSessionEventSource sessionEvents,
         string dataDirectory)
     {
         _registry = registry;
         _activityLog = activityLog;
+        _sessionEvents = sessionEvents;
         _dataDirectory = dataDirectory;
         _log = new ModLogger(BepInEx.Logging.Logger.CreateLogSource("ValheimOne.LiveMap"));
         _feature = registry.Register(Name, Section, Classification);
@@ -177,7 +182,7 @@ public sealed class LiveMapModule : IFeatureModule
     {
         get
         {
-            lock (_webPinStoreLock)
+            lock (_storeLock)
             {
                 return _webPinStore;
             }
@@ -188,9 +193,20 @@ public sealed class LiveMapModule : IFeatureModule
     {
         get
         {
-            lock (_webPinStoreLock)
+            lock (_storeLock)
             {
                 return _activityHeatmap;
+            }
+        }
+    }
+
+    internal LeaderboardStore? LeaderboardStore
+    {
+        get
+        {
+            lock (_storeLock)
+            {
+                return _leaderboardStore;
             }
         }
     }
@@ -214,6 +230,10 @@ public sealed class LiveMapModule : IFeatureModule
             hideFlags = HideFlags.HideAndDontSave,
         };
         UnityEngine.Object.DontDestroyOnLoad(host);
+        _leaderboardBehaviour = LeaderboardBehaviour.Initialize(
+            host,
+            () => LeaderboardStore,
+            _sessionEvents);
         LiveMapBehaviour.Initialize(
             host,
             _config,
@@ -221,14 +241,17 @@ public sealed class LiveMapModule : IFeatureModule
             _log,
             () => _feature.Enabled.Value,
             () => WebPinStore,
-            () => ActivityHeatmap);
+            () => ActivityHeatmap,
+            () => LeaderboardStore);
     }
 
     public void Shutdown()
     {
         WebPinStore? store;
         ActivityHeatmap? activityHeatmap;
-        lock (_webPinStoreLock)
+        LeaderboardStore? leaderboardStore;
+        LeaderboardBehaviour? leaderboardBehaviour;
+        lock (_storeLock)
         {
             if (_shutdown)
             {
@@ -241,17 +264,24 @@ public sealed class LiveMapModule : IFeatureModule
             _webPinStore = null;
             activityHeatmap = _activityHeatmap;
             _activityHeatmap = null;
+            leaderboardStore = _leaderboardStore;
+            _leaderboardStore = null;
+            leaderboardBehaviour = _leaderboardBehaviour;
+            _leaderboardBehaviour = null;
         }
 
+        leaderboardBehaviour?.StopPermanently();
         store?.Dispose();
         activityHeatmap?.Dispose();
+        leaderboardStore?.Dispose();
     }
 
     private void SynchronizeWebPinStore()
     {
         WebPinStore? storeToDispose = null;
         ActivityHeatmap? heatmapToDispose = null;
-        lock (_webPinStoreLock)
+        LeaderboardStore? leaderboardToDispose = null;
+        lock (_storeLock)
         {
             if (_shutdown)
             {
@@ -262,6 +292,7 @@ public sealed class LiveMapModule : IFeatureModule
             {
                 _webPinStore ??= new WebPinStore(_dataDirectory, _log);
                 _activityHeatmap ??= new ActivityHeatmap(_dataDirectory, _log);
+                _leaderboardStore ??= new LeaderboardStore(_dataDirectory, _log);
             }
             else
             {
@@ -269,10 +300,13 @@ public sealed class LiveMapModule : IFeatureModule
                 _webPinStore = null;
                 heatmapToDispose = _activityHeatmap;
                 _activityHeatmap = null;
+                leaderboardToDispose = _leaderboardStore;
+                _leaderboardStore = null;
             }
         }
 
         storeToDispose?.Dispose();
         heatmapToDispose?.Dispose();
+        leaderboardToDispose?.Dispose();
     }
 }

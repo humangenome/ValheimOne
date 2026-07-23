@@ -179,6 +179,26 @@
             </ul>
         </section>
 
+        <section id="leaderboard-panel" class="saga-panel leaderboard-panel is-collapsed"
+                 aria-labelledby="leaderboard-heading" hidden>
+            <button id="leaderboard-toggle" class="saga-toggle" type="button"
+                    aria-label="Toggle Leaderboard" aria-controls="leaderboard-content"
+                    aria-expanded="false">
+                <span id="leaderboard-heading" class="saga-heading-copy">Leaderboard</span>
+                <span id="leaderboard-chevron" class="saga-chevron" aria-hidden="true">›</span>
+            </button>
+            <div id="leaderboard-content" class="saga-content leaderboard-content" hidden>
+                <p id="leaderboard-note" class="saga-note">Open to read the standings</p>
+                <div id="leaderboard-table" class="leaderboard-table" hidden>
+                    <div class="leaderboard-header" aria-hidden="true">
+                        <span>#</span><span>Viking</span><span>Time</span><span>Deaths</span><span>Distance</span>
+                    </div>
+                    <ol id="leaderboard-list" class="leaderboard-list"
+                        aria-label="Player leaderboard"></ol>
+                </div>
+            </div>
+        </section>
+
         <section id="saga-panel" class="saga-panel is-collapsed" aria-labelledby="saga-heading" hidden>
             <button id="saga-toggle" class="saga-toggle" type="button"
                     aria-label="Toggle Server Events" aria-controls="saga-content"
