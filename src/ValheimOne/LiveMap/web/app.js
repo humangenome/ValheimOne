@@ -5578,7 +5578,7 @@
         };
 
         worldBounds = L.latLngBounds([[-WORLD_UNITS, 0], [0, WORLD_UNITS]]);
-        map = L.map("map", {
+        map = L.map(embedMode ? elements.mapPane : "map", {
             attributionControl: false,
             crs: L.CRS.Simple,
             maxBounds: worldBounds.pad(0.08),
