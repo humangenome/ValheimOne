@@ -4,6 +4,12 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-07-24
+
+### Fixed
+
+- The LiveMap sidebar's brand block no longer shrinks below its own content when vertical space is tight, which previously let the Cinema Mode button overlap the view tabs in a short browser window or an embedded host.
+
 ## [0.12.1] - 2026-07-24
 
 ### Added

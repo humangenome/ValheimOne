@@ -123,6 +123,10 @@
 #valheimone-embed-root .brand {
     position: relative;
     display: grid;
+    /* The sidebar is a flex column; without this the brand shrinks below its own content
+       whenever vertical space is tight (a short window, or an embedded host) and its
+       badges row spills over the view tabs underneath. */
+    flex-shrink: 0;
     min-height: 72px;
     grid-template-columns: 40px minmax(0, 1fr);
     align-items: center;
