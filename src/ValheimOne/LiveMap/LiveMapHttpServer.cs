@@ -381,6 +381,10 @@ internal sealed class LiveMapHttpServer
             {
                 ServeIndex(response, viewLevel);
             }
+            else if (isGet && path == "/api/embed")
+            {
+                ServeEmbed(response);
+            }
             else if (isGet && path == "/favicon.ico")
             {
                 ServeFavicon(response);
@@ -672,6 +676,16 @@ internal sealed class LiveMapHttpServer
             "no-store");
     }
 
+    private static void ServeEmbed(HttpListenerResponse response)
+    {
+        WriteBytes(
+            response,
+            HttpStatusCode.OK,
+            "text/html; charset=utf-8",
+            EmbeddedAssets.Get("embed.html"),
+            "no-store");
+    }
+
     private void ServeAsset(HttpListenerResponse response, string name)
     {
         string? assetName;
@@ -690,12 +704,20 @@ internal sealed class LiveMapHttpServer
                 assetName = "app.js";
                 contentType = "application/javascript; charset=utf-8";
                 break;
+            case "app.embed.js":
+                assetName = "app.embed.js";
+                contentType = "application/javascript; charset=utf-8";
+                break;
             case "icons.js":
                 assetName = "icons.js";
                 contentType = "application/javascript; charset=utf-8";
                 break;
             case "app.css":
                 assetName = "app.css";
+                contentType = "text/css; charset=utf-8";
+                break;
+            case "app.embed.css":
+                assetName = "app.embed.css";
                 contentType = "text/css; charset=utf-8";
                 break;
             case "icon-192.png":
