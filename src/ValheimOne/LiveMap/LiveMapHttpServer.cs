@@ -391,7 +391,7 @@ internal sealed class LiveMapHttpServer
             }
             else if (isGet && path.StartsWith("/assets/", StringComparison.Ordinal))
             {
-                ServeAsset(response, path.Substring("/assets/".Length));
+                ServeAsset(request, response, path.Substring("/assets/".Length));
             }
             else if (isGet && path == "/api/status")
             {
@@ -686,7 +686,10 @@ internal sealed class LiveMapHttpServer
             "no-store");
     }
 
-    private void ServeAsset(HttpListenerResponse response, string name)
+    private void ServeAsset(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        string name)
     {
         string? assetName;
         string? contentType;
@@ -768,11 +771,17 @@ internal sealed class LiveMapHttpServer
             return;
         }
 
-        WriteBytes(
+        byte[] content = EmbeddedAssets.Get(assetName);
+        byte[]? gzipContent = IsGzipContentType(contentType)
+            ? EmbeddedAssets.GetGzip(assetName)
+            : null;
+        WriteCacheableBytes(
+            request,
             response,
-            HttpStatusCode.OK,
             contentType,
-            EmbeddedAssets.Get(assetName),
+            content,
+            gzipContent,
+            EmbeddedAssets.GetETag(assetName),
             "public, max-age=3600");
     }
 
@@ -797,22 +806,69 @@ internal sealed class LiveMapHttpServer
         HttpListenerRequest request,
         HttpListenerResponse response)
     {
-        response.Headers[HttpResponseHeader.ETag] = _itemCatalog.ETag;
-        if (MatchesETag(request.Headers["If-None-Match"], _itemCatalog.ETag))
+        WriteCacheableBytes(
+            request,
+            response,
+            "application/json; charset=utf-8",
+            _itemCatalog.Content,
+            _itemCatalog.GzipContent,
+            _itemCatalog.ETag,
+            "public, max-age=86400");
+    }
+
+    private static void WriteCacheableBytes(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        string contentType,
+        byte[] content,
+        byte[]? gzipContent,
+        string etag,
+        string cacheControl)
+    {
+        response.Headers[HttpResponseHeader.ETag] = etag;
+        if (gzipContent != null)
+        {
+            response.Headers[HttpResponseHeader.Vary] = "Accept-Encoding";
+        }
+
+        if (MatchesETag(request.Headers["If-None-Match"], etag))
         {
             response.StatusCode = (int)HttpStatusCode.NotModified;
-            response.Headers[HttpResponseHeader.CacheControl] = "public, max-age=86400";
+            response.Headers[HttpResponseHeader.CacheControl] = cacheControl;
             response.ContentLength64 = 0;
             response.OutputStream.Close();
             return;
         }
 
+        byte[] responseContent = content;
+        if (gzipContent != null && AcceptsGzip(request))
+        {
+            response.Headers[HttpResponseHeader.ContentEncoding] = "gzip";
+            responseContent = gzipContent;
+        }
+
         WriteBytes(
             response,
             HttpStatusCode.OK,
-            "application/json; charset=utf-8",
-            _itemCatalog.Content,
-            "public, max-age=86400");
+            contentType,
+            responseContent,
+            cacheControl);
+    }
+
+    private static bool AcceptsGzip(HttpListenerRequest request)
+    {
+        string? acceptEncoding = request.Headers["Accept-Encoding"];
+        return acceptEncoding != null &&
+               acceptEncoding.IndexOf("gzip", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private static bool IsGzipContentType(string contentType)
+    {
+        return contentType.StartsWith("application/javascript", StringComparison.OrdinalIgnoreCase) ||
+               contentType.StartsWith("application/json", StringComparison.OrdinalIgnoreCase) ||
+               contentType.StartsWith("image/svg+xml", StringComparison.OrdinalIgnoreCase) ||
+               contentType.StartsWith("text/css", StringComparison.OrdinalIgnoreCase) ||
+               contentType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool MatchesETag(string? header, string etag)

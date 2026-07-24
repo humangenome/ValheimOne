@@ -242,7 +242,31 @@ internal static class EmbeddedAssets
             "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",
     };
 
+    private static readonly Dictionary<string, string> ETags = new Dictionary<string, string>
+    {
+        ["index.html"] = "\"7fd5219a85f72f3b362aaaa4176048d6ff45c2c7312f1559245e7984ebb20a88\"",
+        ["embed.html"] = "\"75a6fed157d0da7a62dce51abc86dc17f6e316394bd3598cb2ff80d337d925a2\"",
+        ["icons.js"] = "\"9204e42162ce92840bdf25e60c7ec506bb01305ddf3c7af9cc3dca97940add6d\"",
+        ["app.js"] = "\"d7bdf81921a45fb368213b9c959f4c3085af809dae8f5fd720dce3a5e6cc640a\"",
+        ["app.embed.js"] = "\"e639f5dba5ef55513bd2aead5c32ce53b80590f47ee7d0079f8328891aa2456a\"",
+        ["app.css"] = "\"af3ce665e5ffaa6be923d3b1fed1f911e8fdb08ced9393763393448e4d62278e\"",
+        ["app.embed.css"] = "\"4518093654a9581a828e153f876c2c1eb24b83c15bbd42ccc717f6df16d28034\"",
+        ["leaflet.js"] = "\"db49d009c841f5ca34a888c96511ae936fd9f5533e90d8b2c4d57596f4e5641a\"",
+        ["leaflet.css"] = "\"a7837102824184820dfa198d1ebcd109ff6d0ff9a2672a074b9a1b4d147d04c6\"",
+        ["icon-192.png"] = "\"781c8d978a75f4f98eaa7e82cff081c7ff24855eac8a6ab34fadbaab6e713d2a\"",
+        ["icon-64.png"] = "\"45d53458af4b637757d536e2bc930aca8ba91fef9d0b4b25fb018fb95a06eb83\"",
+        ["favicon.ico"] = "\"8e5c08e8dcb0a8abd1b7275494cbcf8321abdf684858d7501e7d0d09a1fa3efb\"",
+        ["metamorphous-v22-latin-regular.woff2"] = "\"8254a00416dd6f08b633e72eaa427edbc4142a5046ed83914ea7796ec946d670\"",
+        ["averia-serif-libre-v19-latin-regular.woff2"] = "\"a870992b7544a7adbfdefab5a5d97174662ff7935984a3edb5f858a5a3dee9ac\"",
+        ["averia-serif-libre-v19-latin-italic.woff2"] = "\"c6eebbbc8f5dcbe894caee1995413496968f3fd993b0e8f8c77f46d361063263\"",
+        ["averia-serif-libre-v19-latin-700.woff2"] = "\"23166bf0013be1ca9b713dad081abe7eb7d47f712391ef6b917ba54ef8adeba6\"",
+        ["averia-serif-libre-v19-latin-700italic.woff2"] = "\"5515db7c5e3b9fe6f51f4440c51304e5139d71bac1874404a6935ad6d3e9f222\"",
+        ["OFL-Metamorphous.txt"] = "\"4fece81b541808b40293b0cd3f5b1990274e1100e1c20455dc2987cd96639d3f\"",
+        ["OFL-AveriaSerifLibre.txt"] = "\"46239ba6485d28553fd944da4ad32a00d9c403aa1c3e111676b0b96fe458d1d4\"",
+    };
+
     private static readonly Dictionary<string, byte[]> Cache = new Dictionary<string, byte[]>();
+    private static readonly Dictionary<string, byte[]> GzipCache = new Dictionary<string, byte[]>();
 
     public static byte[] Get(string name)
     {
@@ -258,12 +282,12 @@ internal static class EmbeddedAssets
                 return cached;
             }
 
-            if (!Payloads.TryGetValue(name, out string encoded))
+            if (!Payloads.ContainsKey(name))
             {
                 throw new KeyNotFoundException("Unknown embedded asset: " + name);
             }
 
-            byte[] compressed = Convert.FromBase64String(encoded);
+            byte[] compressed = GetGzip(name);
             using (var input = new MemoryStream(compressed, writable: false))
             using (var gzip = new GZipStream(input, CompressionMode.Decompress))
             using (var output = new MemoryStream())
@@ -274,5 +298,40 @@ internal static class EmbeddedAssets
                 return asset;
             }
         }
+    }
+
+    public static byte[] GetGzip(string name)
+    {
+        if (name == null)
+        {
+            throw new KeyNotFoundException("Unknown embedded asset: " + name);
+        }
+
+        lock (GzipCache)
+        {
+            if (GzipCache.TryGetValue(name, out byte[] cached))
+            {
+                return cached;
+            }
+
+            if (!Payloads.TryGetValue(name, out string encoded))
+            {
+                throw new KeyNotFoundException("Unknown embedded asset: " + name);
+            }
+
+            byte[] compressed = Convert.FromBase64String(encoded);
+            GzipCache.Add(name, compressed);
+            return compressed;
+        }
+    }
+
+    public static string GetETag(string name)
+    {
+        if (name == null || !ETags.TryGetValue(name, out string etag))
+        {
+            throw new KeyNotFoundException("Unknown embedded asset: " + name);
+        }
+
+        return etag;
     }
 }

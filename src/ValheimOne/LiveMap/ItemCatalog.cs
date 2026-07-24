@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using UnityEngine;
@@ -38,6 +39,7 @@ internal sealed class ItemCatalog
         ConsoleItem[] consoleItems)
     {
         Content = content;
+        GzipContent = Compress(content);
         ETag = ComputeETag(content);
         ItemCount = itemCount;
         RecipeCount = recipeCount;
@@ -51,6 +53,8 @@ internal sealed class ItemCatalog
     public static ItemCatalog? Current => _current;
 
     public byte[] Content { get; }
+
+    public byte[] GzipContent { get; }
 
     public string ETag { get; }
 
@@ -1337,6 +1341,19 @@ internal sealed class ItemCatalog
 
         value.Append('"');
         return value.ToString();
+    }
+
+    private static byte[] Compress(byte[] content)
+    {
+        using (var output = new MemoryStream())
+        {
+            using (var gzip = new GZipStream(output, CompressionMode.Compress, leaveOpen: true))
+            {
+                gzip.Write(content, 0, content.Length);
+            }
+
+            return output.ToArray();
+        }
     }
 
     private static void LogSummary(
