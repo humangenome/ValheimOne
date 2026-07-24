@@ -4,6 +4,21 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-07-24
+
+### Added
+
+- LiveMap can now be mounted directly inside a host page: `GET /api/embed` returns a body fragment and `assets/app.embed.js` / `assets/app.embed.css` provide a root-scoped bundle, so the SurvivalServers panel hosts the map natively instead of in an iframe.
+- LiveMap static assets are now served with strong ETags, `If-None-Match` 304 handling, and pre-computed gzip payloads, cutting repeat asset transfer to a revalidation round trip.
+
+### Changed
+
+- The LiveMap app now isolates itself when embedded: it mounts into a caller-supplied root, routes every request through a configurable API base, keeps its keyboard shortcuts and scroll handling inside that root, and leaves the host page's body, document title and URL hash untouched.
+
+### Notes
+
+- Standalone LiveMap behaviour is unchanged, and the network handshake schema is untouched, so 0.12.0 clients stay compatible with 0.12.1 servers.
+
 ## [0.12.0] - 2026-07-22
 
 ### Added
