@@ -1,0 +1,470 @@
+<div id="valheimone-embed-root">
+    <input class="sidebar-state" id="sidebar-state" type="checkbox" aria-hidden="true">
+    <label class="sidebar-toggle" for="sidebar-state" aria-label="Toggle map details">
+        <span></span>
+        <span></span>
+        <span></span>
+    </label>
+
+    <aside id="sidebar" aria-label="Live map details">
+        <header class="brand">
+            <div class="brand-mark" aria-hidden="true">
+                <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="32" cy="32" r="29" stroke="currentColor" stroke-opacity="0.35"
+                            stroke-width="2" />
+                    <circle cx="32" cy="32" r="3.5" fill="currentColor" />
+                    <g stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+                       stroke-linejoin="round">
+                        <path d="M32 28V7M32 7V3M32 7L26 12M32 7L38 12" />
+                        <path d="M36 32H57M57 26V38M52 27V37" />
+                        <path d="M32 36V57M26 53L32 57L38 53M28 49H36" />
+                        <path d="M28 32H7M7 26V38M12 32A3 3 0 1 0 18 32A3 3 0 1 0 12 32" />
+                        <path d="M29 29L14 14M14 14L10 10M14 14L9 16M14 14L16 9" />
+                        <path d="M35 29L50 14M50 14L54 10M46 10L54 18M47 17L51 21" />
+                        <path d="M29 35L14 50M14 50L10 54M10 46L18 54M17 47L21 51" />
+                        <path d="M35 35L50 50M50 50L54 54M50 50L55 48M50 50L48 55" />
+                    </g>
+                </svg>
+            </div>
+            <div class="brand-copy">
+                <div class="brand-name">VALHEIM<span class="accent">ONE</span></div>
+                <div class="brand-subtitle">World Chart</div>
+            </div>
+            <div class="brand-badges">
+                <span id="public-view-badge" class="public-view-badge" hidden>Public view</span>
+                <span id="offline-badge" class="offline-badge" hidden>Offline</span>
+                <button id="watch-button" class="watch-button" type="button"
+                        aria-label="Enter Cinema Mode" title="Enter Cinema Mode" hidden>
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="m3 12 4.5-4.5L12 5l4.5 2.5L21 12l-4.5 4.5L12 19l-4.5-2.5L3 12Z" />
+                        <path d="m9 12 3-3 3 3-3 3-3-3ZM12 5v4m0 6v4" />
+                    </svg>
+                    <span>Cinema Mode</span>
+                </button>
+            </div>
+        </header>
+
+        <nav id="view-tabs" class="view-tabs" aria-label="Views" role="tablist">
+            <button id="map-tab" class="view-tab is-active" type="button" role="tab"
+                    aria-controls="map" aria-selected="true">World Chart</button>
+            <button id="console-tab" class="view-tab" type="button" role="tab"
+                    aria-controls="console-pane" aria-selected="false" tabindex="-1" hidden>Console</button>
+            <button id="codex-tab" class="view-tab" type="button" role="tab"
+                    aria-controls="codex-pane" aria-selected="false" tabindex="-1">Codex</button>
+        </nav>
+
+        <section class="server-details" aria-label="Server details">
+            <div class="detail-line">
+                <span class="detail-label">World</span>
+                <span class="detail-value" id="world-name">—</span>
+            </div>
+            <div class="detail-line">
+                <span class="detail-label">Server</span>
+                <span class="detail-value" id="server-name">—</span>
+            </div>
+            <div class="detail-line join-code-line" id="join-code-line" hidden>
+                <span class="detail-label">Join code</span>
+                <span class="join-code-detail">
+                    <code class="join-code-value" id="join-code"></code>
+                    <button class="vo-copy join-code-copy" id="join-code-copy" type="button"
+                            aria-label="Copy join code">Copy</button>
+                </span>
+            </div>
+        </section>
+
+        <section class="time-panel" aria-label="World time">
+            <div class="time-primary">
+                <div class="time-copy">
+                    <div class="day-number" id="day-number">Day —</div>
+                    <div class="world-clock" id="world-clock">--:--</div>
+                </div>
+                <span class="sky-indicator is-sun" id="sky-indicator" role="img"
+                      aria-label="Daytime">☀</span>
+            </div>
+            <div class="status-chips" id="status-chips" aria-label="World conditions" hidden>
+                <span class="status-chip wind-status" id="wind-chip" hidden>
+                    <span class="status-icon wind-rose" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" preserveAspectRatio="xMidYMid meet"
+                             focusable="false">
+                            <circle cx="12" cy="12" r="9" />
+                            <path class="wind-rose-cross" d="M12 5v14M5 12h14" />
+                            <g id="sidebar-wind-needle" class="sidebar-wind-needle">
+                                <path d="M12 12V5" />
+                                <path d="m9.5 8 2.5-3 2.5 3" />
+                            </g>
+                            <circle class="wind-rose-hub" cx="12" cy="12" r="1.35" />
+                        </svg>
+                    </span>
+                    <span id="sidebar-wind-label">Wind —</span>
+                </span>
+                <span class="status-chip" id="explored-chip" hidden>
+                    <span class="status-icon status-glyph" aria-hidden="true">◒</span>
+                    <span id="sidebar-explored-label">Explored —</span>
+                </span>
+                <span class="status-chip saved-chip" id="saved-chip" hidden>
+                    <span class="status-icon status-glyph" aria-hidden="true">✓</span>
+                    <span id="sidebar-saved-label">Saved —</span>
+                </span>
+            </div>
+            <div class="raid-badge" id="raid-badge" role="status" hidden></div>
+        </section>
+
+        <section class="boss-progression-panel" aria-label="Boss progression">
+            <span class="sidebar-section-label">Boss Progression</span>
+            <div class="boss-progression" id="boss-progression"
+                 aria-label="Boss progression"></div>
+        </section>
+
+        <section class="players-panel" aria-labelledby="players-heading">
+            <div class="section-heading">
+                <h2 id="players-heading">Players</h2>
+                <span class="player-count" id="player-count">0 online</span>
+            </div>
+            <ul class="player-list" id="player-list">
+                <li class="empty-player-list">No vikings ashore</li>
+            </ul>
+        </section>
+
+        <section id="chat-panel" class="saga-panel chat-panel is-collapsed"
+                 aria-labelledby="chat-heading" hidden>
+            <button id="chat-toggle" class="saga-toggle" type="button"
+                    aria-label="Toggle Chat" aria-controls="chat-content"
+                    aria-expanded="false">
+                <span id="chat-heading" class="saga-heading-copy">Chat</span>
+                <span id="chat-chevron" class="saga-chevron" aria-hidden="true">›</span>
+            </button>
+            <div id="chat-content" class="saga-content chat-content" hidden>
+                <p id="chat-note" class="saga-note">No chat received yet</p>
+                <ol id="chat-list" class="chat-list" role="log" aria-live="polite"></ol>
+                <form id="chat-form" class="chat-form" hidden>
+                    <div class="chat-compose">
+                        <input id="chat-input" type="text" maxlength="256"
+                               autocomplete="off" aria-label="Server chat message"
+                               placeholder="Message the server…">
+                        <button id="chat-send" class="console-primary-button"
+                                type="submit">Send</button>
+                    </div>
+                    <p id="chat-send-notice" class="chat-send-notice"
+                       role="status" aria-live="polite" hidden></p>
+                </form>
+            </div>
+        </section>
+
+        <section id="leaderboard-panel" class="saga-panel leaderboard-panel is-collapsed"
+                 aria-labelledby="leaderboard-heading" hidden>
+            <button id="leaderboard-toggle" class="saga-toggle" type="button"
+                    aria-label="Toggle Leaderboard" aria-controls="leaderboard-content"
+                    aria-expanded="false">
+                <span id="leaderboard-heading" class="saga-heading-copy">Leaderboard</span>
+                <span id="leaderboard-chevron" class="saga-chevron" aria-hidden="true">›</span>
+            </button>
+            <div id="leaderboard-content" class="saga-content leaderboard-content" hidden>
+                <p id="leaderboard-note" class="saga-note">Open to read the standings</p>
+                <div id="leaderboard-table" class="leaderboard-table" hidden>
+                    <div class="leaderboard-header" aria-hidden="true">
+                        <span>#</span><span>Viking</span><span>Time</span><span>Deaths</span><span>Distance</span>
+                    </div>
+                    <ol id="leaderboard-list" class="leaderboard-list"
+                        aria-label="Player leaderboard"></ol>
+                </div>
+            </div>
+        </section>
+
+        <section id="saga-panel" class="saga-panel is-collapsed" aria-labelledby="saga-heading" hidden>
+            <button id="saga-toggle" class="saga-toggle" type="button"
+                    aria-label="Toggle Server Events" aria-controls="saga-content"
+                    aria-expanded="false">
+                <span id="saga-heading" class="saga-heading-copy">Server Events</span>
+                <span id="saga-chevron" class="saga-chevron" aria-hidden="true">›</span>
+            </button>
+            <div id="saga-content" class="saga-content" hidden>
+                <p id="saga-note" class="saga-note">No events recorded yet</p>
+                <ol id="saga-list" class="saga-list" role="log" aria-live="polite"></ol>
+            </div>
+        </section>
+
+
+    </aside>
+
+    <section id="map-metrics" class="map-metrics" aria-label="Server metrics">
+        <span id="map-metric-status" class="map-metric-status is-waiting" role="img"
+              aria-label="Server status loading" title="Server status loading"></span>
+        <span id="map-metric-frame-item" class="map-metric" hidden>
+            <span class="map-metric-label">Frame</span>
+            <strong id="map-metric-frame">—</strong>
+        </span>
+        <span id="map-metric-zdo-item" class="map-metric" hidden>
+            <span class="map-metric-label">ZDOs</span>
+            <strong id="map-metric-zdo">—</strong>
+        </span>
+        <span id="map-metric-day-item" class="map-metric" hidden>
+            <span class="map-metric-label">Day</span>
+            <strong id="map-metric-day">—</strong>
+        </span>
+        <span id="map-metric-uptime-item" class="map-metric" hidden>
+            <span class="map-metric-label">Up</span>
+            <strong id="map-metric-uptime">—</strong>
+        </span>
+    </section>
+
+    <main id="map" aria-label="Valheim world map" aria-labelledby="map-tab" role="tabpanel"></main>
+
+    <section id="cinema-hud" class="cinema-hud" aria-label="Cinema Mode display" hidden>
+        <div class="cinema-topbar">
+            <span id="cinema-server-name" class="cinema-chip cinema-server-chip">—</span>
+            <span id="cinema-day" class="cinema-chip">Day —</span>
+            <span id="cinema-clock" class="cinema-chip cinema-clock">--:--</span>
+            <span id="cinema-wind" class="cinema-chip cinema-wind" title="Wind unavailable">
+                <svg viewBox="0 0 80 80" aria-hidden="true" focusable="false">
+                    <circle class="compass-disc" cx="40" cy="40" r="29" />
+                    <circle class="compass-ring" cx="40" cy="40" r="25" />
+                    <g class="compass-staves">
+                        <path d="M40 40V15M40 15l-5 6m5-6 5 6M36 24h8" />
+                        <path d="M40 40l18-18m0 0 5-5m-5 5-7-1m7 1 1 7" />
+                        <path d="M40 40h25m0 0-6-5m6 5-6 5M56 36v8" />
+                        <path d="M40 40l18 18m0 0 5 5m-5-5 1-7m-1 7-7-1" />
+                        <path d="M40 40v25m0 0-5-6m5 6 5-6M36 56h8" />
+                        <path d="M40 40 22 58m0 0-5 5m5-5 7-1m-7 1-1-7" />
+                        <path d="M40 40H15m0 0 6-5m-6 5 6 5M24 36v8" />
+                        <path d="M40 40 22 22m0 0-5-5m5 5-1 7m1-7 7 1" />
+                    </g>
+                    <g class="cinema-wind-needle"><path d="M40 40V19" /></g>
+                    <circle class="compass-hub" cx="40" cy="40" r="2.8" />
+                    <g class="compass-cardinals">
+                        <text class="compass-north" x="40" y="8">N</text>
+                        <text x="74" y="43">E</text>
+                        <text x="40" y="78">S</text>
+                        <text x="6" y="43">W</text>
+                    </g>
+                </svg>
+                <span id="cinema-wind-label">—</span>
+            </span>
+            <span id="cinema-staleness" class="cinema-staleness is-grey" role="status">
+                Waiting for feeds
+            </span>
+        </div>
+
+        <div class="cinema-notices" aria-live="polite">
+            <span id="cinema-mode-chip" class="cinema-mode-chip" hidden></span>
+            <span id="cinema-secondary-chip" class="cinema-mode-chip is-secondary" hidden></span>
+            <button id="cinema-stay-target" class="cinema-mode-button" type="button" hidden>
+                Stay on target
+            </button>
+        </div>
+
+        <article id="cinema-player-card" class="cinema-player-card" hidden>
+            <div class="cinema-player-heading">
+                <span class="cinema-player-kicker">FOLLOWING</span>
+                <h1 id="cinema-player-name">—</h1>
+            </div>
+            <dl class="cinema-player-facts">
+                <div><dt>Biome</dt><dd id="cinema-player-biome">—</dd></div>
+                <div><dt>Speed</dt><dd id="cinema-player-speed">—</dd></div>
+                <div><dt>Heading</dt><dd id="cinema-player-heading">—</dd></div>
+                <div><dt>Session</dt><dd id="cinema-player-session">—</dd></div>
+            </dl>
+        </article>
+
+        <button id="cinema-exit" class="cinema-exit" type="button" aria-label="Exit Cinema Mode"
+                title="Exit Cinema Mode (Esc)">×</button>
+        <div class="cinema-raid-vignette" aria-hidden="true"></div>
+    </section>
+
+    <section id="console-pane" class="console-pane" aria-labelledby="console-tab" role="tabpanel" hidden>
+        <div class="console-layout">
+            <section class="console-terminal" aria-labelledby="console-heading">
+                <header class="console-terminal-header">
+                    <div class="console-terminal-title">
+                        <h1 id="console-heading">Longhouse Console</h1>
+                        <span>Live log · streaming with polling fallback</span>
+                    </div>
+                    <div class="console-terminal-actions">
+                        <button id="console-commands-toggle" class="console-header-button" type="button"
+                                aria-controls="console-command-reference" aria-expanded="false">Commands</button>
+                        <span class="console-live-indicator">Live</span>
+                    </div>
+                </header>
+
+                <div class="console-log-shell">
+                    <div id="console-log" class="console-log" role="log" aria-live="polite"></div>
+                    <section id="console-command-reference" class="console-command-reference"
+                             aria-labelledby="console-command-reference-heading" hidden>
+                        <header>
+                            <h2 id="console-command-reference-heading">Commands</h2>
+                            <button id="console-command-reference-close" class="console-reference-close"
+                                    type="button" aria-label="Close commands reference">Close</button>
+                        </header>
+                        <div id="console-command-reference-body" class="console-command-reference-body"></div>
+                    </section>
+                    <button id="console-resume" class="console-resume" type="button" hidden>
+                        New lines · Resume
+                    </button>
+                </div>
+
+                <form id="console-command-form" class="console-command-form" autocomplete="off">
+                    <div id="console-suggestions" class="console-suggestions" role="listbox"
+                         aria-label="Command suggestions" hidden></div>
+                    <label class="console-command-label" for="console-command">
+                        <span aria-hidden="true">&gt;</span>
+                        <input id="console-command" type="text" inputmode="text" spellcheck="false"
+                               role="combobox"
+                               aria-autocomplete="list" aria-controls="console-suggestions"
+                               aria-expanded="false"
+                               placeholder="Enter a server command">
+                    </label>
+                </form>
+            </section>
+
+            <aside class="console-side" aria-label="Server administration">
+                <section class="console-side-section" aria-labelledby="stats-heading">
+                    <div class="console-section-heading">
+                        <h2 id="stats-heading">Stats</h2>
+                        <span>5s refresh</span>
+                    </div>
+                    <dl class="console-stats">
+                        <div><dt>Uptime</dt><dd id="console-stat-uptime">—</dd></div>
+                        <div><dt>Players</dt><dd id="console-stat-players">—</dd></div>
+                        <div><dt>ZDO count</dt><dd id="console-stat-zdo">—</dd></div>
+                        <div><dt>Mono heap</dt><dd id="console-stat-heap">—</dd></div>
+                        <div><dt>Frame avg</dt><dd id="console-stat-frame-avg">—</dd></div>
+                        <div><dt>Frame max</dt><dd id="console-stat-frame-max">—</dd></div>
+                    </dl>
+                    <div class="console-save-row">
+                        <button id="console-save" class="console-primary-button" type="button">Save world</button>
+                        <span id="console-save-status" class="console-action-status" role="status"></span>
+                    </div>
+                </section>
+
+                <section class="console-side-section" aria-labelledby="console-players-heading">
+                    <div class="console-section-heading">
+                        <h2 id="console-players-heading">Players</h2>
+                        <span id="console-player-count">0 online</span>
+                    </div>
+                    <ul id="console-player-list" class="console-admin-list">
+                        <li class="console-empty-list">No vikings ashore</li>
+                    </ul>
+                </section>
+
+                <section class="console-side-section" aria-labelledby="banned-heading">
+                    <div class="console-section-heading">
+                        <h2 id="banned-heading">Banned</h2>
+                        <span id="console-banned-count">—</span>
+                    </div>
+                    <ul id="console-banned-list" class="console-admin-list">
+                        <li class="console-empty-list">Open Console to load bans</li>
+                    </ul>
+                </section>
+            </aside>
+        </div>
+
+        <div id="console-confirm-backdrop" class="console-confirm-backdrop" hidden>
+            <div class="console-confirm-dialog" role="dialog" aria-modal="true"
+                 aria-labelledby="console-confirm-message">
+                <p id="console-confirm-message"></p>
+                <div class="console-confirm-actions">
+                    <button id="console-confirm-cancel" type="button">Cancel</button>
+                    <button id="console-confirm-submit" class="is-danger" type="button">Confirm</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="codex-pane" class="codex-pane" aria-labelledby="codex-tab" role="tabpanel" hidden>
+        <div class="codex-shell">
+            <header class="codex-toolbar">
+                <div class="codex-title">
+                    <h1>Codex of Items</h1>
+                    <span id="codex-version">Valheim item &amp; recipe catalog</span>
+                </div>
+                <div class="codex-controls">
+                    <label class="codex-search" for="codex-search">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <circle cx="11" cy="11" r="6"></circle>
+                            <path d="M16 16l4 4"></path>
+                        </svg>
+                        <input id="codex-search" type="search" autocomplete="off" spellcheck="false"
+                               placeholder="Search name, token, or lore…" disabled>
+                    </label>
+                    <label class="codex-category-label" for="codex-category">
+                        <span>Category</span>
+                        <select id="codex-category" disabled>
+                            <option value="all">All</option>
+                            <option value="weapons">Weapons</option>
+                            <option value="armor">Armor</option>
+                            <option value="tools">Tools</option>
+                            <option value="materials">Materials</option>
+                            <option value="consumables">Consumables</option>
+                            <option value="trophies">Trophies</option>
+                            <option value="misc">Misc</option>
+                        </select>
+                    </label>
+                    <span id="codex-count" class="codex-count" aria-live="polite">— items</span>
+                </div>
+            </header>
+            <div id="codex-state" class="codex-state" role="status" aria-live="polite">
+                <span class="spinner" aria-hidden="true"></span>
+                <span>Open the Codex to load its pages</span>
+            </div>
+            <div id="codex-scroll" class="codex-scroll" hidden>
+                <div id="codex-list" class="codex-list" role="list"
+                     aria-label="Codex items"></div>
+            </div>
+        </div>
+    </section>
+
+    <div id="dungeon-backdrop" class="dungeon-backdrop" hidden>
+        <section class="dungeon-dialog" role="dialog" aria-modal="true"
+                 aria-labelledby="dungeon-title">
+            <header class="dungeon-dialog-header">
+                <div class="dungeon-dialog-heading">
+                    <span class="dungeon-kicker">Dungeon Interior</span>
+                    <h2 id="dungeon-title">Dungeon interior</h2>
+                    <div class="dungeon-meta" aria-label="Dungeon details">
+                        <span id="dungeon-type">Surveying</span>
+                        <span id="dungeon-rooms">— rooms</span>
+                        <span id="dungeon-generated">Surveying</span>
+                    </div>
+                </div>
+                <button id="dungeon-close" class="dungeon-close" type="button"
+                        aria-label="Close dungeon interior">×</button>
+            </header>
+            <div class="dungeon-dialog-body">
+                <div id="dungeon-loading" class="dungeon-state" role="status">
+                    <span class="spinner" aria-hidden="true"></span>
+                    <strong>Surveying the interior…</strong>
+                    <span>Reading rooms, levels, and vikings inside</span>
+                </div>
+                <div id="dungeon-empty" class="dungeon-state dungeon-empty" hidden>
+                    <span class="dungeon-empty-glyph" aria-hidden="true">∩</span>
+                    <strong id="dungeon-empty-copy">
+                        Interior not yet generated — no viking has been here
+                    </strong>
+                    <span id="dungeon-entrance-info">Entrance coordinates unavailable</span>
+                </div>
+                <div id="dungeon-canvas-shell" class="dungeon-canvas-shell" hidden>
+                    <canvas id="dungeon-canvas" class="dungeon-canvas"></canvas>
+                    <div class="dungeon-canvas-key" aria-hidden="true">
+                        <span>North up</span>
+                        <span id="dungeon-scale">Scale · —</span>
+                        <span id="dungeon-elevation" hidden></span>
+                    </div>
+                </div>
+                <p id="dungeon-error" class="dungeon-error" role="alert" hidden></p>
+            </div>
+            <footer class="dungeon-dialog-footer">
+                <span id="dungeon-live-status">Reading the runes…</span>
+                <span>Live · refreshes with the map</span>
+            </footer>
+        </section>
+    </div>
+
+    <div id="render-status" class="render-status" role="status" aria-live="polite">
+        <div class="render-card">
+            <span class="spinner" aria-hidden="true"></span>
+            <span id="render-status-text">Rendering world map — 0%</span>
+        </div>
+    </div>
+
+    <div id="day-toast" class="day-toast" role="status" aria-live="polite" hidden></div>
+    <div id="notice-toast" class="notice-toast" role="status" aria-live="polite" hidden></div>
+</div>

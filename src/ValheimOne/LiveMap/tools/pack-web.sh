@@ -5,11 +5,16 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 LIVEMAP_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 OUTPUT="$LIVEMAP_DIR/Web/EmbeddedAssets.g.cs"
 
+"$SCRIPT_DIR/build-embed-assets.py"
+
 ASSET_NAMES=(
     "index.html"
+    "embed.html"
     "icons.js"
     "app.js"
+    "app.embed.js"
     "app.css"
+    "app.embed.css"
     "leaflet.js"
     "leaflet.css"
     "icon-192.png"
@@ -26,9 +31,12 @@ ASSET_NAMES=(
 
 ASSET_PATHS=(
     "$LIVEMAP_DIR/web/index.html"
+    "$LIVEMAP_DIR/web/embed.html"
     "$LIVEMAP_DIR/web/icons.js"
     "$LIVEMAP_DIR/web/app.js"
+    "$LIVEMAP_DIR/web/app.embed.js"
     "$LIVEMAP_DIR/web/app.css"
+    "$LIVEMAP_DIR/web/app.embed.css"
     "$LIVEMAP_DIR/web/vendor/leaflet.js"
     "$LIVEMAP_DIR/web/vendor/leaflet.css"
     "$LIVEMAP_DIR/web/icon-192.png"
@@ -73,7 +81,7 @@ trap cleanup EXIT
     for index in "${!ASSET_NAMES[@]}"; do
         asset_name="${ASSET_NAMES[$index]}"
         asset_path="${ASSET_PATHS[$index]}"
-        payload="$(gzip -9 -c < "$asset_path" | base64 -w 0)"
+        payload="$(gzip -9 -n -c < "$asset_path" | base64 -w 0)"
         payload_length="${#payload}"
         offset=0
 
