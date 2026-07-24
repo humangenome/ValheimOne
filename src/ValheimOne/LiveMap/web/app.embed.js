@@ -1,5 +1,214 @@
-(function () {
+(function (hostWindow) {
     "use strict";
+
+    var embedConfig = hostWindow.VALHEIMONE_EMBED;
+    var embedRoot = null;
+    if (embedConfig && typeof embedConfig.rootId === "string") {
+        embedRoot = document.getElementById(embedConfig.rootId);
+    }
+    var embedMode = Boolean(embedRoot);
+    var embedApiBase = embedMode && typeof embedConfig.apiBase === "string"
+        ? embedConfig.apiBase
+        : "";
+    var appRoot = embedRoot || document.body;
+    var styleRoot = embedRoot || document.documentElement;
+    var destroyed = false;
+    var embedPointerInside = false;
+    var embedTimeouts = new Set();
+    var embedIntervals = new Set();
+    var embedAnimationFrames = new Set();
+    var embedWindowListeners = [];
+    var appListeners = [];
+    var window = embedMode ? createEmbedWindow(hostWindow) : hostWindow;
+
+    function createEmbedWindow(source) {
+        var scopedWindow = {
+            EventSource: source.EventSource,
+            Image: source.Image,
+            ResizeObserver: source.ResizeObserver,
+            VO_ICONS: source.VO_ICONS,
+            VO_ICON_FOR_POI: source.VO_ICON_FOR_POI,
+            devicePixelRatio: source.devicePixelRatio,
+            history: source.history,
+            location: source.location,
+            addEventListener: function (type, listener, options) {
+                if (destroyed) {
+                    return;
+                }
+                source.addEventListener(type, listener, options);
+                embedWindowListeners.push({
+                    listener: listener,
+                    options: options,
+                    type: type
+                });
+            },
+            cancelAnimationFrame: function (frame) {
+                embedAnimationFrames.delete(frame);
+                source.cancelAnimationFrame(frame);
+            },
+            clearInterval: function (timer) {
+                embedIntervals.delete(timer);
+                source.clearInterval(timer);
+            },
+            clearTimeout: function (timer) {
+                embedTimeouts.delete(timer);
+                source.clearTimeout(timer);
+            },
+            getComputedStyle: function () {
+                return source.getComputedStyle.apply(source, arguments);
+            },
+            matchMedia: function () {
+                return source.matchMedia.apply(source, arguments);
+            },
+            requestAnimationFrame: function (callback) {
+                if (destroyed) {
+                    return 0;
+                }
+                var frame = source.requestAnimationFrame(function (timestamp) {
+                    embedAnimationFrames.delete(frame);
+                    callback(timestamp);
+                });
+                embedAnimationFrames.add(frame);
+                return frame;
+            },
+            setInterval: function (callback, delay) {
+                if (destroyed) {
+                    return 0;
+                }
+                var args = Array.prototype.slice.call(arguments, 2);
+                var timer = source.setInterval(function () {
+                    callback.apply(source, args);
+                }, delay);
+                embedIntervals.add(timer);
+                return timer;
+            },
+            setTimeout: function (callback, delay) {
+                if (destroyed) {
+                    return 0;
+                }
+                var args = Array.prototype.slice.call(arguments, 2);
+                var timer = source.setTimeout(function () {
+                    embedTimeouts.delete(timer);
+                    callback.apply(source, args);
+                }, delay);
+                embedTimeouts.add(timer);
+                return timer;
+            }
+        };
+        Object.defineProperty(scopedWindow, "localStorage", {
+            get: function () {
+                return source.localStorage;
+            }
+        });
+        Object.defineProperty(scopedWindow, "sessionStorage", {
+            get: function () {
+                return source.sessionStorage;
+            }
+        });
+        return scopedWindow;
+    }
+
+    function embedElementById(id) {
+        return embedMode ? embedRoot.querySelector("#" + id) : document.getElementById(id);
+    }
+
+    function addAppListener(target, type, listener, options) {
+        if (destroyed) {
+            return;
+        }
+        target.addEventListener(type, listener, options);
+        if (embedMode) {
+            appListeners = appListeners.filter(function (record) {
+                return !record.target.nodeType ||
+                    record.target === document ||
+                    record.target === embedRoot ||
+                    embedRoot.contains(record.target);
+            });
+            appListeners.push({
+                listener: listener,
+                options: options,
+                target: target,
+                type: type
+            });
+        }
+    }
+
+    function removeAppListener(target, type, listener, options) {
+        target.removeEventListener(type, listener, options);
+        if (!embedMode) {
+            return;
+        }
+        appListeners = appListeners.filter(function (record) {
+            return record.target !== target ||
+                record.type !== type ||
+                record.listener !== listener;
+        });
+    }
+
+    function keyboardEventAllowed(event) {
+        if (!embedMode) {
+            return true;
+        }
+        return embedPointerInside ||
+            eventInsideApp(event);
+    }
+
+    function eventInsideApp(event) {
+        return !embedMode ||
+            Boolean(event.target && embedRoot.contains(event.target));
+    }
+
+    function addKeyboardListener(listener, options) {
+        addAppListener(document, "keydown", function (event) {
+            if (keyboardEventAllowed(event)) {
+                listener(event);
+            }
+        }, options);
+    }
+
+    function appHash() {
+        return embedMode ? "" : window.location.hash;
+    }
+
+    function clearEmbedRuntime() {
+        embedTimeouts.forEach(function (timer) {
+            hostWindow.clearTimeout(timer);
+        });
+        embedTimeouts.clear();
+        embedIntervals.forEach(function (timer) {
+            hostWindow.clearInterval(timer);
+        });
+        embedIntervals.clear();
+        embedAnimationFrames.forEach(function (frame) {
+            hostWindow.cancelAnimationFrame(frame);
+        });
+        embedAnimationFrames.clear();
+        appListeners.forEach(function (record) {
+            record.target.removeEventListener(
+                record.type,
+                record.listener,
+                record.options
+            );
+        });
+        appListeners = [];
+        embedWindowListeners.forEach(function (record) {
+            hostWindow.removeEventListener(
+                record.type,
+                record.listener,
+                record.options
+            );
+        });
+        embedWindowListeners = [];
+    }
+
+    if (embedMode) {
+        addAppListener(embedRoot, "mouseenter", function () {
+            embedPointerInside = true;
+        });
+        addAppListener(embedRoot, "mouseleave", function () {
+            embedPointerInside = false;
+        });
+    }
 
     var POLL_INTERVAL_MS = 2000;
     var POLL_FAILURE_LIMIT = 3;
@@ -464,7 +673,7 @@
     };
 
     var query = new URLSearchParams(window.location.search);
-    var token = query.get("token") || "";
+    var token = embedMode ? "" : query.get("token") || "";
     var failedFeeds = new Set();
     var consecutiveStatusFailures = 0;
     var pollFailureCounts = Object.create(null);
@@ -608,7 +817,7 @@
     var bossProgressionState = "";
     var bossJumpServedIndices = new Map();
     var storageWriteWarningShown = false;
-    var noticeToastElement = document.getElementById("notice-toast");
+    var noticeToastElement = embedElementById("notice-toast");
     var latestWind = null;
     var tintOverlay = null;
     var regionLayer = null;
@@ -684,7 +893,7 @@
     var heatmapRequestPending = false;
     var heatmapRequestSequence = 0;
     var latestHeatmap = null;
-    var initialCodexToken = codexTokenFromHash(window.location.hash);
+    var initialCodexToken = codexTokenFromHash(appHash());
     var requestedTab = initialCodexToken !== null ? "codex" : loadRequestedTab();
     var activeTab = "map";
     var consoleAvailable = false;
@@ -744,147 +953,150 @@
     };
 
     var elements = {
-        bossProgression: document.getElementById("boss-progression"),
-        bannedCount: document.getElementById("console-banned-count"),
-        bannedList: document.getElementById("console-banned-list"),
-        chatContent: document.getElementById("chat-content"),
-        chatForm: document.getElementById("chat-form"),
-        chatInput: document.getElementById("chat-input"),
-        chatList: document.getElementById("chat-list"),
-        chatNote: document.getElementById("chat-note"),
-        chatPanel: document.getElementById("chat-panel"),
-        chatSend: document.getElementById("chat-send"),
-        chatSendNotice: document.getElementById("chat-send-notice"),
-        chatToggle: document.getElementById("chat-toggle"),
-        commandForm: document.getElementById("console-command-form"),
-        commandInput: document.getElementById("console-command"),
-        commandReference: document.getElementById("console-command-reference"),
-        commandReferenceBody: document.getElementById("console-command-reference-body"),
-        commandReferenceClose: document.getElementById("console-command-reference-close"),
-        commandsToggle: document.getElementById("console-commands-toggle"),
-        cinemaClock: document.getElementById("cinema-clock"),
-        cinemaDay: document.getElementById("cinema-day"),
-        cinemaExit: document.getElementById("cinema-exit"),
-        cinemaHud: document.getElementById("cinema-hud"),
-        cinemaModeChip: document.getElementById("cinema-mode-chip"),
-        cinemaPlayerBiome: document.getElementById("cinema-player-biome"),
-        cinemaPlayerCard: document.getElementById("cinema-player-card"),
-        cinemaPlayerHeading: document.getElementById("cinema-player-heading"),
-        cinemaPlayerName: document.getElementById("cinema-player-name"),
-        cinemaPlayerSession: document.getElementById("cinema-player-session"),
-        cinemaPlayerSpeed: document.getElementById("cinema-player-speed"),
-        cinemaSecondaryChip: document.getElementById("cinema-secondary-chip"),
-        cinemaServerName: document.getElementById("cinema-server-name"),
-        cinemaStaleness: document.getElementById("cinema-staleness"),
-        cinemaStayTarget: document.getElementById("cinema-stay-target"),
-        cinemaWind: document.getElementById("cinema-wind"),
-        cinemaWindLabel: document.getElementById("cinema-wind-label"),
-        confirmBackdrop: document.getElementById("console-confirm-backdrop"),
-        confirmCancel: document.getElementById("console-confirm-cancel"),
-        confirmMessage: document.getElementById("console-confirm-message"),
-        confirmSubmit: document.getElementById("console-confirm-submit"),
-        codexCategory: document.getElementById("codex-category"),
-        codexCount: document.getElementById("codex-count"),
-        codexList: document.getElementById("codex-list"),
-        codexPane: document.getElementById("codex-pane"),
-        codexScroll: document.getElementById("codex-scroll"),
-        codexSearch: document.getElementById("codex-search"),
-        codexState: document.getElementById("codex-state"),
-        codexTab: document.getElementById("codex-tab"),
-        codexVersion: document.getElementById("codex-version"),
-        consoleLog: document.getElementById("console-log"),
-        consolePane: document.getElementById("console-pane"),
-        consoleResume: document.getElementById("console-resume"),
-        consoleTab: document.getElementById("console-tab"),
-        dayToast: document.getElementById("day-toast"),
-        dayNumber: document.getElementById("day-number"),
-        dungeonBackdrop: document.getElementById("dungeon-backdrop"),
-        dungeonCanvas: document.getElementById("dungeon-canvas"),
-        dungeonCanvasShell: document.getElementById("dungeon-canvas-shell"),
-        dungeonClose: document.getElementById("dungeon-close"),
-        dungeonElevation: document.getElementById("dungeon-elevation"),
-        dungeonEmpty: document.getElementById("dungeon-empty"),
-        dungeonEmptyCopy: document.getElementById("dungeon-empty-copy"),
-        dungeonEntranceInfo: document.getElementById("dungeon-entrance-info"),
-        dungeonError: document.getElementById("dungeon-error"),
-        dungeonGenerated: document.getElementById("dungeon-generated"),
-        dungeonLiveStatus: document.getElementById("dungeon-live-status"),
-        dungeonLoading: document.getElementById("dungeon-loading"),
-        dungeonRooms: document.getElementById("dungeon-rooms"),
-        dungeonScale: document.getElementById("dungeon-scale"),
-        dungeonTitle: document.getElementById("dungeon-title"),
-        dungeonType: document.getElementById("dungeon-type"),
-        exploredChip: document.getElementById("explored-chip"),
-        exploredLabel: document.getElementById("sidebar-explored-label"),
-        joinCode: document.getElementById("join-code"),
-        joinCodeCopy: document.getElementById("join-code-copy"),
-        joinCodeLine: document.getElementById("join-code-line"),
-        mapPane: document.getElementById("map"),
-        metricDay: document.getElementById("map-metric-day"),
-        metricDayItem: document.getElementById("map-metric-day-item"),
-        metricFrame: document.getElementById("map-metric-frame"),
-        metricFrameItem: document.getElementById("map-metric-frame-item"),
-        metricStatus: document.getElementById("map-metric-status"),
-        metricUptime: document.getElementById("map-metric-uptime"),
-        metricUptimeItem: document.getElementById("map-metric-uptime-item"),
-        metricZdo: document.getElementById("map-metric-zdo"),
-        metricZdoItem: document.getElementById("map-metric-zdo-item"),
-        mapTab: document.getElementById("map-tab"),
-        mapStatus: document.getElementById("render-status"),
-        mapStatusText: document.getElementById("render-status-text"),
-        leaderboardContent: document.getElementById("leaderboard-content"),
-        leaderboardList: document.getElementById("leaderboard-list"),
-        leaderboardNote: document.getElementById("leaderboard-note"),
-        leaderboardPanel: document.getElementById("leaderboard-panel"),
-        leaderboardTable: document.getElementById("leaderboard-table"),
-        leaderboardToggle: document.getElementById("leaderboard-toggle"),
-        offlineBadge: document.getElementById("offline-badge"),
-        playerCount: document.getElementById("player-count"),
-        playerList: document.getElementById("player-list"),
-        publicViewBadge: document.getElementById("public-view-badge"),
-        raidBadge: document.getElementById("raid-badge"),
-        saveButton: document.getElementById("console-save"),
-        savedChip: document.getElementById("saved-chip"),
-        savedLabel: document.getElementById("sidebar-saved-label"),
-        saveStatus: document.getElementById("console-save-status"),
-        sagaChevron: document.getElementById("saga-chevron"),
-        sagaContent: document.getElementById("saga-content"),
-        sagaList: document.getElementById("saga-list"),
-        sagaNote: document.getElementById("saga-note"),
-        sagaPanel: document.getElementById("saga-panel"),
-        sagaToggle: document.getElementById("saga-toggle"),
-        serverName: document.getElementById("server-name"),
-        sidebarState: document.getElementById("sidebar-state"),
-        sidebarWindNeedle: document.getElementById("sidebar-wind-needle"),
-        sidebarWindLabel: document.getElementById("sidebar-wind-label"),
-        skyIndicator: document.getElementById("sky-indicator"),
-        statFrameAvg: document.getElementById("console-stat-frame-avg"),
-        statFrameMax: document.getElementById("console-stat-frame-max"),
-        statHeap: document.getElementById("console-stat-heap"),
-        statPlayers: document.getElementById("console-stat-players"),
-        statUptime: document.getElementById("console-stat-uptime"),
-        statZdo: document.getElementById("console-stat-zdo"),
-        statusChips: document.getElementById("status-chips"),
-        suggestionList: document.getElementById("console-suggestions"),
-        tabList: document.getElementById("view-tabs"),
-        consolePlayerCount: document.getElementById("console-player-count"),
-        consolePlayerList: document.getElementById("console-player-list"),
-        worldClock: document.getElementById("world-clock"),
-        worldName: document.getElementById("world-name"),
-        windChip: document.getElementById("wind-chip"),
-        watchButton: document.getElementById("watch-button")
+        bossProgression: embedElementById("boss-progression"),
+        bannedCount: embedElementById("console-banned-count"),
+        bannedList: embedElementById("console-banned-list"),
+        chatContent: embedElementById("chat-content"),
+        chatForm: embedElementById("chat-form"),
+        chatInput: embedElementById("chat-input"),
+        chatList: embedElementById("chat-list"),
+        chatNote: embedElementById("chat-note"),
+        chatPanel: embedElementById("chat-panel"),
+        chatSend: embedElementById("chat-send"),
+        chatSendNotice: embedElementById("chat-send-notice"),
+        chatToggle: embedElementById("chat-toggle"),
+        commandForm: embedElementById("console-command-form"),
+        commandInput: embedElementById("console-command"),
+        commandReference: embedElementById("console-command-reference"),
+        commandReferenceBody: embedElementById("console-command-reference-body"),
+        commandReferenceClose: embedElementById("console-command-reference-close"),
+        commandsToggle: embedElementById("console-commands-toggle"),
+        cinemaClock: embedElementById("cinema-clock"),
+        cinemaDay: embedElementById("cinema-day"),
+        cinemaExit: embedElementById("cinema-exit"),
+        cinemaHud: embedElementById("cinema-hud"),
+        cinemaModeChip: embedElementById("cinema-mode-chip"),
+        cinemaPlayerBiome: embedElementById("cinema-player-biome"),
+        cinemaPlayerCard: embedElementById("cinema-player-card"),
+        cinemaPlayerHeading: embedElementById("cinema-player-heading"),
+        cinemaPlayerName: embedElementById("cinema-player-name"),
+        cinemaPlayerSession: embedElementById("cinema-player-session"),
+        cinemaPlayerSpeed: embedElementById("cinema-player-speed"),
+        cinemaSecondaryChip: embedElementById("cinema-secondary-chip"),
+        cinemaServerName: embedElementById("cinema-server-name"),
+        cinemaStaleness: embedElementById("cinema-staleness"),
+        cinemaStayTarget: embedElementById("cinema-stay-target"),
+        cinemaWind: embedElementById("cinema-wind"),
+        cinemaWindLabel: embedElementById("cinema-wind-label"),
+        confirmBackdrop: embedElementById("console-confirm-backdrop"),
+        confirmCancel: embedElementById("console-confirm-cancel"),
+        confirmMessage: embedElementById("console-confirm-message"),
+        confirmSubmit: embedElementById("console-confirm-submit"),
+        codexCategory: embedElementById("codex-category"),
+        codexCount: embedElementById("codex-count"),
+        codexList: embedElementById("codex-list"),
+        codexPane: embedElementById("codex-pane"),
+        codexScroll: embedElementById("codex-scroll"),
+        codexSearch: embedElementById("codex-search"),
+        codexState: embedElementById("codex-state"),
+        codexTab: embedElementById("codex-tab"),
+        codexVersion: embedElementById("codex-version"),
+        consoleLog: embedElementById("console-log"),
+        consolePane: embedElementById("console-pane"),
+        consoleResume: embedElementById("console-resume"),
+        consoleTab: embedElementById("console-tab"),
+        dayToast: embedElementById("day-toast"),
+        dayNumber: embedElementById("day-number"),
+        dungeonBackdrop: embedElementById("dungeon-backdrop"),
+        dungeonCanvas: embedElementById("dungeon-canvas"),
+        dungeonCanvasShell: embedElementById("dungeon-canvas-shell"),
+        dungeonClose: embedElementById("dungeon-close"),
+        dungeonElevation: embedElementById("dungeon-elevation"),
+        dungeonEmpty: embedElementById("dungeon-empty"),
+        dungeonEmptyCopy: embedElementById("dungeon-empty-copy"),
+        dungeonEntranceInfo: embedElementById("dungeon-entrance-info"),
+        dungeonError: embedElementById("dungeon-error"),
+        dungeonGenerated: embedElementById("dungeon-generated"),
+        dungeonLiveStatus: embedElementById("dungeon-live-status"),
+        dungeonLoading: embedElementById("dungeon-loading"),
+        dungeonRooms: embedElementById("dungeon-rooms"),
+        dungeonScale: embedElementById("dungeon-scale"),
+        dungeonTitle: embedElementById("dungeon-title"),
+        dungeonType: embedElementById("dungeon-type"),
+        exploredChip: embedElementById("explored-chip"),
+        exploredLabel: embedElementById("sidebar-explored-label"),
+        joinCode: embedElementById("join-code"),
+        joinCodeCopy: embedElementById("join-code-copy"),
+        joinCodeLine: embedElementById("join-code-line"),
+        mapPane: embedElementById("map"),
+        metricDay: embedElementById("map-metric-day"),
+        metricDayItem: embedElementById("map-metric-day-item"),
+        metricFrame: embedElementById("map-metric-frame"),
+        metricFrameItem: embedElementById("map-metric-frame-item"),
+        metricStatus: embedElementById("map-metric-status"),
+        metricUptime: embedElementById("map-metric-uptime"),
+        metricUptimeItem: embedElementById("map-metric-uptime-item"),
+        metricZdo: embedElementById("map-metric-zdo"),
+        metricZdoItem: embedElementById("map-metric-zdo-item"),
+        mapTab: embedElementById("map-tab"),
+        mapStatus: embedElementById("render-status"),
+        mapStatusText: embedElementById("render-status-text"),
+        leaderboardContent: embedElementById("leaderboard-content"),
+        leaderboardList: embedElementById("leaderboard-list"),
+        leaderboardNote: embedElementById("leaderboard-note"),
+        leaderboardPanel: embedElementById("leaderboard-panel"),
+        leaderboardTable: embedElementById("leaderboard-table"),
+        leaderboardToggle: embedElementById("leaderboard-toggle"),
+        offlineBadge: embedElementById("offline-badge"),
+        playerCount: embedElementById("player-count"),
+        playerList: embedElementById("player-list"),
+        publicViewBadge: embedElementById("public-view-badge"),
+        raidBadge: embedElementById("raid-badge"),
+        saveButton: embedElementById("console-save"),
+        savedChip: embedElementById("saved-chip"),
+        savedLabel: embedElementById("sidebar-saved-label"),
+        saveStatus: embedElementById("console-save-status"),
+        sagaChevron: embedElementById("saga-chevron"),
+        sagaContent: embedElementById("saga-content"),
+        sagaList: embedElementById("saga-list"),
+        sagaNote: embedElementById("saga-note"),
+        sagaPanel: embedElementById("saga-panel"),
+        sagaToggle: embedElementById("saga-toggle"),
+        serverName: embedElementById("server-name"),
+        sidebarState: embedElementById("sidebar-state"),
+        sidebarWindNeedle: embedElementById("sidebar-wind-needle"),
+        sidebarWindLabel: embedElementById("sidebar-wind-label"),
+        skyIndicator: embedElementById("sky-indicator"),
+        statFrameAvg: embedElementById("console-stat-frame-avg"),
+        statFrameMax: embedElementById("console-stat-frame-max"),
+        statHeap: embedElementById("console-stat-heap"),
+        statPlayers: embedElementById("console-stat-players"),
+        statUptime: embedElementById("console-stat-uptime"),
+        statZdo: embedElementById("console-stat-zdo"),
+        statusChips: embedElementById("status-chips"),
+        suggestionList: embedElementById("console-suggestions"),
+        tabList: embedElementById("view-tabs"),
+        consolePlayerCount: embedElementById("console-player-count"),
+        consolePlayerList: embedElementById("console-player-list"),
+        worldClock: embedElementById("world-clock"),
+        worldName: embedElementById("world-name"),
+        windChip: embedElementById("wind-chip"),
+        watchButton: embedElementById("watch-button")
     };
 
     function hasLiveAccess() {
         return currentView !== "public";
     }
 
-    function authorizedUrl(path) {
-        if (!token) {
-            return path;
+    function authorizedUrl(path, includeToken) {
+        var url = embedMode
+            ? embedApiBase + path.replace(/^\/+/, "")
+            : path;
+        if (!token || includeToken === false) {
+            return url;
         }
 
-        return path + (path.indexOf("?") === -1 ? "?" : "&") +
+        return url + (url.indexOf("?") === -1 ? "?" : "&") +
             "token=" + encodeURIComponent(token);
     }
 
@@ -1183,10 +1395,10 @@
         elements.consolePane.hidden = !showConsole;
         elements.codexPane.hidden = !showCodex;
         elements.mapPane.setAttribute("aria-hidden", String(showConsole || showCodex));
-        document.body.classList.toggle("is-console-active", showConsole);
-        document.body.classList.toggle("is-codex-active", showCodex);
+        appRoot.classList.toggle("is-console-active", showConsole);
+        appRoot.classList.toggle("is-codex-active", showCodex);
         if (!showCodex && (priorTab === "codex" ||
-            codexTokenFromHash(window.location.hash) !== null)) {
+            codexTokenFromHash(appHash()) !== null)) {
             restoreMapHash();
         }
 
@@ -1260,6 +1472,9 @@
     }
 
     function writeCodexHash(itemToken) {
+        if (embedMode) {
+            return;
+        }
         var hash = "#codex";
         if (itemToken) {
             hash += "/" + encodeURIComponent(itemToken);
@@ -1275,7 +1490,7 @@
     }
 
     function restoreMapHash() {
-        if (codexTokenFromHash(window.location.hash) === null) {
+        if (embedMode || codexTokenFromHash(appHash()) === null) {
             return;
         }
         window.history.replaceState(
@@ -1445,7 +1660,9 @@
         setCodexLoadState("loading");
         catalogPromise = (async function () {
             try {
-                var response = await fetch("api/catalog", { credentials: "same-origin" });
+                var response = await fetch(authorizedUrl("api/catalog", false), {
+                    credentials: "same-origin"
+                });
                 if (!response.ok) {
                     throw new Error("HTTP " + response.status);
                 }
@@ -1887,7 +2104,7 @@
     }
 
     function handleCodexHashChange() {
-        var hashToken = codexTokenFromHash(window.location.hash);
+        var hashToken = codexTokenFromHash(appHash());
         if (hashToken === null) {
             if (activeTab === "codex") {
                 requestedTab = "map";
@@ -1906,22 +2123,22 @@
     }
 
     function bindCodexEvents() {
-        elements.codexSearch.addEventListener("input", function () {
+        addAppListener(elements.codexSearch, "input", function () {
             window.clearTimeout(codexSearchTimer);
             codexSearchTimer = window.setTimeout(function () {
                 codexSearchTimer = 0;
                 applyCodexFilters(true);
             }, CODEX_SEARCH_DEBOUNCE_MS);
         });
-        elements.codexCategory.addEventListener("change", function () {
+        addAppListener(elements.codexCategory, "change", function () {
             window.clearTimeout(codexSearchTimer);
             codexSearchTimer = 0;
             applyCodexFilters(true);
         });
-        elements.codexScroll.addEventListener("scroll", function () {
+        addAppListener(elements.codexScroll, "scroll", function () {
             renderCodexWindow(false);
         });
-        elements.codexList.addEventListener("click", function (event) {
+        addAppListener(elements.codexList, "click", function (event) {
             var jumpLink = event.target.closest("[data-codex-token]");
             if (jumpLink) {
                 event.preventDefault();
@@ -1944,7 +2161,7 @@
                 );
             }
         });
-        elements.codexState.addEventListener("click", function (event) {
+        addAppListener(elements.codexState, "click", function (event) {
             if (event.target.closest("[data-codex-retry]")) {
                 loadCatalog();
             }
@@ -1955,7 +2172,9 @@
                 renderCodexWindow(true);
             }
         });
-        window.addEventListener("hashchange", handleCodexHashChange);
+        if (!embedMode) {
+            window.addEventListener("hashchange", handleCodexHashChange);
+        }
     }
 
     async function fetchConsoleJson(path, options) {
@@ -2341,10 +2560,10 @@
             }
         }
 
-        option.addEventListener("mouseenter", function () {
+        addAppListener(option, "mouseenter", function () {
             setConsoleSuggestionIndex(index);
         });
-        option.addEventListener("mousedown", function (event) {
+        addAppListener(option, "mousedown", function (event) {
             event.preventDefault();
             completeSuggestion(index);
         });
@@ -3140,7 +3359,7 @@
         button.className = "console-list-action" + (className ? " " + className : "");
         button.textContent = label;
         button.disabled = disabled === true;
-        button.addEventListener("click", callback);
+        addAppListener(button, "click", callback);
         return button;
     }
 
@@ -3435,16 +3654,16 @@
     }
 
     function bindConsoleEvents() {
-        elements.mapTab.addEventListener("click", function () {
+        addAppListener(elements.mapTab, "click", function () {
             setActiveTab("map", true);
         });
-        elements.consoleTab.addEventListener("click", function () {
+        addAppListener(elements.consoleTab, "click", function () {
             setActiveTab("console", true);
         });
-        elements.codexTab.addEventListener("click", function () {
+        addAppListener(elements.codexTab, "click", function () {
             setActiveTab("codex", true);
         });
-        elements.tabList.addEventListener("keydown", function (event) {
+        addAppListener(elements.tabList, "keydown", function (event) {
             if (["ArrowLeft", "ArrowRight", "Home", "End"].indexOf(event.key) === -1) {
                 return;
             }
@@ -3471,7 +3690,7 @@
                 true
             );
         });
-        elements.consoleLog.addEventListener("scroll", function () {
+        addAppListener(elements.consoleLog, "scroll", function () {
             var distanceFromBottom = elements.consoleLog.scrollHeight -
                 elements.consoleLog.scrollTop - elements.consoleLog.clientHeight;
             consoleFollowLog = distanceFromBottom <= 36;
@@ -3479,26 +3698,26 @@
                 elements.consoleResume.hidden = true;
             }
         });
-        elements.consoleResume.addEventListener("click", function () {
+        addAppListener(elements.consoleResume, "click", function () {
             consoleFollowLog = true;
             elements.consoleLog.scrollTop = elements.consoleLog.scrollHeight;
             elements.consoleResume.hidden = true;
         });
-        elements.commandsToggle.addEventListener("click", toggleCommandReference);
-        elements.commandReferenceClose.addEventListener("click", function () {
+        addAppListener(elements.commandsToggle, "click", toggleCommandReference);
+        addAppListener(elements.commandReferenceClose, "click", function () {
             setCommandReferenceOpen(false);
             elements.commandsToggle.focus();
         });
-        elements.commandForm.addEventListener("submit", function (event) {
+        addAppListener(elements.commandForm, "submit", function (event) {
             event.preventDefault();
             submitConsoleCommand();
         });
-        elements.commandInput.addEventListener("input", function () {
+        addAppListener(elements.commandInput, "input", function () {
             consoleSuggestionClosed = false;
             commandHistoryIndex = commandHistory.length;
             renderCommandSuggestions();
         });
-        elements.commandInput.addEventListener("keydown", function (event) {
+        addAppListener(elements.commandInput, "keydown", function (event) {
             if (event.key === "ArrowUp") {
                 event.preventDefault();
                 if (!elements.suggestionList.hidden && consoleSuggestions.length > 0) {
@@ -3522,15 +3741,15 @@
                 closeSuggestions();
             }
         });
-        elements.saveButton.addEventListener("click", saveWorld);
-        elements.confirmCancel.addEventListener("click", closeConfirmDialog);
-        elements.confirmSubmit.addEventListener("click", runConfirmedAction);
-        elements.confirmBackdrop.addEventListener("click", function (event) {
+        addAppListener(elements.saveButton, "click", saveWorld);
+        addAppListener(elements.confirmCancel, "click", closeConfirmDialog);
+        addAppListener(elements.confirmSubmit, "click", runConfirmedAction);
+        addAppListener(elements.confirmBackdrop, "click", function (event) {
             if (event.target === elements.confirmBackdrop) {
                 closeConfirmDialog();
             }
         });
-        document.addEventListener("keydown", function (event) {
+        addKeyboardListener(function (event) {
             if (event.key === "Escape" && !elements.confirmBackdrop.hidden) {
                 closeConfirmDialog();
             } else if (event.key === "Escape" && !elements.commandReference.hidden) {
@@ -4127,7 +4346,7 @@
             textarea.setAttribute("readonly", "");
             textarea.style.position = "fixed";
             textarea.style.opacity = "0";
-            document.body.appendChild(textarea);
+            appRoot.appendChild(textarea);
             textarea.select();
             var copied = false;
             try {
@@ -4135,7 +4354,7 @@
             } catch (error) {
                 copied = false;
             }
-            document.body.removeChild(textarea);
+            appRoot.removeChild(textarea);
             if (activeElement && typeof activeElement.focus === "function") {
                 activeElement.focus();
             }
@@ -4191,7 +4410,10 @@
     }
 
     function bindPopupDocumentEvents() {
-        document.addEventListener("click", function (event) {
+        addAppListener(document, "click", function (event) {
+            if (!eventInsideApp(event)) {
+                return;
+            }
             var target = event.target;
             if (!target || typeof target.closest !== "function") {
                 return;
@@ -4631,7 +4853,7 @@
     }
 
     function shipHeadingColor() {
-        var color = window.getComputedStyle(document.documentElement)
+        var color = window.getComputedStyle(styleRoot)
             .getPropertyValue("--accent").trim();
         return color || "#d9b168";
     }
@@ -4754,7 +4976,7 @@
 
     function trailStrokeColor(kind) {
         var token = kind === "player" ? "--accent" : "--frost";
-        var color = window.getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+        var color = window.getComputedStyle(styleRoot).getPropertyValue(token).trim();
         return color || (kind === "player" ? "#d9b168" : "#7eb1d6");
     }
 
@@ -4924,7 +5146,7 @@
         followPill.type = "button";
         followPill.className = "follow-pill";
         followPill.hidden = true;
-        followPill.addEventListener("click", clearFollow);
+        addAppListener(followPill, "click", clearFollow);
         elements.mapPane.appendChild(followPill);
         L.DomEvent.disableClickPropagation(followPill);
     }
@@ -5458,11 +5680,11 @@
         });
         var mapContainer = map.getContainer();
         ["pointerdown", "touchstart", "wheel"].forEach(function (eventName) {
-            mapContainer.addEventListener(eventName, cinemaPauseAmbientForUser, {
+            addAppListener(mapContainer, eventName, cinemaPauseAmbientForUser, {
                 passive: true
             });
         });
-        mapContainer.addEventListener("keydown", function (event) {
+        addAppListener(mapContainer, "keydown", function (event) {
             if (["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp", "+", "-"].indexOf(
                 event.key
             ) !== -1) {
@@ -5615,7 +5837,7 @@
     }
 
     function themeRgb(variableName) {
-        var value = window.getComputedStyle(document.documentElement)
+        var value = window.getComputedStyle(styleRoot)
             .getPropertyValue(variableName).trim();
         var hex = value.match(/^#([0-9a-f]{6})$/i);
         if (hex) {
@@ -6005,13 +6227,13 @@
                 compassWindNeedle = button.querySelector(".compass-wind-needle");
                 renderWindStatus();
 
-                button.addEventListener("click", function () {
+                addAppListener(button, "click", function () {
                     window.clearTimeout(clickTimer);
                     clickTimer = window.setTimeout(function () {
                         map.flyTo(worldToLatLng(0, 0), map.getZoom(), { duration: 0.45 });
                     }, 250);
                 });
-                button.addEventListener("dblclick", function (event) {
+                addAppListener(button, "dblclick", function (event) {
                     event.preventDefault();
                     window.clearTimeout(clickTimer);
                     clickTimer = 0;
@@ -6188,7 +6410,7 @@
             name.textContent = webPinIconLabel(icon);
             button.appendChild(mark);
             button.appendChild(name);
-            button.addEventListener("click", function () {
+            addAppListener(button, "click", function () {
                 setWebPinDialogIcon(icon);
             });
             iconGrid.appendChild(button);
@@ -6237,16 +6459,16 @@
         form.appendChild(actions);
         dialog.appendChild(form);
         backdrop.appendChild(dialog);
-        document.body.appendChild(backdrop);
+        appRoot.appendChild(backdrop);
 
-        cancel.addEventListener("click", closeWebPinDialog);
-        backdrop.addEventListener("click", function (event) {
+        addAppListener(cancel, "click", closeWebPinDialog);
+        addAppListener(backdrop, "click", function (event) {
             if (event.target === backdrop) {
                 closeWebPinDialog();
             }
         });
-        form.addEventListener("submit", submitWebPinDialog);
-        document.addEventListener("keydown", function (event) {
+        addAppListener(form, "submit", submitWebPinDialog);
+        addKeyboardListener(function (event) {
             if (event.key === "Escape" && webPinDialog && !webPinDialog.hidden) {
                 event.preventDefault();
                 closeWebPinDialog();
@@ -6400,7 +6622,7 @@
 
     function disarmWebPinPlacement() {
         webPinPlacementArmed = false;
-        document.body.classList.remove("is-dropping-webpin");
+        appRoot.classList.remove("is-dropping-webpin");
         if (!webPinButton) {
             return;
         }
@@ -6424,7 +6646,7 @@
         }
         dismissMapContextMenu();
         webPinPlacementArmed = true;
-        document.body.classList.add("is-dropping-webpin");
+        appRoot.classList.add("is-dropping-webpin");
         webPinButton.classList.add("is-active");
         webPinButton.title = "Click the map to drop a pin · Esc cancels";
         webPinButton.setAttribute("aria-label", "Click the map to drop a pin; Escape cancels");
@@ -6491,7 +6713,7 @@
             return;
         }
         measureActive = false;
-        document.body.classList.remove("is-measuring");
+        appRoot.classList.remove("is-measuring");
         restoreMeasureDoubleClickZoom();
         updateMeasureHud();
     }
@@ -6502,7 +6724,7 @@
         measurePoints = [];
         measureLine = null;
         measureVertexMarkers = [];
-        document.body.classList.remove("is-measuring");
+        appRoot.classList.remove("is-measuring");
         restoreMeasureDoubleClickZoom();
         if (measureLayer) {
             measureLayer.clearLayers();
@@ -6533,7 +6755,7 @@
         if (measureDoubleClickZoomWasEnabled) {
             map.doubleClickZoom.disable();
         }
-        document.body.classList.add("is-measuring");
+        appRoot.classList.add("is-measuring");
         measureButton.classList.add("is-active");
         measureButton.title = "Clear measurement";
         measureButton.setAttribute("aria-label", "Clear measurement");
@@ -6553,7 +6775,7 @@
                 measureButton.setAttribute("aria-pressed", "false");
                 measureButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
                     '<path d="M5 18 18 5l2 2L7 20zM9 15l2 2m1-5 2 2m1-5 2 2" /></svg>';
-                measureButton.addEventListener("click", function () {
+                addAppListener(measureButton, "click", function () {
                     if (measureModeEnabled) {
                         clearMeasurement();
                     } else {
@@ -6570,7 +6792,7 @@
                 webPinButton.title = "Drop a web pin";
                 webPinButton.setAttribute("aria-label", "Drop a web pin");
                 webPinButton.setAttribute("aria-pressed", "false");
-                webPinButton.addEventListener("click", function () {
+                addAppListener(webPinButton, "click", function () {
                     if (webPinPlacementArmed) {
                         disarmWebPinPlacement();
                     } else {
@@ -6624,7 +6846,7 @@
             }
             finishMeasurement();
         });
-        document.addEventListener("keydown", function (event) {
+        addKeyboardListener(function (event) {
             if (event.key === "Escape") {
                 if (webPinPlacementArmed) {
                     event.preventDefault();
@@ -6676,7 +6898,7 @@
 
     function disarmShipTow() {
         towState = null;
-        document.body.classList.remove("is-towing");
+        appRoot.classList.remove("is-towing");
         if (towBanner) {
             towBanner.hidden = true;
             towBanner.textContent = "";
@@ -6702,7 +6924,7 @@
             x: entity.x,
             z: entity.z
         };
-        document.body.classList.add("is-towing");
+        appRoot.classList.add("is-towing");
         var banner = ensureTowBanner();
         banner.textContent = "Click map to tow " + shipName;
         banner.hidden = false;
@@ -6802,7 +7024,7 @@
                 openShipTowConfirm(state, world);
             }
         });
-        document.addEventListener("keydown", function (event) {
+        addKeyboardListener(function (event) {
             if (event.key === "Escape" && towState) {
                 event.preventDefault();
                 disarmShipTow();
@@ -6812,7 +7034,7 @@
 
     function disarmMapPing() {
         pingArmed = false;
-        document.body.classList.remove("is-pinging");
+        appRoot.classList.remove("is-pinging");
         if (!pingButton) {
             return;
         }
@@ -6835,7 +7057,7 @@
             map.closePopup();
         }
         pingArmed = true;
-        document.body.classList.add("is-pinging");
+        appRoot.classList.add("is-pinging");
         pingButton.classList.add("is-active");
         pingButton.title = "Click the map to send ping · Esc cancels";
         pingButton.setAttribute("aria-label", "Click the map to send ping; Escape cancels");
@@ -6896,7 +7118,7 @@
                     '<circle cx="12" cy="12" r="2"></circle>' +
                     '<circle cx="12" cy="12" r="6"></circle>' +
                     '<path d="M12 2v3m0 14v3M2 12h3m14 0h3"></path></svg>';
-                pingButton.addEventListener("click", function () {
+                addAppListener(pingButton, "click", function () {
                     if (pingArmed) {
                         disarmMapPing();
                     } else {
@@ -6923,7 +7145,7 @@
                 sendMapPing(world);
             }
         });
-        document.addEventListener("keydown", function (event) {
+        addKeyboardListener(function (event) {
             if (event.key === "Escape" && pingArmed) {
                 event.preventDefault();
                 disarmMapPing();
@@ -7374,7 +7596,7 @@
                 coordinateChip.title = "Copy world coordinates";
                 coordinateChip.setAttribute("aria-label", "Copy world coordinates");
                 coordinateChip.hidden = true;
-                coordinateChip.addEventListener("click", function () {
+                addAppListener(coordinateChip, "click", function () {
                     copyFromButton(coordinateChip);
                 });
                 L.DomEvent.disableClickPropagation(coordinateChip);
@@ -7396,7 +7618,7 @@
             map.on("mousemove", function (event) {
                 updateCoordinateChip(event.latlng);
             });
-            map.getContainer().addEventListener("mouseleave", function () {
+            addAppListener(map.getContainer(), "mouseleave", function () {
                 coordinateChip.hidden = true;
             });
         }
@@ -7421,7 +7643,7 @@
         mapContextMenu.setAttribute("role", "menu");
         mapContextMenu.setAttribute("aria-label", "Map actions");
         mapContextMenu.hidden = true;
-        document.body.appendChild(mapContextMenu);
+        appRoot.appendChild(mapContextMenu);
         return mapContextMenu;
     }
 
@@ -7431,7 +7653,7 @@
         item.className = "vo-context-item";
         item.setAttribute("role", "menuitem");
         item.textContent = label;
-        item.addEventListener("click", function (event) {
+        addAppListener(item, "click", function (event) {
             event.preventDefault();
             event.stopPropagation();
             action(item);
@@ -7441,8 +7663,8 @@
 
     function positionMapContextMenu(menu, clientX, clientY) {
         var margin = 8;
-        var viewportWidth = document.documentElement.clientWidth;
-        var viewportHeight = document.documentElement.clientHeight;
+        var viewportWidth = styleRoot.clientWidth;
+        var viewportHeight = styleRoot.clientHeight;
         menu.style.left = "0px";
         menu.style.top = "0px";
         menu.style.visibility = "hidden";
@@ -7516,7 +7738,7 @@
             return;
         }
 
-        map.getContainer().addEventListener("contextmenu", function (event) {
+        addAppListener(map.getContainer(), "contextmenu", function (event) {
             if (event._simulated ||
                 (event.sourceCapabilities && event.sourceCapabilities.firesTouchEvents)) {
                 return;
@@ -7525,19 +7747,25 @@
             event.stopImmediatePropagation();
             showMapContextMenu(event);
         }, true);
-        document.addEventListener("mousedown", function (event) {
+        addAppListener(document, "mousedown", function (event) {
+            if (!eventInsideApp(event)) {
+                return;
+            }
             if (mapContextMenu && !mapContextMenu.hidden &&
                 !mapContextMenu.contains(event.target)) {
                 dismissMapContextMenu();
             }
         }, true);
-        document.addEventListener("click", function (event) {
+        addAppListener(document, "click", function (event) {
+            if (!eventInsideApp(event)) {
+                return;
+            }
             if (mapContextMenu && !mapContextMenu.hidden &&
                 !mapContextMenu.contains(event.target)) {
                 dismissMapContextMenu();
             }
         }, true);
-        document.addEventListener("keydown", function (event) {
+        addKeyboardListener(function (event) {
             if (event.key === "Escape" && mapContextMenu && !mapContextMenu.hidden) {
                 event.preventDefault();
                 event.stopImmediatePropagation();
@@ -7555,7 +7783,9 @@
                 var button = L.DomUtil.create("button", "map-tool-button fullscreen-button", container);
 
                 function fullscreenElement() {
-                    return document.fullscreenElement || document.webkitFullscreenElement;
+                    var activeElement =
+                        document.fullscreenElement || document.webkitFullscreenElement;
+                    return !embedMode || activeElement === appRoot ? activeElement : null;
                 }
 
                 function syncFullscreenButton() {
@@ -7567,7 +7797,7 @@
                 }
 
                 button.type = "button";
-                button.addEventListener("click", function () {
+                addAppListener(button, "click", function () {
                     var action;
                     if (fullscreenElement()) {
                         action = document.exitFullscreen || document.webkitExitFullscreen;
@@ -7580,10 +7810,10 @@
                             }
                         }
                     } else {
-                        action = document.documentElement.requestFullscreen ||
-                            document.documentElement.webkitRequestFullscreen;
+                        action = styleRoot.requestFullscreen ||
+                            styleRoot.webkitRequestFullscreen;
                         if (action) {
-                            var result = action.call(document.documentElement);
+                            var result = action.call(styleRoot);
                             if (result && typeof result.catch === "function") {
                                 result.catch(function () {
                                     return;
@@ -7592,8 +7822,8 @@
                         }
                     }
                 });
-                document.addEventListener("fullscreenchange", syncFullscreenButton);
-                document.addEventListener("webkitfullscreenchange", syncFullscreenButton);
+                addAppListener(document, "fullscreenchange", syncFullscreenButton);
+                addAppListener(document, "webkitfullscreenchange", syncFullscreenButton);
                 syncFullscreenButton();
                 L.DomEvent.disableClickPropagation(container);
                 L.DomEvent.disableScrollPropagation(container);
@@ -7841,7 +8071,7 @@
                 button.appendChild(glyph);
                 button.appendChild(copy);
                 button.appendChild(coordinates);
-                button.addEventListener("click", function () {
+                addAppListener(button, "click", function () {
                     selectMapSearchResult(index);
                 });
                 searchResultsElement.appendChild(button);
@@ -7950,11 +8180,11 @@
                 searchResultsElement.setAttribute("role", "listbox");
                 searchResultsElement.hidden = true;
 
-                toggle.addEventListener("click", function () {
+                addAppListener(toggle, "click", function () {
                     setMapSearchOpen(!container.classList.contains("is-open"), true);
                 });
-                searchInput.addEventListener("input", renderMapSearchResults);
-                searchInput.addEventListener("keydown", function (event) {
+                addAppListener(searchInput, "input", renderMapSearchResults);
+                addAppListener(searchInput, "keydown", function (event) {
                     var coordinates = parseMapCoordinates(searchInput.value);
                     if (event.key === "ArrowDown" && searchResultItems.length > 0) {
                         event.preventDefault();
@@ -7974,7 +8204,7 @@
                         toggle.focus();
                     }
                 });
-                container.addEventListener("focusout", function () {
+                addAppListener(container, "focusout", function () {
                     window.setTimeout(function () {
                         if (!container.contains(document.activeElement)) {
                             setMapSearchOpen(false, false);
@@ -7991,7 +8221,7 @@
         map.on("click", function () {
             setMapSearchOpen(false, false);
         });
-        document.addEventListener("keydown", function (event) {
+        addKeyboardListener(function (event) {
             if (activeTab !== "map" || event.altKey || event.metaKey) {
                 return;
             }
@@ -8092,10 +8322,10 @@
                 minimapImage.draggable = false;
                 toggle.type = "button";
                 toggle.textContent = "◱";
-                toggle.addEventListener("click", function () {
+                addAppListener(toggle, "click", function () {
                     minimapSetOpen(!isOpen, true);
                 });
-                frame.addEventListener("click", function (event) {
+                addAppListener(frame, "click", function (event) {
                     var rectangle = frame.getBoundingClientRect();
                     if (!isOpen || rectangle.width <= 0 || rectangle.height <= 0 || !worldBounds) {
                         return;
@@ -8123,7 +8353,7 @@
     }
 
     function applyInitialHashState(defaultZoom) {
-        var parameters = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+        var parameters = new URLSearchParams(appHash().replace(/^#/, ""));
         var settingsChanged = false;
         pendingCinemaFromHash = parameters.has("cinema");
         var hashStyle = parameters.get("st");
@@ -8193,7 +8423,7 @@
 
     function writeMapHash() {
         hashUpdateTimer = 0;
-        if (activeTab === "codex" || !map || !mapMetrics) {
+        if (embedMode || activeTab === "codex" || !map || !mapMetrics) {
             return;
         }
 
@@ -8229,7 +8459,7 @@
 
         var serialized = parameters.toString().replace(/(^|&)cinema=(?=&|$)/, "$1cinema");
         var hash = "#" + serialized;
-        if (window.location.hash !== hash) {
+        if (appHash() !== hash) {
             window.history.replaceState(
                 window.history.state,
                 "",
@@ -8239,6 +8469,9 @@
     }
 
     function scheduleHashUpdate() {
+        if (embedMode) {
+            return;
+        }
         window.clearTimeout(hashUpdateTimer);
         hashUpdateTimer = window.setTimeout(writeMapHash, 400);
     }
@@ -8496,14 +8729,14 @@
         allButton.className = "layer-section-mini";
         allButton.textContent = "all";
         allButton.setAttribute("aria-label", "Show all " + labelText.toLowerCase() + " layers");
-        allButton.addEventListener("click", function () {
+        addAppListener(allButton, "click", function () {
             setSectionLayers(section, true);
         });
         noneButton.type = "button";
         noneButton.className = "layer-section-mini";
         noneButton.textContent = "none";
         noneButton.setAttribute("aria-label", "Hide all " + labelText.toLowerCase() + " layers");
-        noneButton.addEventListener("click", function () {
+        addAppListener(noneButton, "click", function () {
             setSectionLayers(section, false);
         });
         body.className = "layer-section-body";
@@ -8541,7 +8774,7 @@
                 button.dataset.mapStyle = choice[0];
                 button.textContent = choice[1];
                 button.setAttribute("aria-pressed", String(isSelected));
-                button.addEventListener("click", function () {
+                addAppListener(button, "click", function () {
                     selectMapStyle(choice[0]);
                 });
                 segments.appendChild(button);
@@ -8571,7 +8804,7 @@
             button.dataset.heatmapWindow = choice[0];
             button.textContent = choice[1];
             button.setAttribute("aria-pressed", String(isSelected));
-            button.addEventListener("click", function () {
+            addAppListener(button, "click", function () {
                 selectHeatmapWindow(choice[0]);
             });
             segments.appendChild(button);
@@ -8667,7 +8900,7 @@
         allButton.className = "poi-category-mini";
         allButton.textContent = "all";
         allButton.setAttribute("aria-label", "Show all " + category.label.toLowerCase());
-        allButton.addEventListener("click", function (event) {
+        addAppListener(allButton, "click", function (event) {
             event.stopPropagation();
             setSectionLayers(section, true);
         });
@@ -8675,7 +8908,7 @@
         noneButton.className = "poi-category-mini";
         noneButton.textContent = "none";
         noneButton.setAttribute("aria-label", "Hide all " + category.label.toLowerCase());
-        noneButton.addEventListener("click", function (event) {
+        addAppListener(noneButton, "click", function (event) {
             event.stopPropagation();
             setSectionLayers(section, false);
         });
@@ -8696,7 +8929,7 @@
         content.appendChild(body);
         section.appendChild(content);
         parent.appendChild(section);
-        toggle.addEventListener("click", function () {
+        addAppListener(toggle, "click", function () {
             var nextCollapsed = !section.classList.contains("is-collapsed");
             section.classList.toggle("is-collapsed", nextCollapsed);
             content.hidden = nextCollapsed;
@@ -8741,7 +8974,7 @@
                     " for " + category.label
             );
             button.setAttribute("aria-pressed", String(isSelected));
-            button.addEventListener("click", function () {
+            addAppListener(button, "click", function () {
                 if (choice.key) {
                     layerSettings.poiColors[category.key] = choice.key;
                 } else {
@@ -8782,7 +9015,7 @@
         checkbox.checked = layerSettings[key];
         checkbox.dataset.layerKey = key;
         checkbox.setAttribute("aria-label", "Show " + labelText);
-        checkbox.addEventListener("change", function () {
+        addAppListener(checkbox, "change", function () {
             layerSettings[key] = checkbox.checked;
             saveLayerSettings();
             syncLayerVisibility();
@@ -9055,7 +9288,7 @@
         dotsText.textContent = "Dots mode";
         dotsToggle.type = "checkbox";
         dotsToggle.checked = layerSettings.densityDots;
-        dotsToggle.addEventListener("change", function () {
+        addAppListener(dotsToggle, "change", function () {
             layerSettings.densityDots = dotsToggle.checked;
             saveLayerSettings();
             applyDensityPreferences();
@@ -9073,7 +9306,7 @@
             sizeSelect.appendChild(option);
         });
         sizeSelect.value = layerSettings.iconSize;
-        sizeSelect.addEventListener("change", function () {
+        addAppListener(sizeSelect, "change", function () {
             layerSettings.iconSize = sizeSelect.value;
             saveLayerSettings();
             applyDensityPreferences();
@@ -9091,7 +9324,7 @@
         opacityInput.value = String(layerSettings.poiOpacity);
         opacityInput.setAttribute("aria-label", "POI marker opacity");
         opacityOutput.textContent = layerSettings.poiOpacity + "%";
-        opacityInput.addEventListener("input", function () {
+        addAppListener(opacityInput, "input", function () {
             layerSettings.poiOpacity = sanitizePoiOpacity(opacityInput.value);
             opacityOutput.textContent = layerSettings.poiOpacity + "%";
             saveLayerSettings();
@@ -9322,7 +9555,7 @@
             button.type = "button";
             button.className = "layer-jump-chip";
             button.textContent = labelText;
-            button.addEventListener("click", function () {
+            addAppListener(button, "click", function () {
                 jumpToPoiRecord(record);
             });
             strip.appendChild(button);
@@ -9379,7 +9612,7 @@
                 if (bossGroup.instances.length > 1) {
                     button.title = "click again for next altar";
                 }
-                button.addEventListener("click", function () {
+                addAppListener(button, "click", function () {
                     setOpen(false, false);
                     toggle.focus();
                     jumpToPoiRecord(nextBossJumpRecord(bossGroup));
@@ -9388,10 +9621,10 @@
                 menu.appendChild(item);
                 menuButtons.push(button);
             });
-            toggle.addEventListener("click", function () {
+            addAppListener(toggle, "click", function () {
                 setOpen(menu.hidden, false);
             });
-            toggle.addEventListener("keydown", function (event) {
+            addAppListener(toggle, "keydown", function (event) {
                 if (event.key === "ArrowDown") {
                     event.preventDefault();
                     setOpen(true, true);
@@ -9399,7 +9632,7 @@
                     setOpen(false, false);
                 }
             });
-            menu.addEventListener("keydown", function (event) {
+            addAppListener(menu, "keydown", function (event) {
                 var index = menuButtons.indexOf(document.activeElement);
                 if (event.key === "Escape") {
                     event.preventDefault();
@@ -9412,7 +9645,7 @@
                     menuButtons[next].focus();
                 }
             });
-            dropdown.addEventListener("focusout", function () {
+            addAppListener(dropdown, "focusout", function () {
                 window.setTimeout(function () {
                     if (!dropdown.contains(document.activeElement)) {
                         setOpen(false, false);
@@ -9456,7 +9689,7 @@
             toggle.setAttribute("aria-expanded", String(!isCollapsed));
         }
 
-        toggle.addEventListener("click", function () {
+        addAppListener(toggle, "click", function () {
             layerSettings.legendCollapsed = !layerSettings.legendCollapsed;
             saveLayerSettings();
             applyCollapsedState();
@@ -10440,7 +10673,7 @@
         cinemaStopAmbient(cinemaState, true);
         cinemaState.raidJumpActive = true;
         cinemaState.raidEventId = event.id;
-        document.body.classList.add("is-cinema-raid");
+        appRoot.classList.add("is-cinema-raid");
         var center = worldToLatLng(event.x, event.z);
         var radius = Math.max(worldDistanceToMap(event.radius), 0.001);
         var bounds = L.latLngBounds([
@@ -10488,7 +10721,7 @@
         if (cinemaState.raidEventId && cinemaState.raidEventId !== nextId) {
             cinemaState.raidJumpActive = false;
             cinemaState.raidEventId = "";
-            document.body.classList.remove("is-cinema-raid");
+            appRoot.classList.remove("is-cinema-raid");
         }
         if (nextEvent && previousId !== nextId && !cinemaRaidOptOutIds.has(nextId)) {
             cinemaFlyToRaid(nextEvent);
@@ -10508,7 +10741,7 @@
         }
         cinemaRaidOptOutIds.add(currentRaidEvent.id);
         cinemaState.raidJumpActive = false;
-        document.body.classList.remove("is-cinema-raid");
+        appRoot.classList.remove("is-cinema-raid");
         renderCinemaHud();
         cinemaResumeCamera();
     }
@@ -10665,9 +10898,9 @@
         if (map._popup) {
             map.closePopup();
         }
-        document.body.classList.add("is-cinema");
+        appRoot.classList.add("is-cinema");
         elements.cinemaHud.hidden = false;
-        document.addEventListener("visibilitychange", cinemaState.visibilityHandler);
+        addAppListener(document, "visibilitychange", cinemaState.visibilityHandler);
         cinemaState.stalenessTimer = window.setInterval(
             updateCinemaStalenessBadge,
             5000
@@ -10705,7 +10938,7 @@
         cinemaClearWaitingTimer(state);
         cinemaStopAmbient(state, true);
         window.clearInterval(state.stalenessTimer);
-        document.removeEventListener("visibilitychange", state.visibilityHandler);
+        removeAppListener(document, "visibilitychange", state.visibilityHandler);
     }
 
     function exitCinema() {
@@ -10716,7 +10949,7 @@
         cinemaState = null;
         pendingCinemaFromHash = false;
         teardownCinemaState(state);
-        document.body.classList.remove("is-cinema", "is-cinema-raid");
+        appRoot.classList.remove("is-cinema", "is-cinema-raid");
         elements.cinemaHud.hidden = true;
         elements.sidebarState.checked = state.prior.sidebarChecked;
 
@@ -10739,7 +10972,7 @@
             if (measureDoubleClickZoomWasEnabled) {
                 map.doubleClickZoom.disable();
             }
-            document.body.classList.add("is-measuring");
+            appRoot.classList.add("is-measuring");
             updateMeasureHud();
         }
         if (state.prior.pingArmed && currentView === "admin") {
@@ -10773,15 +11006,15 @@
         cinemaWindNeedle = elements.cinemaWind
             ? elements.cinemaWind.querySelector(".cinema-wind-needle")
             : null;
-        elements.watchButton.addEventListener("click", function () {
+        addAppListener(elements.watchButton, "click", function () {
             var targetKey = followTarget && followTarget.kind === "player"
                 ? followTarget.id
                 : "";
             enterCinema(targetKey);
         });
-        elements.cinemaExit.addEventListener("click", exitCinema);
-        elements.cinemaStayTarget.addEventListener("click", cinemaStayOnTarget);
-        document.addEventListener("keydown", function (event) {
+        addAppListener(elements.cinemaExit, "click", exitCinema);
+        addAppListener(elements.cinemaStayTarget, "click", cinemaStayOnTarget);
+        addKeyboardListener(function (event) {
             if (event.key !== "Escape" || !cinemaState) {
                 return;
             }
@@ -10815,7 +11048,7 @@
             button.className = "player-button";
             button.classList.toggle("is-followed", isFollowing("player", player.key));
             button.classList.toggle("is-dead", player.dead === true);
-            button.addEventListener("click", function () {
+            addAppListener(button, "click", function () {
                 followPlayer(player.key);
             });
 
@@ -10850,7 +11083,7 @@
                 dungeonTag.className = "player-dungeon-roster-tag";
                 dungeonTag.textContent = "In: " + player.inDungeon.label;
                 dungeonTag.title = "View " + player.inDungeon.label + " interior";
-                dungeonTag.addEventListener("click", function (event) {
+                addAppListener(dungeonTag, "click", function (event) {
                     event.preventDefault();
                     event.stopPropagation();
                     openDungeonInterior(player.inDungeon.id);
@@ -10891,7 +11124,7 @@
             dungeonTag.className = "player-dungeon-tag";
             dungeonTag.textContent = "In: " + player.inDungeon.label;
             dungeonTag.title = "View dungeon interior";
-            dungeonTag.addEventListener("click", function (event) {
+            addAppListener(dungeonTag, "click", function (event) {
                 event.preventDefault();
                 event.stopPropagation();
                 openDungeonInterior(player.inDungeon.id);
@@ -11070,7 +11303,7 @@
     }
 
     function portalLinkColor() {
-        var color = window.getComputedStyle(document.documentElement)
+        var color = window.getComputedStyle(styleRoot)
             .getPropertyValue("--accent").trim();
         return color || "#d9b168";
     }
@@ -11974,7 +12207,7 @@
             context.fill();
             context.stroke();
             context.font = "700 10px " +
-                window.getComputedStyle(document.body).fontFamily;
+                window.getComputedStyle(appRoot).fontFamily;
             context.textAlign = "center";
             context.textBaseline = "top";
             context.fillStyle = "#f0dcae";
@@ -12000,7 +12233,7 @@
             context.shadowBlur = 0;
             if (player.name) {
                 context.font = "700 11px " +
-                    window.getComputedStyle(document.body).fontFamily;
+                    window.getComputedStyle(appRoot).fontFamily;
                 var labelWidth = context.measureText(player.name).width + 10;
                 context.fillStyle = "rgba(24,17,12,0.9)";
                 context.fillRect(-labelWidth / 2, 9, labelWidth, 18);
@@ -12018,7 +12251,7 @@
         context.save();
         context.fillStyle = "#d9b168";
         context.font = "700 11px " +
-            window.getComputedStyle(document.body).fontFamily;
+            window.getComputedStyle(appRoot).fontFamily;
         context.textAlign = "center";
         context.fillText("N", width - 28, 24);
         context.beginPath();
@@ -12186,7 +12419,7 @@
         window.clearTimeout(dungeonDetailPollTimer);
         dungeonDetailPollTimer = 0;
         elements.dungeonBackdrop.hidden = false;
-        document.body.classList.add("is-dungeon-open");
+        appRoot.classList.add("is-dungeon-open");
 
         var cached = dungeonDetailCache.get(dungeonId);
         if (cached) {
@@ -12214,9 +12447,9 @@
         window.clearTimeout(dungeonDetailPollTimer);
         dungeonDetailPollTimer = 0;
         elements.dungeonBackdrop.hidden = true;
-        document.body.classList.remove("is-dungeon-open");
+        appRoot.classList.remove("is-dungeon-open");
         if (restoreFocus !== false && dungeonReturnFocus &&
-            document.documentElement.contains(dungeonReturnFocus) &&
+            styleRoot.contains(dungeonReturnFocus) &&
             typeof dungeonReturnFocus.focus === "function") {
             dungeonReturnFocus.focus();
         }
@@ -12224,15 +12457,15 @@
     }
 
     function bindDungeonEvents() {
-        elements.dungeonClose.addEventListener("click", function () {
+        addAppListener(elements.dungeonClose, "click", function () {
             closeDungeonInterior(true);
         });
-        elements.dungeonBackdrop.addEventListener("click", function (event) {
+        addAppListener(elements.dungeonBackdrop, "click", function (event) {
             if (event.target === elements.dungeonBackdrop) {
                 closeDungeonInterior(true);
             }
         });
-        document.addEventListener("keydown", function (event) {
+        addKeyboardListener(function (event) {
             if (event.key === "Escape" && !elements.dungeonBackdrop.hidden) {
                 event.preventDefault();
                 closeDungeonInterior(true);
@@ -12920,7 +13153,7 @@
             return;
         }
 
-        var color = window.getComputedStyle(document.documentElement)
+        var color = window.getComputedStyle(styleRoot)
             .getPropertyValue("--accent").trim() || "#d9b168";
         L.circle(record.latLng, {
             bubblingMouseEvents: false,
@@ -13677,7 +13910,7 @@
             return;
         }
 
-        var color = window.getComputedStyle(document.documentElement)
+        var color = window.getComputedStyle(styleRoot)
             .getPropertyValue("--accent").trim() || "#d9b168";
         L.circle(worldToLatLng(entity.x, entity.z), {
             bubblingMouseEvents: false,
@@ -14078,7 +14311,7 @@
         var center = worldToLatLng(currentRaidEvent.x, currentRaidEvent.z);
         var radius = worldDistanceToMap(currentRaidEvent.radius);
         if (!raidCircle) {
-            var raidColor = window.getComputedStyle(document.documentElement)
+            var raidColor = window.getComputedStyle(styleRoot)
                 .getPropertyValue("--raid").trim() || "#c96a52";
             raidCircle = L.circle(center, {
                 className: "raid-ring",
@@ -15414,6 +15647,9 @@
     }
 
     function resumePollingAfterEventStream() {
+        if (destroyed) {
+            return;
+        }
         pollStatus();
         pollPlayers();
         pollWebPins();
@@ -15451,7 +15687,7 @@
     }
 
     function scheduleEventStreamRetry() {
-        if (typeof window.EventSource !== "function" || eventSourceRetryTimer) {
+        if (destroyed || typeof window.EventSource !== "function" || eventSourceRetryTimer) {
             return;
         }
 
@@ -15475,9 +15711,11 @@
         if (activeSource) {
             activeSource.close();
         }
-        resumePollingAfterEventStream();
-        ensureChatHistory();
-        scheduleEventStreamRetry();
+        if (!destroyed) {
+            resumePollingAfterEventStream();
+            ensureChatHistory();
+            scheduleEventStreamRetry();
+        }
     }
 
     function readEventStreamPayload(source, event, handler) {
@@ -15493,7 +15731,7 @@
     }
 
     function connectEventStream() {
-        if (typeof window.EventSource !== "function" || eventSource) {
+        if (destroyed || typeof window.EventSource !== "function" || eventSource) {
             return;
         }
 
@@ -15508,7 +15746,7 @@
         eventSource = source;
         eventSourceOpen = false;
         eventSourceLogFlowing = false;
-        source.addEventListener("open", function () {
+        addAppListener(source, "open", function () {
             if (source !== eventSource) {
                 return;
             }
@@ -15519,39 +15757,39 @@
                 loadSagaActivity(0, true);
             }
         });
-        source.addEventListener("players", function (event) {
+        addAppListener(source, "players", function (event) {
             readEventStreamPayload(source, event, handlePlayersPayload);
         });
-        source.addEventListener("status", function (event) {
+        addAppListener(source, "status", function (event) {
             readEventStreamPayload(source, event, handleStatusPayload);
         });
-        source.addEventListener("webpins", function (event) {
+        addAppListener(source, "webpins", function (event) {
             readEventStreamPayload(source, event, handleWebPinRevisionPayload);
         });
-        source.addEventListener("ping", function (event) {
+        addAppListener(source, "ping", function (event) {
             readEventStreamPayload(source, event, handlePingPayload);
         });
-        source.addEventListener("chat", function (event) {
+        addAppListener(source, "chat", function (event) {
             readEventStreamPayload(source, event, handleChatPayload);
         });
-        source.addEventListener("activity", function (event) {
+        addAppListener(source, "activity", function (event) {
             readEventStreamPayload(source, event, handleActivityStreamPayload);
         });
-        source.addEventListener("log", function (event) {
+        addAppListener(source, "log", function (event) {
             readEventStreamPayload(source, event, function (payload) {
                 eventSourceLogFlowing = true;
                 handleConsoleLogPayload(payload, true);
                 recordPollSuccess("console-log");
             });
         });
-        source.addEventListener("error", function () {
+        addAppListener(source, "error", function () {
             disconnectEventStream(source);
         });
     }
 
     function startPolling(task, interval) {
         function schedule() {
-            if (pollCircuitOpen) {
+            if (destroyed || pollCircuitOpen) {
                 return;
             }
             var timer = window.setTimeout(function () {
@@ -15562,16 +15800,123 @@
         }
 
         async function run() {
-            if (pollCircuitOpen) {
+            if (destroyed || pollCircuitOpen) {
                 return;
             }
             if (!document.hidden) {
                 await task();
             }
-            schedule();
+            if (!destroyed) {
+                schedule();
+            }
         }
 
         run();
+    }
+
+    function invalidateEmbedSize() {
+        if (destroyed || !map) {
+            return;
+        }
+        map.invalidateSize({ animate: false, pan: false });
+        scheduleMinimapUpdate();
+        var dungeon = dungeonDetailCache.get(activeDungeonId);
+        if (dungeon) {
+            drawDungeonCanvas(dungeon);
+        }
+    }
+
+    function destroyApp() {
+        if (destroyed) {
+            return;
+        }
+        destroyed = true;
+        pollCircuitOpen = true;
+        if (cinemaState) {
+            teardownCinemaState(cinemaState);
+            cinemaState = null;
+        }
+        window.clearTimeout(eventSourceRetryTimer);
+        window.clearTimeout(hashUpdateTimer);
+        window.clearTimeout(renderStatusFailureTimer);
+        window.clearTimeout(mapLoadingTimeoutTimer);
+        clearLeaderboardPoll();
+        clearRecurringPollTimers();
+        window.clearInterval(sagaRelativeTimer);
+        stopAllLazyPoiPolling();
+        window.clearInterval(popupRefreshTimer);
+        window.clearInterval(raidProgressTimer);
+        window.clearInterval(layersStalenessTimer);
+        window.clearInterval(savedBadgeTimer);
+        window.clearTimeout(dayToastTimer);
+        window.clearTimeout(noticeToastTimer);
+        window.clearTimeout(saveButtonTimer);
+        window.clearTimeout(codexSearchTimer);
+        window.clearTimeout(dungeonRegistryState.timer);
+        window.clearTimeout(dungeonDetailPollTimer);
+        window.clearTimeout(mapContextMenuTimer);
+        window.clearTimeout(coordinateSearchTimer);
+        window.clearTimeout(fogCoverTimer);
+        if (dungeonResizeObserver) {
+            dungeonResizeObserver.disconnect();
+            dungeonResizeObserver = null;
+        }
+        removeAppListener(document, "visibilitychange", handleMarkerTweenVisibility);
+        markerTweens.clear();
+        window.cancelAnimationFrame(markerTweenFrame);
+        markerTweenFrame = 0;
+        window.cancelAnimationFrame(minimapFrame);
+        minimapFrame = 0;
+        activePingMarkers.forEach(function (record) {
+            window.clearTimeout(record.timer);
+        });
+        clearCoordinateSearchMarker();
+        if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+        }
+        eventSourceOpen = false;
+        eventSourceLogFlowing = false;
+        if (map) {
+            map.remove();
+            map = null;
+        }
+        if (embedMode) {
+            appRoot.classList.remove(
+                "is-cinema",
+                "is-cinema-raid",
+                "is-codex-active",
+                "is-console-active",
+                "is-dropping-webpin",
+                "is-dungeon-open",
+                "is-measuring",
+                "is-pinging",
+                "is-towing"
+            );
+            var fullscreenElement =
+                document.fullscreenElement || document.webkitFullscreenElement;
+            if (fullscreenElement === appRoot) {
+                var exitFullscreen =
+                    document.exitFullscreen || document.webkitExitFullscreen;
+                if (exitFullscreen) {
+                    var exitResult = exitFullscreen.call(document);
+                    if (exitResult && typeof exitResult.catch === "function") {
+                        exitResult.catch(function () {
+                            return;
+                        });
+                    }
+                }
+            }
+            clearEmbedRuntime();
+            hostWindow.ValheimOneEmbed = {
+                destroy: function () {
+                    return;
+                },
+                invalidateSize: function () {
+                    return;
+                }
+            };
+        }
     }
 
     bindCinemaEvents();
@@ -15580,17 +15925,17 @@
     bindDungeonEvents();
     setActiveTab(requestedTab, false);
     bindPopupDocumentEvents();
-    elements.sagaToggle.addEventListener("click", function () {
+    addAppListener(elements.sagaToggle, "click", function () {
         setSagaCollapsed(!elements.sagaPanel.classList.contains("is-collapsed"));
     });
-    elements.chatToggle.addEventListener("click", function () {
+    addAppListener(elements.chatToggle, "click", function () {
         setChatCollapsed(!elements.chatPanel.classList.contains("is-collapsed"));
     });
-    elements.chatForm.addEventListener("submit", function (event) {
+    addAppListener(elements.chatForm, "submit", function (event) {
         event.preventDefault();
         sendAdminChat();
     });
-    elements.leaderboardToggle.addEventListener("click", function () {
+    addAppListener(elements.leaderboardToggle, "click", function () {
         setLeaderboardCollapsed(
             !elements.leaderboardPanel.classList.contains("is-collapsed")
         );
@@ -15599,7 +15944,7 @@
     setChatCollapsed(true);
     setLeaderboardCollapsed(true);
     renderChatHistory();
-    elements.sidebarState.addEventListener("change", function () {
+    addAppListener(elements.sidebarState, "change", function () {
         if (!elements.sidebarState.checked ||
             !window.matchMedia("(max-width: 759px)").matches) {
             return;
@@ -15618,41 +15963,12 @@
     startPolling(pollPlayers, POLL_INTERVAL_MS);
     startPolling(pollSagaActivity, ACTIVITY_POLL_INTERVAL_MS);
     connectEventStream();
-    document.addEventListener("visibilitychange", handleMarkerTweenVisibility);
-    window.addEventListener("beforeunload", function () {
-        if (cinemaState) {
-            teardownCinemaState(cinemaState);
-        }
-        window.clearTimeout(eventSourceRetryTimer);
-        window.clearTimeout(hashUpdateTimer);
-        window.clearTimeout(renderStatusFailureTimer);
-        window.clearTimeout(mapLoadingTimeoutTimer);
-        clearLeaderboardPoll();
-        clearRecurringPollTimers();
-        window.clearInterval(sagaRelativeTimer);
-        stopAllLazyPoiPolling();
-        window.clearInterval(popupRefreshTimer);
-        window.clearInterval(raidProgressTimer);
-        window.clearInterval(layersStalenessTimer);
-        window.clearInterval(savedBadgeTimer);
-        window.clearTimeout(dayToastTimer);
-        window.clearTimeout(codexSearchTimer);
-        window.clearTimeout(dungeonRegistryState.timer);
-        window.clearTimeout(dungeonDetailPollTimer);
-        if (dungeonResizeObserver) {
-            dungeonResizeObserver.disconnect();
-        }
-        document.removeEventListener("visibilitychange", handleMarkerTweenVisibility);
-        markerTweens.clear();
-        window.cancelAnimationFrame(markerTweenFrame);
-        markerTweenFrame = 0;
-        window.cancelAnimationFrame(minimapFrame);
-        activePingMarkers.forEach(function (record) {
-            window.clearTimeout(record.timer);
-        });
-        clearCoordinateSearchMarker();
-        if (eventSource) {
-            eventSource.close();
-        }
-    });
-}());
+    addAppListener(document, "visibilitychange", handleMarkerTweenVisibility);
+    window.addEventListener("beforeunload", destroyApp);
+    if (embedMode) {
+        hostWindow.ValheimOneEmbed = {
+            destroy: destroyApp,
+            invalidateSize: invalidateEmbedSize
+        };
+    }
+}(window));
