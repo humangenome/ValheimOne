@@ -1,33 +1,28 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/valheimone-landscape-dark.png">
-    <img src="docs/brand/valheimone-landscape.png" alt="ValheimOne" width="550">
-  </picture>
+  <img src="docs/brand/hero.png" alt="ValheimOne" width="100%">
 </p>
 
-# ValheimOne
+<p align="center">
+  <b>Everything your Valheim dedicated server is missing.</b><br>
+  A live world map you can hand to your players, a searchable item codex, a browser admin console,<br>
+  Discord alerts and server-enforced rules &mdash; server-side only, on a completely vanilla client.
+</p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![BepInEx 5.4.x](https://img.shields.io/badge/BepInEx-5.4.x-2f80ed.svg)](https://github.com/BepInEx/BepInEx)
-[![Valheim - Dedicated Server](https://img.shields.io/badge/Valheim-Dedicated_Server-1b2838.svg?logo=steam&logoColor=white)](https://store.steampowered.com/app/892970/)
-[![Client Mods: Optional](https://img.shields.io/badge/Client_Mods-Optional-brightgreen.svg)](#features)
+<p align="center">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-c9a959?style=for-the-badge"></a>
+  <a href="https://github.com/BepInEx/BepInEx"><img alt="BepInEx 5.4.x" src="https://img.shields.io/badge/BepInEx-5.4.x-2f80ed?style=for-the-badge"></a>
+  <a href="https://store.steampowered.com/app/892970/"><img alt="Valheim Dedicated Server" src="https://img.shields.io/badge/Valheim-Dedicated_Server-1b2838?style=for-the-badge&logo=steam&logoColor=white"></a>
+  <a href="#features"><img alt="Client Mods: None" src="https://img.shields.io/badge/Client_Mods-None_Required-2ea043?style=for-the-badge"></a>
+</p>
 
-Everything your Valheim dedicated server is missing: a live world map you can share with your players, a searchable item codex, a browser admin console, Discord alerts, and server-enforced rules. Server-side only. Your players join with a completely vanilla game.
-
-_ValheimOne is a community project and is not affiliated with or endorsed by Iron Gate Studio._
-
-> **Official Hosting:** [SurvivalServers.com](https://www.survivalservers.com/services/game_servers/valheim/?utm_source=github&utm_medium=readme&utm_campaign=valheim_one) offers managed Valheim dedicated servers with ValheimOne built in.
-
----
-
-## Table of Contents
-
-- [Features](#features)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Getting Help](#getting-help)
-- [Contributing](#contributing)
-- [License](#license)
+<p align="center">
+  <a href="#-live-world-map"><b>Live Map</b></a> &nbsp;&bull;&nbsp;
+  <a href="#-share-it-with-your-players"><b>Sharing</b></a> &nbsp;&bull;&nbsp;
+  <a href="#-look-inside-dungeons"><b>Dungeons</b></a> &nbsp;&bull;&nbsp;
+  <a href="#-codex-of-items"><b>Codex</b></a> &nbsp;&bull;&nbsp;
+  <a href="#-admin-console-in-the-browser"><b>Console</b></a> &nbsp;&bull;&nbsp;
+  <a href="#installation"><b>Install</b></a>
+</p>
 
 ---
 
@@ -70,8 +65,6 @@ A live server log and a command box with history and autocomplete, running white
 Twenty-six opt-in modules covering carry weight, stamina, food, drops, gathering, build rules, portals, taming, raids, production speeds and more. Everything is off until you turn it on, and most values hot-reload without a restart.
 
 See [docs/gameplay-modules.md](docs/gameplay-modules.md) for the full list.
-
-![ValheimOne enforced ruleset in the server log](docs/screenshots/enforced-settings.png)
 
 ### 🔔 Discord Alerts
 
@@ -140,3 +133,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+---
+
+> **Want it hosted?** [SurvivalServers.com](https://www.survivalservers.com/services/game_servers/valheim/?utm_source=github&utm_medium=readme&utm_campaign=valheim_one) ships ValheimOne pre-installed and auto-updated on every Valheim server.
+
+_ValheimOne is a community project and is not affiliated with or endorsed by Iron Gate Studio._
