@@ -16,17 +16,21 @@
 </p>
 
 <p align="center">
-  <a href="#-live-world-map"><b>Live Map</b></a> &nbsp;&bull;&nbsp;
-  <a href="#-share-it-with-your-players"><b>Sharing</b></a> &nbsp;&bull;&nbsp;
-  <a href="#-look-inside-dungeons"><b>Dungeons</b></a> &nbsp;&bull;&nbsp;
-  <a href="#-codex-of-items"><b>Codex</b></a> &nbsp;&bull;&nbsp;
-  <a href="#-admin-console-in-the-browser"><b>Console</b></a> &nbsp;&bull;&nbsp;
-  <a href="#installation"><b>Install</b></a>
+  <a href="#live-map"><b>Live Map</b></a> &nbsp;&bull;&nbsp;
+  <a href="#sharing"><b>Sharing</b></a> &nbsp;&bull;&nbsp;
+  <a href="#dungeons"><b>Dungeons</b></a> &nbsp;&bull;&nbsp;
+  <a href="#codex"><b>Codex</b></a> &nbsp;&bull;&nbsp;
+  <a href="#console"><b>Console</b></a> &nbsp;&bull;&nbsp;
+  <a href="#install"><b>Install</b></a>
 </p>
 
 ---
 
+<a id="features"></a>
+
 ## Features
+
+<a id="live-map"></a>
 
 ### 🗺️ Live World Map
 
@@ -36,11 +40,15 @@ Your whole world in a browser, drawn from the server seed and updating in real t
 
 Turn on the heatmap to see where everyone has been over the last day or week, or open the Sagas leaderboard for playtime, deaths and distance travelled.
 
+<a id="sharing"></a>
+
 ### 🔗 Share It With Your Players
 
 Three views, and you decide who gets which. **Admin** sees everything. **Spectator** shows live players and every layer but never grants a single admin action. **Public** is read-only and fog-covered, safe to post in your Discord.
 
 ![ValheimOne public map with explored fog](docs/screenshots/livemap-public-fog.png)
+
+<a id="dungeons"></a>
 
 ### 🏛️ Look Inside Dungeons
 
@@ -48,11 +56,15 @@ Click any dungeon entrance and get a top-down room schematic read straight from 
 
 ![ValheimOne dungeon interior viewer](docs/screenshots/dungeon-interior.png)
 
+<a id="codex"></a>
+
 ### 📖 Codex of Items
 
 Every one of roughly 1,084 items, searchable and filterable: weight, stack size, tiers, damage, armour, full recipes with station requirements, what drops it, and what it is used to make. Jump straight from an ingredient to everything that needs it.
 
 ![ValheimOne Codex of Items](docs/screenshots/codex-of-items.png)
+
+<a id="console"></a>
 
 ### 💻 Admin Console In The Browser
 
@@ -77,6 +89,8 @@ A standalone A2S query responder so server browsers, monitoring tools and hostin
 See [docs/query.md](docs/query.md).
 
 ---
+
+<a id="install"></a>
 
 ## Installation
 
