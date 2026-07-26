@@ -80,6 +80,14 @@ See [docs/query.md](docs/query.md).
 
 ## Installation
 
+Two ways in. Pick one.
+
+### 🚀 Option 1 &mdash; Rent a server, skip all of it
+
+[**Get a Valheim server from SurvivalServers**](https://www.survivalservers.com/services/game_servers/valheim/?utm_source=github&utm_medium=readme&utm_campaign=valheim_one) and ValheimOne is **already installed, already configured and updated for you automatically**. No BepInEx, no file uploads, no config editing. Your map, console and share links are live the moment the server boots, wired straight into the control panel.
+
+### 🔧 Option 2 &mdash; Install it yourself
+
 You need a Valheim Dedicated Server with [BepInEx 5.4.x](https://github.com/BepInEx/BepInEx).
 
 1. Download the latest zip from [Releases](https://github.com/HumanGenome/ValheimOne/releases). Take the plugin-only package if you already run BepInEx, or the bundled package for a fresh install.
@@ -135,7 +143,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 MIT. See [LICENSE](LICENSE).
 
 ---
-
-> **Want it hosted?** [SurvivalServers.com](https://www.survivalservers.com/services/game_servers/valheim/?utm_source=github&utm_medium=readme&utm_campaign=valheim_one) ships ValheimOne pre-installed and auto-updated on every Valheim server.
 
 _ValheimOne is a community project and is not affiliated with or endorsed by Iron Gate Studio._
