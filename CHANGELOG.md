@@ -14,7 +14,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Added
 
-- LiveMap can now be mounted directly inside a host page: `GET /api/embed` returns a body fragment and `assets/app.embed.js` / `assets/app.embed.css` provide a root-scoped bundle, so the SurvivalServers panel hosts the map natively instead of in an iframe.
+- LiveMap can now be mounted directly inside a host page: `GET /api/embed` returns a body fragment and `assets/app.embed.js` / `assets/app.embed.css` provide a root-scoped bundle, so a host page can render the map natively instead of in an iframe.
 - LiveMap static assets are now served with strong ETags, `If-None-Match` 304 handling, and pre-computed gzip payloads, cutting repeat asset transfer to a revalidation round trip.
 
 ### Changed

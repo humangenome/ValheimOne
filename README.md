@@ -44,7 +44,7 @@ Turn on the heatmap to see where everyone has been over the last day or week, or
 
 ### 🔗 Share It With Your Players
 
-Three views, and you decide who gets which. **Admin** sees everything. **Spectator** shows live players and every layer but never grants a single admin action. **Public** is read-only and fog-covered, safe to post in your Discord.
+Three views, and you decide who gets which. **Admin** sees everything. **Shared** shows live players and every layer but never grants a single admin action. **Public** is read-only and fog-covered, safe to post in your Discord.
 
 ![ValheimOne public map with explored fog](docs/screenshots/livemap-public-fog.png)
 
