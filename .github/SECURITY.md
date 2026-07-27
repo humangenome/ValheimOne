@@ -4,7 +4,11 @@
 
 If you've found a security issue in ValheimOne (the live map web server, the admin console, the share-token view tiers, the A2S query responder, or the Discord integration), please **do not** open a public GitHub issue.
 
-Email security reports to: **security@humangenome.dev**, or open a private security advisory on GitHub at https://github.com/HumanGenome/ValheimOne/security/advisories/new — that's the preferred channel.
+Report it through GitHub's private vulnerability reporting instead:
+
+**https://github.com/HumanGenome/ValheimOne/security/advisories/new**
+
+(Also reachable from the repo's **Security** tab → **Advisories** → **Report a vulnerability**.) The report stays private between you and the maintainers, and it gives us a place to draft the fix and credit you when it ships. This is the only reporting channel — there is no security mailing address.
 
 Include:
 - A description of the vulnerability
