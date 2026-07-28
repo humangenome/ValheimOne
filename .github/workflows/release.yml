@@ -197,7 +197,11 @@ jobs:
         if: env.DRY_RUN != 'true'
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          # HUMANGENOME_PAT so the release object is authored by the account,
+          # not github-actions[bot]. Falls back to the workflow token if the
+          # secret is ever removed — the draft still lands, only the author
+          # byline degrades.
+          GH_TOKEN: ${{ secrets.HUMANGENOME_PAT || github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
