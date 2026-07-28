@@ -41,6 +41,13 @@ jobs:
           ./build.sh
           test -f src/ValheimOne/bin/Release/net472/ValheimOne.dll
 
+      - name: Leak gate
+        shell: bash
+        run: |
+          tools/ci/leak-gate.sh \
+            src/ValheimOne/bin/Release/net472/ValheimOne.dll \
+            tools/release/valheimone.cfg
+
       - name: Upload ValheimOne DLL
         uses: actions/upload-artifact@v4
         with:

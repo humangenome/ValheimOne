@@ -5,6 +5,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <Deterministic>true</Deterministic>
+    <!-- Keep build-machine paths out of the shipped DLL: without this the assembly
+         embeds the full local path to ValheimOne.pdb, which is a build-host detail
+         that has no business in a public binary. Also makes the output independent
+         of where the repo is checked out. -->
+    <PathMap>$(MSBuildThisFileDirectory)=/_/</PathMap>
     <AssemblyName>ValheimOne</AssemblyName>
     <RootNamespace>ValheimOne</RootNamespace>
     <Version>0.12.2</Version>
