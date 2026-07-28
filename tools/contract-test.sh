@@ -42,6 +42,8 @@ config_dir="${testserver}/BepInEx/config"
 plugin_cfg="${config_dir}/valheimone.cfg"
 candidate="${repo_root}/tools/contract-fingerprint.txt"
 golden="${repo_root}/tools/golden-fingerprint.txt"
+pass_record="${repo_root}/tools/contract-pass.txt"
+version_source="${repo_root}/src/ValheimOne/Networking/VersionInfo.cs"
 output_dll="${repo_root}/src/ValheimOne/bin/Release/net472/ValheimOne.dll"
 harmony_exception_pattern='Harmony(Lib|X|Exception)?.*(patch(ing)? exception|exception.*patch|failed to patch|patching failed)|(patch(ing)? exception|failed to patch|patching failed).*Harmony(Lib|X|Exception)?'
 unity_log_error_pattern='\[(Error|Fatal)[[:space:]]*:[[:space:]]*Unity Log[[:space:]]*\]'
@@ -461,7 +463,18 @@ if [[ ! -f $golden ]]; then
 fi
 
 if cmp -s -- "$golden" "$candidate"; then
+    # Record the pass so the release workflow can prove a local contract run
+    # happened at this exact version against this exact golden fingerprint.
+    pass_version=$(sed -nE 's/.*public const string PluginVersion = "([^"]+)";.*/\1/p' "$version_source" | head -n 1)
+    pass_commit=$(git -C "$repo_root" rev-parse --short HEAD 2>/dev/null || printf 'unknown')
+    {
+        printf 'version=%s\n' "${pass_version:-unknown}"
+        printf 'golden-sha256=%s\n' "$(sha256sum "$golden" | cut -d' ' -f1)"
+        printf 'commit=%s\n' "$pass_commit"
+        printf 'recorded=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    } > "$pass_record"
     printf 'CONTRACT PASS\n'
+    printf 'Recorded in %s\n' "${pass_record#"${repo_root}/"}"
     exit 0
 fi
 

@@ -1,0 +1,251 @@
+name: Valheim toolchain
+description: >-
+  Installs .NET, the Valheim dedicated server, the publicized game assemblies
+  and the pinned BepInEx pack, and optionally assembles a modded testserver.
+
+inputs:
+  bepinex-version:
+    description: denikson/BepInExPack_Valheim version to install
+    required: true
+  testserver:
+    description: Assemble a modded testserver (needed by the contract test)
+    required: false
+    default: 'false'
+
+outputs:
+  buildid:
+    description: Valheim dedicated-server public-branch build ID
+    value: ${{ steps.game-build.outputs.buildid }}
+  cache-version:
+    description: Cache key suffix used for the game install
+    value: ${{ steps.game-build.outputs.cache-version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up .NET 8
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.x
+
+    - name: Resolve Valheim dedicated-server build ID
+      id: game-build
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        response_file="$(mktemp)"
+        trap 'rm -f "${response_file}"' EXIT
+
+        build_id=""
+        if curl \
+          --fail \
+          --silent \
+          --show-error \
+          --location \
+          --retry 4 \
+          --retry-all-errors \
+          --retry-delay 5 \
+          --max-time 30 \
+          --output "${response_file}" \
+          https://api.steamcmd.net/v1/info/896660; then
+          build_id="$(
+            jq -er \
+              '.data["896660"].depots.branches.public.buildid | tostring | select(test("^[0-9]+$"))' \
+              "${response_file}" 2>/dev/null || true
+          )"
+        fi
+
+        if [[ -n "${build_id}" ]]; then
+          cache_version="${build_id}"
+          echo "Valheim public-branch build ID: ${build_id}"
+        else
+          # During an API outage, use a stable key prefix plus the UTC date.
+          # This reuses same-day downloads but forces a fresh SteamCMD check daily.
+          date_stamp="$(date -u +%F)"
+          build_id="unavailable"
+          cache_version="steam-api-fallback-v1-${date_stamp}"
+          echo "::warning::SteamCMD API unavailable or returned no public build ID; using daily fallback cache key ${cache_version}."
+        fi
+
+        {
+          echo "buildid=${build_id}"
+          echo "cache-version=${cache_version}"
+        } >> "${GITHUB_OUTPUT}"
+
+    - name: Restore Valheim server and publicized assemblies
+      id: game-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/valheim-modding/server
+          ~/valheim-modding/publicized
+        key: ${{ runner.os }}-valheim-server-publicized-${{ steps.game-build.outputs.cache-version }}
+
+    - name: Restore BepInEx pack
+      id: bepinex-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/valheim-modding/bepinex/BepInExPack_Valheim
+        key: ${{ runner.os }}-bepinex-valheim-${{ inputs.bepinex-version }}
+
+    - name: Download BepInEx pack
+      if: steps.bepinex-cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        BEPINEX_VERSION: ${{ inputs.bepinex-version }}
+      run: |
+        set -euo pipefail
+
+        archive="${RUNNER_TEMP}/bepinex-valheim-${BEPINEX_VERSION}.zip"
+        extract_root="${RUNNER_TEMP}/bepinex-valheim-extracted"
+        target_root="${HOME}/valheim-modding/bepinex"
+
+        curl \
+          --fail \
+          --silent \
+          --show-error \
+          --location \
+          --retry 4 \
+          --retry-all-errors \
+          --retry-delay 5 \
+          --output "${archive}" \
+          "https://thunderstore.io/package/download/denikson/BepInExPack_Valheim/${BEPINEX_VERSION}/"
+
+        # Inspect the archive before extraction, then locate its actual pack root.
+        unzip -l "${archive}"
+        mkdir -p "${extract_root}" "${target_root}"
+        unzip -q "${archive}" -d "${extract_root}"
+
+        core_dir="$(
+          find "${extract_root}" -type d \
+            -path '*/BepInExPack_Valheim/BepInEx/core' \
+            -print -quit
+        )"
+        if [[ -z "${core_dir}" ]]; then
+          echo "BepInExPack_Valheim/BepInEx/core was not found in the downloaded archive." >&2
+          exit 1
+        fi
+
+        pack_dir="${core_dir%/BepInEx/core}"
+        if [[ -e "${target_root}/BepInExPack_Valheim" ]]; then
+          echo "Unexpected existing BepInEx target on a cache miss." >&2
+          exit 1
+        fi
+        mv "${pack_dir}" "${target_root}/BepInExPack_Valheim"
+
+        test -f "${target_root}/BepInExPack_Valheim/BepInEx/core/BepInEx.dll"
+
+    - name: Verify BepInEx layout
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -f "${HOME}/valheim-modding/bepinex/BepInExPack_Valheim/BepInEx/core/BepInEx.dll"
+        test -f "${HOME}/valheim-modding/bepinex/BepInExPack_Valheim/BepInEx/core/0Harmony.dll"
+
+    - name: Install Valheim dedicated server
+      if: steps.game-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        sudo apt-get update
+        sudo apt-get install --yes lib32gcc-s1
+
+        steamcmd_dir="${HOME}/valheim-modding/steamcmd"
+        steamcmd_archive="${RUNNER_TEMP}/steamcmd_linux.tar.gz"
+        mkdir -p "${steamcmd_dir}"
+
+        curl \
+          --fail \
+          --silent \
+          --show-error \
+          --location \
+          --retry 4 \
+          --retry-all-errors \
+          --retry-delay 5 \
+          --output "${steamcmd_archive}" \
+          https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz
+        tar -xzf "${steamcmd_archive}" -C "${steamcmd_dir}"
+
+        "${steamcmd_dir}/steamcmd.sh" +login anonymous +quit
+
+        install_succeeded=false
+        for attempt in {1..4}; do
+          if "${steamcmd_dir}/steamcmd.sh" \
+            +force_install_dir "${HOME}/valheim-modding/server" \
+            +login anonymous \
+            +app_update 896660 validate \
+            +quit; then
+            install_succeeded=true
+            break
+          fi
+
+          if (( attempt < 4 )); then
+            echo "Valheim server install attempt ${attempt} failed; retrying in 15 seconds..." >&2
+            sleep 15
+          fi
+        done
+
+        if [[ "${install_succeeded}" != true ]]; then
+          echo "Valheim server install failed after 4 attempts." >&2
+          exit 1
+        fi
+
+    - name: Verify Valheim managed assemblies
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -f "${HOME}/valheim-modding/server/valheim_server_Data/Managed/assembly_valheim.dll"
+
+    - name: Publicize Valheim assemblies
+      if: steps.game-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        export DOTNET_ROLL_FORWARD=LatestMajor
+
+        dotnet tool install --global BepInEx.AssemblyPublicizer.CLI --version 0.4.3
+        mkdir -p "${HOME}/valheim-modding/publicized"
+        cd "${HOME}/valheim-modding/server/valheim_server_Data/Managed"
+
+        for f in assembly_valheim assembly_utils assembly_guiutils assembly_googleanalytics assembly_lux assembly_postprocessing assembly_simplemeshcombine assembly_sunshafts; do
+          "${HOME}/.dotnet/tools/assembly-publicizer" \
+            "${f}.dll" \
+            --output "${HOME}/valheim-modding/publicized/${f}_publicized.dll"
+        done
+
+    - name: Verify publicized assemblies
+      shell: bash
+      run: |
+        set -euo pipefail
+        for f in assembly_valheim assembly_utils assembly_guiutils assembly_googleanalytics assembly_lux assembly_postprocessing assembly_simplemeshcombine assembly_sunshafts; do
+          test -f "${HOME}/valheim-modding/publicized/${f}_publicized.dll"
+        done
+
+    - name: Assemble modded testserver
+      if: inputs.testserver == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Mirrors ~/valheim-modding/harness/install-bepinex.sh: a throwaway copy of the
+        # pristine server with the pinned BepInEx pack overlaid and an empty world dir.
+        base="${HOME}/valheim-modding"
+        pack="${base}/bepinex/BepInExPack_Valheim"
+        testserver="${base}/testserver"
+
+        mkdir -p "${testserver}/worlds/worlds_local"
+        rsync -a --delete --exclude='/worlds/' "${base}/server/" "${testserver}/"
+
+        mkdir -p "${testserver}/BepInEx/plugins" "${testserver}/BepInEx/config" "${testserver}/doorstop_libs"
+        rsync -a --delete --exclude='/plugins/' --exclude='/config/' "${pack}/BepInEx/" "${testserver}/BepInEx/"
+        rsync -a "${pack}/BepInEx/plugins/" "${testserver}/BepInEx/plugins/"
+        rsync -a "${pack}/BepInEx/config/" "${testserver}/BepInEx/config/"
+        rsync -a --delete "${pack}/doorstop_libs/" "${testserver}/doorstop_libs/"
+        rsync -a "${pack}/doorstop_config.ini" "${pack}/winhttp.dll" "${testserver}/"
+
+        test -x "${testserver}/valheim_server.x86_64"
+        test -f "${testserver}/doorstop_libs/libdoorstop_x64.so"
+        test -f "${testserver}/BepInEx/core/BepInEx.Preloader.dll"
+        test -d "${testserver}/worlds/worlds_local"

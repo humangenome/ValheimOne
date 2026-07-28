@@ -2,9 +2,19 @@
 
 The release flow is: **build → reference config → package → smoke → tag → GitHub release draft.**
 
+Pushing a `v*` tag runs the **Release** workflow (`.github/workflows/release.yml`), which does the packaging half of that list for you: it re-runs the version assert, the contract test, `tools/package-release.sh`, an artifact check, and then creates the GitHub release **as a draft** with all three artifacts attached. CI never publishes a release — publishing is always a human decision.
+
+Steps 1, 2 and 4 below are still local work. Step 3 and step 6 are what the workflow automates; run them by hand only when you need artifacts without a tag.
+
 ## 1. Version bump
 
 `src/ValheimOne/Networking/VersionInfo.cs` → `PluginVersion` is the single source of truth; `tools/package-release.sh` reads the version from it. Keep `<Version>`/`<AssemblyVersion>`/`<FileVersion>` in `src/ValheimOne/ValheimOne.csproj` in sync, and move the `[Unreleased]` items in `CHANGELOG.md` under the new version heading.
+
+CI enforces all of that. `tools/ci/assert-version.sh` runs on every build and fails if the csproj properties drift from `PluginVersion`; the release run additionally fails if the tag is not `v<PluginVersion>` or `CHANGELOG.md` has no `## [<version>] - <date>` heading. Run it locally before tagging:
+
+```bash
+tools/ci/assert-version.sh --tag v<version>
+```
 
 ## 2. Reference config
 
@@ -62,7 +72,31 @@ git tag v<version>
 git push origin v<version>
 ```
 
+Pushing the tag starts the Release workflow. Watch it: `gh run watch $(gh run list --workflow Release --limit 1 --json databaseId --jq '.[0].databaseId')`.
+
 ## 6. GitHub release draft
+
+The Release workflow creates it. It re-runs the version assert, checks that a local `CONTRACT PASS` was recorded for this version, rebuilds, packages, proves the zips are byte-identical across two packaging runs, verifies the artifact layout and checksums, and then:
+
+- creates the release as a **draft** with all three artifacts and a placeholder body, or
+- if a draft already exists for the tag, refreshes its assets and leaves the body alone, or
+- refuses to touch the release at all if it is already published.
+
+Then replace the placeholder body with hand-written user-facing notes:
+
+```bash
+gh release edit v<version> --notes-file <hand-written notes>
+```
+
+Release notes are hand-written for users (what changed, upgrade notes, config additions); `CHANGELOG.md` is the internal engineering log, not a paste source.
+
+To build and check artifacts without touching any release, dispatch a dry run:
+
+```bash
+gh workflow run Release --field tag=v<version> --field dry_run=true
+```
+
+Manual fallback, if the workflow is unavailable:
 
 ```bash
 gh release create v<version> --draft --title "ValheimOne <version>" \
@@ -71,8 +105,6 @@ gh release create v<version> --draft --title "ValheimOne <version>" \
   artifacts/release/ValheimOne-full-<version>.zip \
   artifacts/release/SHA256SUMS-<version>.txt
 ```
-
-Release notes are hand-written for users (what changed, upgrade notes, config additions); `CHANGELOG.md` is the internal engineering log, not a paste source.
 
 ## Post-game-update contract test (mandatory)
 
@@ -83,6 +115,8 @@ tools/contract-test.sh
 ```
 
 The contract run installs a pinned config — the pristine reference config with the `tools/fixtures/contract.cfg` overlay applied ([Query] enabled) — and restores the harness's prior config afterward, so the enabled-module fingerprint does not depend on local harness state. `CONTRACT PASS` means the pinned world's worldgen fingerprint, Harmony patch contract, and module registration contract still match the checked-in golden fingerprint. `CONTRACT DRIFT` requires review: a worldgen hash change means map caches must be invalidated and worldgen changes reviewed; patch drift reports broken patch points in `failed=`; and module-count drift indicates registration changes.
+
+On every pass the script writes `tools/contract-pass.txt` — the version it passed at, the SHA-256 of the golden fingerprint it matched, the commit, and the timestamp. **Commit that file with the release.** The Release workflow runs the same contract test on its own runner, and additionally refuses to release a version with no recorded local pass, or whose recorded pass was taken against a different golden fingerprint (`tools/ci/assert-contract-pass.sh`).
 
 After reviewing an intentional change, re-baseline and check in the updated golden fingerprint with:
 

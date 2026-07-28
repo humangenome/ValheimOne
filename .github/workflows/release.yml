@@ -1,0 +1,290 @@
+name: Release
+
+# Packages a ValheimOne release the same way RELEASING.md does by hand, and
+# creates the GitHub release as a DRAFT with all three artifacts attached.
+#
+# Drafts are deliberate: nothing is ever published by CI. Publishing is a
+# release-day decision made by a human.
+#
+# Triggers:
+#   - pushing a `v*` tag       -> full run against that tag
+#   - workflow_dispatch        -> runs against the dispatched ref; `tag` is the
+#                                 tag the version must match, `dry_run` (default
+#                                 true) builds and packages without touching any
+#                                 GitHub release.
+
+'on':
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag the version must match (e.g. v0.12.2)'
+        required: true
+        type: string
+      dry_run:
+        description: 'Build, gate and package only — do not create or touch a GitHub release'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  BEPINEX_VERSION: 5.4.2333
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+  DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # Cheap gates first: a version or contract mistake should fail in seconds,
+      # not after a 1.4 GB game install.
+      - name: Assert tag matches PluginVersion
+        shell: bash
+        run: tools/ci/assert-version.sh --tag "${RELEASE_TAG}"
+
+      - name: Assert a local CONTRACT PASS was recorded for this version
+        shell: bash
+        run: tools/ci/assert-contract-pass.sh
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "Releasing ValheimOne ${version} (dry_run=${DRY_RUN})"
+
+      - name: Set up Valheim toolchain
+        id: toolchain
+        uses: ./.github/actions/valheim-toolchain
+        with:
+          bepinex-version: ${{ env.BEPINEX_VERSION }}
+          testserver: 'true'
+
+      - name: Contract test
+        id: contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="${RUNNER_TEMP}/contract.log"
+          set +e
+          tools/contract-test.sh 2>&1 | tee "${log}"
+          status=${PIPESTATUS[0]}
+          set -e
+          if (( status != 0 )); then
+            echo "::error::contract test exited ${status}"
+            exit "${status}"
+          fi
+          grep -q '^CONTRACT PASS$' "${log}" || {
+            echo "::error::contract test did not print CONTRACT PASS"
+            exit 1
+          }
+
+      - name: Package release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools/package-release.sh
+
+      - name: Assert deterministic packaging
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          out="artifacts/release"
+          first="${RUNNER_TEMP}/first-pass"
+          mkdir -p "${first}"
+          cp "${out}/ValheimOne-${VERSION}.zip" \
+             "${out}/ValheimOne-full-${VERSION}.zip" \
+             "${out}/SHA256SUMS-${VERSION}.txt" \
+             "${first}/"
+
+          # Re-package from the same build output; the zips must come out byte-identical.
+          tools/package-release.sh --skip-build
+
+          for f in "ValheimOne-${VERSION}.zip" "ValheimOne-full-${VERSION}.zip" "SHA256SUMS-${VERSION}.txt"; do
+            if ! cmp -s "${first}/${f}" "${out}/${f}"; then
+              echo "::error::packaging is not deterministic: ${f} differs between two runs"
+              exit 1
+            fi
+            echo "deterministic: ${f}"
+          done
+
+      - name: Verify artifacts
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          out="artifacts/release"
+          plugin_zip="${out}/ValheimOne-${VERSION}.zip"
+          full_zip="${out}/ValheimOne-full-${VERSION}.zip"
+          sums="${out}/SHA256SUMS-${VERSION}.txt"
+
+          for f in "${plugin_zip}" "${full_zip}" "${sums}"; do
+            test -s "${f}" || { echo "::error::missing or empty artifact ${f}"; exit 1; }
+          done
+
+          ( cd "${out}" && sha256sum -c "SHA256SUMS-${VERSION}.txt" )
+
+          # Plugin zip is exactly the plugin and its pristine config.
+          plugin_entries="$(unzip -Z1 "${plugin_zip}" | LC_ALL=C sort | tr '\n' ' ')"
+          expected="BepInEx/config/valheimone.cfg BepInEx/plugins/ValheimOne.dll "
+          if [[ "${plugin_entries}" != "${expected}" ]]; then
+            echo "::error::unexpected plugin zip contents: ${plugin_entries}"
+            exit 1
+          fi
+
+          # The shipped config must be the checked-in reference config, byte for byte.
+          unzip -p "${plugin_zip}" BepInEx/config/valheimone.cfg > "${RUNNER_TEMP}/shipped.cfg"
+          cmp "${RUNNER_TEMP}/shipped.cfg" tools/release/valheimone.cfg
+
+          # The shipped DLL must be this run's build output.
+          unzip -p "${plugin_zip}" BepInEx/plugins/ValheimOne.dll > "${RUNNER_TEMP}/shipped.dll"
+          cmp "${RUNNER_TEMP}/shipped.dll" src/ValheimOne/bin/Release/net472/ValheimOne.dll
+
+          # Full zip carries the pinned BepInEx pack alongside the plugin.
+          for entry in \
+            BepInEx/core/BepInEx.dll \
+            BepInEx/core/0Harmony.dll \
+            BepInEx/plugins/ValheimOne.dll \
+            BepInEx/config/valheimone.cfg \
+            doorstop_libs/libdoorstop_x64.so \
+            doorstop_config.ini \
+            winhttp.dll \
+            start_server_bepinex.sh; do
+            unzip -Z1 "${full_zip}" | grep -Fxq "${entry}" || {
+              echo "::error::full zip is missing ${entry}"
+              exit 1
+            }
+          done
+
+          echo "ARTIFACTS OK"
+          cat "${sums}"
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ValheimOne-release-${{ steps.version.outputs.version }}
+          path: |
+            artifacts/release/ValheimOne-${{ steps.version.outputs.version }}.zip
+            artifacts/release/ValheimOne-full-${{ steps.version.outputs.version }}.zip
+            artifacts/release/SHA256SUMS-${{ steps.version.outputs.version }}.txt
+          if-no-files-found: error
+
+      - name: Create or update the draft release
+        if: env.DRY_RUN != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          out="artifacts/release"
+          assets=(
+            "${out}/ValheimOne-${VERSION}.zip"
+            "${out}/ValheimOne-full-${VERSION}.zip"
+            "${out}/SHA256SUMS-${VERSION}.txt"
+          )
+
+          notes="${RUNNER_TEMP}/notes.md"
+          {
+            echo "> **Draft — release notes are hand-written before publishing.**"
+            echo "> Write what changed for users and any upgrade notes here."
+            echo "> \`CHANGELOG.md\` is the internal engineering log and is never pasted in."
+            echo
+            echo "## Install"
+            echo
+            echo "- \`ValheimOne-${VERSION}.zip\` — plugin only, for servers already running BepInEx 5.4.x."
+            echo "- \`ValheimOne-full-${VERSION}.zip\` — plugin plus the BepInEx pack, for a from-scratch install."
+            echo
+            echo "## Checksums"
+            echo
+            echo '```'
+            cat "${out}/SHA256SUMS-${VERSION}.txt"
+            echo '```'
+          } > "${notes}"
+
+          existing_draft="$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft 2>/dev/null || true)"
+
+          if [[ -z "${existing_draft}" ]]; then
+            gh release create "${RELEASE_TAG}" \
+              --draft \
+              --verify-tag \
+              --title "ValheimOne ${VERSION}" \
+              --notes-file "${notes}" \
+              "${assets[@]}"
+            echo "Created draft release ${RELEASE_TAG}"
+          elif [[ "${existing_draft}" == "true" ]]; then
+            # Never rewrite hand-written notes on an existing draft; refresh assets only.
+            gh release upload "${RELEASE_TAG}" "${assets[@]}" --clobber
+            echo "Refreshed assets on existing draft release ${RELEASE_TAG}"
+          else
+            echo "::error::release ${RELEASE_TAG} already exists and is PUBLISHED; refusing to modify it"
+            exit 1
+          fi
+
+      - name: Verify the release is a draft with all three assets
+        if: env.DRY_RUN != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          is_draft="$(gh release view "${RELEASE_TAG}" --json isDraft --jq .isDraft)"
+          [[ "${is_draft}" == "true" ]] || {
+            echo "::error::release ${RELEASE_TAG} is not a draft"
+            exit 1
+          }
+
+          gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' | LC_ALL=C sort > "${RUNNER_TEMP}/assets.txt"
+          cat "${RUNNER_TEMP}/assets.txt"
+          for f in "SHA256SUMS-${VERSION}.txt" "ValheimOne-${VERSION}.zip" "ValheimOne-full-${VERSION}.zip"; do
+            grep -Fxq "${f}" "${RUNNER_TEMP}/assets.txt" || {
+              echo "::error::draft release ${RELEASE_TAG} is missing asset ${f}"
+              exit 1
+            }
+          done
+          echo "DRAFT RELEASE OK"
+
+      - name: Write release summary
+        if: always()
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## ValheimOne release ${VERSION}"
+            echo
+            echo "- Tag: \`${RELEASE_TAG}\`"
+            echo "- Dry run: \`${DRY_RUN}\`"
+            echo "- Valheim dedicated-server build ID: ${{ steps.toolchain.outputs.buildid || 'unavailable' }}"
+            if [[ -f "artifacts/release/SHA256SUMS-${VERSION}.txt" ]]; then
+              echo
+              echo '```'
+              cat "artifacts/release/SHA256SUMS-${VERSION}.txt"
+              echo '```'
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
