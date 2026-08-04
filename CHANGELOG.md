@@ -4,6 +4,23 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-08-04
+
+### Added
+
+- LiveMap admin and shared views now include World Timelapse, an aggregate history overlay with a bottom-of-map timeline scrubber, play/pause, 1x/4x/12x speeds, day and date readouts, arrow-key frame stepping, and Home, End, Space, and Escape controls.
+- The server now records periodic aggregate world-state snapshots of the explored-fog mask, clustered base footprints, world day and boss progression, movement harvested from the activity heatmap's hourly slices before its seven-day window expires, and portal, bed, and ward positions when the entity layer is enabled.
+- `GET /api/timelapse` and `GET /api/timelapse/frame` now serve the frame index and individual frames to admin and shared views.
+- The `[LiveMap]` section now includes `Timelapse` (default `true`), `TimelapseIntervalMinutes` (default `60`, clamped to `5`–`1440`), and `PublicTimelapse` (default `false`) configuration keys.
+
+### Changed
+
+- Live fog, activity heatmap, base, portal, bed, ward, portal-network, and ward-radius layers now hide while World Timelapse is open and return to their prior visibility when it closes, keeping historical layers from overlapping their live counterparts.
+
+### Notes
+
+- Timelapse snapshots store state rather than images. Retention keeps eligible frames for 14 days, then thins older history to the newest frame per UTC day for up to one year, subject to hard caps of 1,024 frames and 24 MB; the oldest frames are evicted first and the newest frame is always retained. Snapshots contain no individual player positions or names, and movement is aggregate only. Public requests receive a 404 unless `PublicTimelapse` is explicitly enabled.
+
 ## [0.12.2] - 2026-07-24
 
 ### Fixed

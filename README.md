@@ -38,7 +38,7 @@ Your whole world in a browser, drawn from the server seed and updating in real t
 
 ![ValheimOne Live Map, admin view](docs/screenshots/livemap-admin.png)
 
-Turn on the heatmap to see where everyone has been over the last day or week, or open the Sagas leaderboard for playtime, deaths and distance travelled.
+Turn on the heatmap to see where everyone has been over the last day or week, open World Timelapse to scrub through explored fog, base growth and aggregate movement history, or view the Sagas leaderboard for playtime, deaths and distance travelled.
 
 <a id="sharing"></a>
 

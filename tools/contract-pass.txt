@@ -1,4 +1,4 @@
-version=0.12.2
+version=0.13.0
 golden-sha256=303fc4280f65904b517afb54b013c3fcb3a603373110c7e45cae345b8ae35664
-commit=8434d6c
-recorded=2026-08-04T14:25:59Z
+commit=158dfc0
+recorded=2026-08-04T15:08:29Z

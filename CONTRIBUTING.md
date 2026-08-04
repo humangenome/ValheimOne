@@ -10,6 +10,10 @@ Thanks for helping build ValheimOne. Please discuss large features in an issue b
 4. Run `./build.sh` and keep the build free of errors before submitting a change.
 5. Update `README.md` and `CHANGELOG.md` when behavior or operator-facing configuration changes.
 
+## Development tools
+
+`tools/timelapse-demo-seed.py` generates synthetic `.vof` frames for World Timelapse UI development and demos. Use an isolated test directory and never point it at production data. The tool labels the files on disk and embeds `DEMO` in every frame's season field, but the current web UI does not display that field; visibly caption every resulting screenshot or video as synthetic demo data.
+
 ## Verify before you patch
 
 Check every target member's existence and runtime visibility against the original Valheim game assembly before writing a patch. Use a verified public API where one exists and cached reflection for vanilla-private members. Do not use transpilers. Install patches at startup and keep their behavior behind runtime `Enabled` guards so synchronized configuration can hot-enable features safely.
