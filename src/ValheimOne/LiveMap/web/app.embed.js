@@ -264,6 +264,13 @@
     var CINEMA_AMBIENT_DURATION_SEC = 6;
     var CINEMA_ENTRY_DURATION_SEC = 2.75;
     var CINEMA_TOUR_BOSS_COUNT = 5;
+    var TIMELAPSE_FRAME_CACHE_LIMIT = 24;
+    var TIMELAPSE_WORLD_RADIUS = 12288;
+    var TIMELAPSE_SPEEDS = {
+        "1x": 2,
+        "4x": 8,
+        "12x": 24
+    };
     var LAYER_STORAGE_KEY = "vo-livemap-layers-v2";
     var LEGACY_LAYER_STORAGE_KEY = "vo-livemap-layers";
     var LEGACY_MINIMAP_STORAGE_KEY = "vo-livemap-minimap";
@@ -646,6 +653,8 @@
         fog: true,
         heatmap: false,
         heatmapWindow: "24h",
+        timelapse: false,
+        timelapseSpeed: "4x",
         regions: true,
         tint: true,
         minimap: false,
@@ -893,6 +902,31 @@
     var heatmapRequestPending = false;
     var heatmapRequestSequence = 0;
     var latestHeatmap = null;
+    var timelapseAvailability = "unknown";
+    var timelapseIndex = null;
+    var timelapseIndexPromise = null;
+    var timelapseFrameCache = new Map();
+    var timelapseFrameRequests = new Map();
+    var timelapseRequestSequence = 0;
+    var timelapseCurrentIndex = -1;
+    var timelapseRequestedIndex = -1;
+    var timelapseRenderedFrame = null;
+    var timelapseFogLayer = null;
+    var timelapseMovementLayer = null;
+    var timelapseMarkerLayer = null;
+    var timelapseScrubber = null;
+    var timelapseTrack = null;
+    var timelapsePlayButton = null;
+    var timelapseReadoutDay = null;
+    var timelapseReadoutDate = null;
+    var timelapseSpeedControl = null;
+    var timelapsePlaying = false;
+    var timelapseAnimationFrame = 0;
+    var timelapseAnimationTimestamp = 0;
+    var timelapseAnimationAccumulator = 0;
+    var timelapseTrackSyncing = false;
+    var timelapseRestoreVisibility = null;
+    var timelapseBasePulses = new Map();
     var initialCodexToken = codexTokenFromHash(appHash());
     var requestedTab = initialCodexToken !== null ? "codex" : loadRequestedTab();
     var activeTab = "map";
@@ -1387,6 +1421,9 @@
 
         var priorTab = activeTab;
         activeTab = nextTab;
+        if (activeTab !== "map" && timelapsePlaying) {
+            stopTimelapsePlayback();
+        }
         var showConsole = activeTab === "console";
         var showCodex = activeTab === "codex";
         setTabButtonState(elements.mapTab, !showConsole && !showCodex);
@@ -3963,6 +4000,12 @@
                 if (["24h", "7d"].indexOf(saved.heatmapWindow) !== -1) {
                     settings.heatmapWindow = saved.heatmapWindow;
                 }
+                if (Object.prototype.hasOwnProperty.call(
+                    TIMELAPSE_SPEEDS,
+                    saved.timelapseSpeed
+                )) {
+                    settings.timelapseSpeed = saved.timelapseSpeed;
+                }
                 if (typeof saved.poiOpacity === "number" &&
                     Number.isFinite(saved.poiOpacity)) {
                     settings.poiOpacity = sanitizePoiOpacity(saved.poiOpacity);
@@ -5599,6 +5642,9 @@
         map.createPane("fogPane");
         map.getPane("fogPane").style.zIndex = "350";
         map.getPane("fogPane").style.pointerEvents = "none";
+        map.createPane("timelapsePane");
+        map.getPane("timelapsePane").style.zIndex = "355";
+        map.getPane("timelapsePane").style.pointerEvents = "none";
         map.createPane("tintPane");
         map.getPane("tintPane").style.zIndex = "360";
         map.getPane("tintPane").style.pointerEvents = "none";
@@ -5657,6 +5703,7 @@
         bindMapPopupEvents();
         ensureFollowPill();
         createLayersControl();
+        probeTimelapseAvailability();
         createHeatmapLegendControl();
         createCompassControl();
         createScaleBarControl();
@@ -5721,6 +5768,15 @@
         wardRadiusLayer = L.layerGroup();
         pingLayer = L.layerGroup().addTo(map);
         chatLayer = L.layerGroup().addTo(map);
+        timelapseFogLayer = createTimelapseFogLayer();
+        timelapseMovementLayer = createActivityHeatmapLayer({
+            canvasClass: "timelapse-movement-canvas",
+            maximumOpacity: 0.64,
+            minimumOpacity: 0.04,
+            pane: "timelapsePane",
+            reuseSource: true
+        });
+        timelapseMarkerLayer = L.layerGroup();
         POI_GROUP_ORDER.forEach(function (group) {
             poiLayers.set(group, L.layerGroup());
             poiRecords.set(group, []);
@@ -5760,18 +5816,29 @@
         };
     }
 
-    function createActivityHeatmapLayer() {
+    function createActivityHeatmapLayer(options) {
+        options = options || {};
+        var canvasClass = options.canvasClass || "activity-heatmap-canvas";
+        var paneName = options.pane || "heatmapPane";
+        var reuseSource = options.reuseSource === true;
+        var minimumOpacity = Number.isFinite(options.minimumOpacity)
+            ? options.minimumOpacity
+            : 0.10;
+        var maximumOpacity = Number.isFinite(options.maximumOpacity)
+            ? options.maximumOpacity
+            : 0.90;
         var HeatmapLayer = L.Layer.extend({
             initialize: function () {
                 this._canvas = null;
                 this._source = null;
+                this._reusableSource = null;
                 this._payload = null;
             },
             onAdd: function (activeMap) {
                 this._canvas = L.DomUtil.create(
                     "canvas",
-                    "activity-heatmap-canvas",
-                    activeMap.getPane("heatmapPane")
+                    canvasClass,
+                    activeMap.getPane(paneName)
                 );
                 activeMap.on("moveend zoomend resize", this._redraw, this);
                 this._redraw();
@@ -5785,7 +5852,19 @@
             },
             setData: function (payload) {
                 this._payload = payload;
-                this._source = payload ? buildHeatmapSource(payload) : null;
+                if (payload) {
+                    this._source = buildHeatmapSource(
+                        payload,
+                        reuseSource ? this._reusableSource : null,
+                        minimumOpacity,
+                        maximumOpacity
+                    );
+                    if (reuseSource) {
+                        this._reusableSource = this._source;
+                    }
+                } else {
+                    this._source = null;
+                }
                 this._redraw();
             },
             _redraw: function () {
@@ -5836,6 +5915,135 @@
         return new HeatmapLayer();
     }
 
+    function createTimelapseFogLayer() {
+        var fogSize = 512;
+        var fogCellCount = fogSize * fogSize;
+        var FogLayer = L.Layer.extend({
+            initialize: function () {
+                this._canvas = null;
+                this._source = document.createElement("canvas");
+                this._source.width = fogSize;
+                this._source.height = fogSize;
+                this._sourceContext = this._source.getContext("2d");
+                this._imageData = this._sourceContext.createImageData(fogSize, fogSize);
+                this._hasData = false;
+                for (var cell = 0; cell < fogCellCount; cell++) {
+                    var offset = cell * 4;
+                    this._imageData.data[offset] = 18;
+                    this._imageData.data[offset + 1] = 14;
+                    this._imageData.data[offset + 2] = 10;
+                }
+            },
+            onAdd: function (activeMap) {
+                this._canvas = L.DomUtil.create(
+                    "canvas",
+                    "timelapse-fog-canvas",
+                    activeMap.getPane("timelapsePane")
+                );
+                activeMap.on("moveend zoomend resize", this._redraw, this);
+                this._redraw();
+            },
+            onRemove: function (activeMap) {
+                activeMap.off("moveend zoomend resize", this._redraw, this);
+                if (this._canvas && this._canvas.parentNode) {
+                    this._canvas.parentNode.removeChild(this._canvas);
+                }
+                this._canvas = null;
+            },
+            setFrame: function (frame) {
+                this.setData(frame && Array.isArray(frame.fog) ? frame.fog : null);
+            },
+            setData: function (runs) {
+                if (!runs) {
+                    this._hasData = false;
+                    this._redraw();
+                    return;
+                }
+
+                var total = 0;
+                for (var index = 0; index < runs.length; index++) {
+                    var runLength = Number(runs[index]);
+                    if (!Number.isInteger(runLength) || runLength < 0 ||
+                        total + runLength > fogCellCount) {
+                        this._hasData = false;
+                        this._redraw();
+                        return;
+                    }
+                    total += runLength;
+                }
+                if (total !== fogCellCount) {
+                    this._hasData = false;
+                    this._redraw();
+                    return;
+                }
+
+                var explored = false;
+                var cellIndex = 0;
+                for (var runIndex = 0; runIndex < runs.length; runIndex++) {
+                    var end = cellIndex + Number(runs[runIndex]);
+                    var alpha = explored ? 0 : 209;
+                    while (cellIndex < end) {
+                        this._imageData.data[(cellIndex * 4) + 3] = alpha;
+                        cellIndex++;
+                    }
+                    explored = !explored;
+                }
+                this._sourceContext.putImageData(this._imageData, 0, 0);
+                this._hasData = true;
+                this._redraw();
+            },
+            _redraw: function () {
+                if (!this._map || !this._canvas) {
+                    return;
+                }
+
+                var size = this._map.getSize();
+                var ratio = Math.min(2, window.devicePixelRatio || 1);
+                var width = Math.max(1, Math.round(size.x * ratio));
+                var height = Math.max(1, Math.round(size.y * ratio));
+                if (this._canvas.width !== width || this._canvas.height !== height) {
+                    this._canvas.width = width;
+                    this._canvas.height = height;
+                    this._canvas.style.width = size.x + "px";
+                    this._canvas.style.height = size.y + "px";
+                }
+
+                L.DomUtil.setPosition(
+                    this._canvas,
+                    this._map.containerPointToLayerPoint([0, 0])
+                );
+                var context = this._canvas.getContext("2d");
+                context.setTransform(1, 0, 0, 1, 0, 0);
+                context.clearRect(0, 0, width, height);
+                if (!this._hasData || !worldBounds) {
+                    return;
+                }
+
+                var northWest = this._map.latLngToContainerPoint(
+                    worldBounds.getNorthWest()
+                );
+                var southEast = this._map.latLngToContainerPoint(
+                    worldBounds.getSouthEast()
+                );
+                context.imageSmoothingEnabled = false;
+                context.drawImage(
+                    this._source,
+                    northWest.x * ratio,
+                    northWest.y * ratio,
+                    (southEast.x - northWest.x) * ratio,
+                    (southEast.y - northWest.y) * ratio
+                );
+            }
+        });
+        return new FogLayer();
+    }
+
+    function themeColor(variableName, fallback) {
+        var value = window.getComputedStyle(styleRoot)
+            .getPropertyValue(variableName).trim();
+        return value || fallback;
+    }
+
     function themeRgb(variableName) {
         var value = window.getComputedStyle(styleRoot)
             .getPropertyValue(variableName).trim();
@@ -5862,15 +6070,31 @@
         ];
     }
 
-    function buildHeatmapSource(payload) {
-        var canvas = document.createElement("canvas");
-        canvas.width = payload.size;
-        canvas.height = payload.size;
+    function buildHeatmapSource(
+        payload,
+        reusableCanvas,
+        minimumOpacity,
+        maximumOpacity
+    ) {
+        var canvas = reusableCanvas || document.createElement("canvas");
+        if (canvas.width !== payload.size || canvas.height !== payload.size) {
+            canvas.width = payload.size;
+            canvas.height = payload.size;
+            canvas._voHeatmapImageData = null;
+        }
         var context = canvas.getContext("2d");
-        var image = context.createImageData(payload.size, payload.size);
+        var image = canvas._voHeatmapImageData;
+        if (!image) {
+            image = context.createImageData(payload.size, payload.size);
+            canvas._voHeatmapImageData = image;
+        } else {
+            image.data.fill(0);
+        }
         var lowColor = themeRgb("--accent");
         var middleColor = themeRgb("--sun");
         var highColor = themeRgb("--raid");
+        minimumOpacity = Number.isFinite(minimumOpacity) ? minimumOpacity : 0.10;
+        maximumOpacity = Number.isFinite(maximumOpacity) ? maximumOpacity : 0.90;
         if (!lowColor || !middleColor || !highColor || payload.maxCount <= 0) {
             return canvas;
         }
@@ -5888,7 +6112,8 @@
             image.data[offset + 1] = color[1];
             image.data[offset + 2] = color[2];
             image.data[offset + 3] = Math.round(
-                (0.10 + (0.80 * Math.pow(intensity, 1.15))) * 255
+                (minimumOpacity + ((maximumOpacity - minimumOpacity) *
+                    Math.pow(intensity, 1.15))) * 255
             );
         });
         context.putImageData(image, 0, 0);
@@ -5970,7 +6195,8 @@
     }
 
     function heatmapIsEnabled() {
-        return hasLiveAccess() && layerSettings.heatmap === true &&
+        return hasLiveAccess() && !timelapseIsActive() &&
+            layerSettings.heatmap === true &&
             Boolean(map && heatmapLayer);
     }
 
@@ -6043,6 +6269,948 @@
                 scheduleHeatmapPoll(staleRequest ? 0 : HEATMAP_POLL_INTERVAL_MS);
             }
         }
+    }
+
+    function timelapseIsActive() {
+        return appRoot.classList.contains("is-timelapse");
+    }
+
+    function timelapseHasAccess() {
+        return currentView === "admin" || currentView === "shared";
+    }
+
+    function normalizeTimelapseIndex(payload) {
+        if (!payload || !Array.isArray(payload.frames)) {
+            return null;
+        }
+
+        var frames = [];
+        var seen = new Set();
+        for (var index = 0; index < payload.frames.length; index++) {
+            var source = payload.frames[index];
+            var timestamp = source && Number(source.t);
+            if (!Number.isSafeInteger(timestamp) || timestamp <= 0 || seen.has(timestamp)) {
+                return null;
+            }
+            seen.add(timestamp);
+            frames.push({
+                bases: Math.max(0, Math.floor(Number(source.bases) || 0)),
+                beds: Math.max(0, Math.floor(Number(source.beds) || 0)),
+                bossMask: Math.max(0, Math.floor(Number(source.bossMask) || 0)),
+                day: Math.max(0, Math.floor(Number(source.day) || 0)),
+                exploredCells: Math.max(
+                    0,
+                    Math.floor(Number(source.exploredCells) || 0)
+                ),
+                exploredPct: Math.max(0, Number(source.exploredPct) || 0),
+                portals: Math.max(0, Math.floor(Number(source.portals) || 0)),
+                t: timestamp,
+                wards: Math.max(0, Math.floor(Number(source.wards) || 0))
+            });
+        }
+        frames.sort(function (left, right) {
+            return left.t - right.t;
+        });
+        return {
+            frames: frames,
+            intervalMinutes: Math.max(0, Math.floor(Number(payload.intervalMinutes) || 0))
+        };
+    }
+
+    function syncTimelapseLayerRow() {
+        if (!layersRows) {
+            return;
+        }
+        layersRows.querySelectorAll(".timelapse-layer-row").forEach(function (row) {
+            if (!timelapseHasAccess() || timelapseAvailability !== "available") {
+                row.remove();
+                return;
+            }
+            var checkbox = row.querySelector('input[data-layer-key="timelapse"]');
+            if (checkbox) {
+                checkbox.checked = layerSettings.timelapse === true;
+            }
+        });
+        updateLayerCounts();
+    }
+
+    function markTimelapseUnavailable() {
+        timelapseAvailability = "unavailable";
+        timelapseIndex = null;
+        var settingsChanged = layerSettings.timelapse === true;
+        layerSettings.timelapse = false;
+        if (settingsChanged) {
+            saveLayerSettings();
+        }
+        deactivateTimelapse();
+        syncTimelapseLayerRow();
+    }
+
+    function ensureTimelapseIndex() {
+        if (destroyed || !timelapseHasAccess() ||
+            timelapseAvailability === "unavailable") {
+            return Promise.resolve(null);
+        }
+        if (timelapseIndex) {
+            return Promise.resolve(timelapseIndex);
+        }
+        if (timelapseIndexPromise) {
+            return timelapseIndexPromise;
+        }
+
+        timelapseIndexPromise = fetchJson("api/timelapse").then(function (payload) {
+            if (destroyed || !timelapseHasAccess()) {
+                timelapseIndexPromise = null;
+                return null;
+            }
+            var normalized = normalizeTimelapseIndex(payload);
+            if (normalized && normalized.frames.length === 0) {
+                markTimelapseUnavailable();
+                return null;
+            }
+            if (!normalized) {
+                throw new Error("Invalid timelapse index response");
+            }
+            timelapseIndex = normalized;
+            timelapseAvailability = "available";
+            syncTimelapseLayerRow();
+            return normalized;
+        }).catch(function (error) {
+            if (destroyed || !timelapseHasAccess()) {
+                timelapseIndexPromise = null;
+                return null;
+            }
+            if (error && (error.status === 403 || error.status === 404)) {
+                markTimelapseUnavailable();
+            } else {
+                timelapseIndexPromise = null;
+            }
+            return null;
+        });
+        return timelapseIndexPromise;
+    }
+
+    function probeTimelapseAvailability() {
+        if (!map || !timelapseHasAccess() ||
+            timelapseAvailability === "unavailable") {
+            return;
+        }
+        ensureTimelapseIndex().then(function (index) {
+            if (destroyed || !map || !timelapseHasAccess()) {
+                return;
+            }
+            renderLayerRows();
+            if (index && layerSettings.timelapse) {
+                syncLayerVisibility();
+            }
+        });
+    }
+
+    function normalizeTimelapsePoint(value) {
+        if (!Array.isArray(value) || value.length !== 2) {
+            return null;
+        }
+        var x = Number(value[0]);
+        var z = Number(value[1]);
+        if (!Number.isFinite(x) || !Number.isFinite(z) ||
+            Math.abs(x) > TIMELAPSE_WORLD_RADIUS ||
+            Math.abs(z) > TIMELAPSE_WORLD_RADIUS) {
+            return null;
+        }
+        return [x, z];
+    }
+
+    function normalizeTimelapsePoints(values) {
+        if (!Array.isArray(values)) {
+            return null;
+        }
+        var points = [];
+        for (var index = 0; index < values.length; index++) {
+            var point = normalizeTimelapsePoint(values[index]);
+            if (!point) {
+                return null;
+            }
+            points.push(point);
+        }
+        return points;
+    }
+
+    function normalizeTimelapseFrame(payload, expectedTimestamp) {
+        if (!payload || Number(payload.t) !== expectedTimestamp ||
+            Number(payload.size) !== 512 || !Array.isArray(payload.fog) ||
+            payload.fog.length > (512 * 512) + 1 ||
+            Number(payload.movementSize) !== 128 ||
+            !Array.isArray(payload.bases) || !Array.isArray(payload.movement)) {
+            return null;
+        }
+
+        var fogCells = 0;
+        for (var runIndex = 0; runIndex < payload.fog.length; runIndex++) {
+            var runLength = Number(payload.fog[runIndex]);
+            if (!Number.isInteger(runLength) || runLength < 0 ||
+                fogCells + runLength > 512 * 512) {
+                return null;
+            }
+            fogCells += runLength;
+        }
+        if (fogCells !== 512 * 512) {
+            return null;
+        }
+
+        var bases = [];
+        for (var baseIndex = 0; baseIndex < payload.bases.length; baseIndex++) {
+            var sourceBase = payload.bases[baseIndex];
+            if (!Array.isArray(sourceBase) || sourceBase.length !== 4) {
+                return null;
+            }
+            var baseX = Number(sourceBase[0]);
+            var baseZ = Number(sourceBase[1]);
+            var baseRadius = Number(sourceBase[2]);
+            var basePieces = Number(sourceBase[3]);
+            if (!Number.isFinite(baseX) || !Number.isFinite(baseZ) ||
+                Math.abs(baseX) > TIMELAPSE_WORLD_RADIUS ||
+                Math.abs(baseZ) > TIMELAPSE_WORLD_RADIUS ||
+                !Number.isFinite(baseRadius) || baseRadius < 0 ||
+                !Number.isInteger(basePieces) || basePieces < 0) {
+                return null;
+            }
+            bases.push([baseX, baseZ, baseRadius, basePieces]);
+        }
+
+        var portals = normalizeTimelapsePoints(payload.portals);
+        var beds = normalizeTimelapsePoints(payload.beds);
+        var wards = normalizeTimelapsePoints(payload.wards);
+        if (!portals || !beds || !wards || payload.movement.length > 128 * 128) {
+            return null;
+        }
+
+        var movement = [];
+        var seenMovement = new Set();
+        var movementMaximum = 0;
+        for (var movementIndex = 0;
+            movementIndex < payload.movement.length;
+            movementIndex++) {
+            var sourceCell = payload.movement[movementIndex];
+            if (!Array.isArray(sourceCell) || sourceCell.length !== 2) {
+                return null;
+            }
+            var cellIndex = Number(sourceCell[0]);
+            var count = Number(sourceCell[1]);
+            if (!Number.isInteger(cellIndex) || cellIndex < 0 ||
+                cellIndex >= 128 * 128 || !Number.isInteger(count) || count <= 0 ||
+                seenMovement.has(cellIndex)) {
+                return null;
+            }
+            seenMovement.add(cellIndex);
+            movementMaximum = Math.max(movementMaximum, count);
+            movement.push([cellIndex, count]);
+        }
+
+        var reportedMovementMaximum = Number(payload.movementMax);
+        if (!Number.isFinite(reportedMovementMaximum) || reportedMovementMaximum < 0) {
+            return null;
+        }
+        return {
+            bases: bases,
+            beds: beds,
+            day: Math.max(0, Math.floor(Number(payload.day) || 0)),
+            fog: payload.fog,
+            movement: movement,
+            movementMax: Math.max(
+                movementMaximum,
+                Math.floor(reportedMovementMaximum)
+            ),
+            portals: portals,
+            t: expectedTimestamp,
+            wards: wards
+        };
+    }
+
+    function cachedTimelapseFrame(timestamp) {
+        if (!timelapseFrameCache.has(timestamp)) {
+            return null;
+        }
+        var frame = timelapseFrameCache.get(timestamp);
+        timelapseFrameCache.delete(timestamp);
+        timelapseFrameCache.set(timestamp, frame);
+        return frame;
+    }
+
+    function cacheTimelapseFrame(timestamp, frame) {
+        timelapseFrameCache.delete(timestamp);
+        timelapseFrameCache.set(timestamp, frame);
+        while (timelapseFrameCache.size > TIMELAPSE_FRAME_CACHE_LIMIT) {
+            var oldest = timelapseFrameCache.keys().next();
+            if (oldest.done) {
+                break;
+            }
+            timelapseFrameCache.delete(oldest.value);
+        }
+    }
+
+    function fetchTimelapseFrame(index) {
+        if (destroyed || !timelapseHasAccess() || !timelapseIndex || index < 0 ||
+            index >= timelapseIndex.frames.length || document.hidden) {
+            return Promise.resolve(null);
+        }
+        var timestamp = timelapseIndex.frames[index].t;
+        var cached = cachedTimelapseFrame(timestamp);
+        if (cached) {
+            return Promise.resolve(cached);
+        }
+        if (timelapseFrameRequests.has(timestamp)) {
+            return timelapseFrameRequests.get(timestamp);
+        }
+
+        var request = fetchJson(
+            "api/timelapse/frame?t=" + encodeURIComponent(timestamp)
+        ).then(function (payload) {
+            if (destroyed || !timelapseHasAccess()) {
+                return null;
+            }
+            var frame = normalizeTimelapseFrame(payload, timestamp);
+            if (!frame) {
+                throw new Error("Invalid timelapse frame response");
+            }
+            cacheTimelapseFrame(timestamp, frame);
+            return frame;
+        }).catch(function () {
+            return null;
+        }).then(function (frame) {
+            timelapseFrameRequests.delete(timestamp);
+            return frame;
+        });
+        timelapseFrameRequests.set(timestamp, request);
+        return request;
+    }
+
+    function loadTimelapseFrame(index, options) {
+        options = options || {};
+        if (destroyed || !timelapseHasAccess() || !timelapseIndex ||
+            !Number.isInteger(index) || index < 0 ||
+            index >= timelapseIndex.frames.length || document.hidden) {
+            return Promise.resolve(null);
+        }
+        if (options.prefetch === true) {
+            return fetchTimelapseFrame(index);
+        }
+
+        timelapseRequestedIndex = index;
+        var sequence = ++timelapseRequestSequence;
+        return fetchTimelapseFrame(index).then(function (frame) {
+            if (!frame || sequence !== timelapseRequestSequence ||
+                index !== timelapseRequestedIndex || document.hidden ||
+                destroyed || !timelapseHasAccess() ||
+                !layerSettings.timelapse || !timelapseIsActive()) {
+                return null;
+            }
+            timelapseCurrentIndex = index;
+            renderTimelapseFrame(frame);
+            if (timelapsePlaying) {
+                prefetchTimelapseFrames(index);
+            }
+            return frame;
+        });
+    }
+
+    function prefetchTimelapseFrames(index) {
+        if (destroyed || !timelapseHasAccess() || !timelapsePlaying ||
+            document.hidden || !timelapseIndex) {
+            return;
+        }
+        for (var offset = 1; offset <= 2; offset++) {
+            var nextIndex = index + offset;
+            if (nextIndex < timelapseIndex.frames.length) {
+                loadTimelapseFrame(nextIndex, { prefetch: true });
+            }
+        }
+    }
+
+    function appendTimelapseSpeedControl(parent) {
+        var segments = document.createElement("div");
+        segments.className = "timelapse-speed";
+        segments.setAttribute("role", "group");
+        segments.setAttribute("aria-label", "Timelapse speed");
+        ["1x", "4x", "12x"].forEach(function (speed) {
+            var button = document.createElement("button");
+            var isSelected = layerSettings.timelapseSpeed === speed;
+            button.type = "button";
+            button.className = "timelapse-speed-option" +
+                (isSelected ? " is-selected" : "");
+            button.dataset.timelapseSpeed = speed;
+            button.textContent = speed;
+            button.setAttribute("aria-pressed", String(isSelected));
+            addAppListener(button, "click", function () {
+                selectTimelapseSpeed(speed);
+            });
+            segments.appendChild(button);
+        });
+        parent.appendChild(segments);
+        timelapseSpeedControl = segments;
+    }
+
+    function selectTimelapseSpeed(speed) {
+        if (!Object.prototype.hasOwnProperty.call(TIMELAPSE_SPEEDS, speed) ||
+            layerSettings.timelapseSpeed === speed) {
+            return;
+        }
+        layerSettings.timelapseSpeed = speed;
+        saveLayerSettings();
+        timelapseAnimationTimestamp = 0;
+        timelapseAnimationAccumulator = 0;
+        syncTimelapseControls();
+    }
+
+    function syncTimelapseControls() {
+        if (timelapseSpeedControl) {
+            timelapseSpeedControl.querySelectorAll("[data-timelapse-speed]")
+                .forEach(function (button) {
+                    var isSelected = button.dataset.timelapseSpeed ===
+                        layerSettings.timelapseSpeed;
+                    button.classList.toggle("is-selected", isSelected);
+                    button.setAttribute("aria-pressed", String(isSelected));
+                });
+        }
+        if (timelapsePlayButton) {
+            var label = timelapsePlaying ? "Pause timelapse" : "Play timelapse";
+            timelapsePlayButton.setAttribute("aria-label", label);
+            timelapsePlayButton.title = label;
+            timelapsePlayButton.innerHTML = iconMarkup(
+                timelapsePlaying ? "pause" : "play",
+                timelapsePlaying ? "Ⅱ" : "▶"
+            );
+        }
+    }
+
+    function showTimelapseScrubber() {
+        if (destroyed || !timelapseHasAccess() ||
+            timelapseAvailability !== "available") {
+            return;
+        }
+        if (!timelapseScrubber) {
+            var playButton = document.createElement("button");
+            var track = document.createElement("input");
+            var readout = document.createElement("span");
+            var day = document.createElement("span");
+            var date = document.createElement("span");
+            var closeButton = document.createElement("button");
+
+            timelapseScrubber = document.createElement("div");
+            timelapseScrubber.className = "timelapse-scrubber";
+            playButton.type = "button";
+            playButton.className = "map-tool-button timelapse-play";
+            track.type = "range";
+            track.className = "timelapse-track";
+            track.min = "0";
+            track.step = "1";
+            track.setAttribute("aria-label", "Timelapse frame");
+            readout.className = "timelapse-readout";
+            day.className = "timelapse-readout-day";
+            day.textContent = "Day —";
+            date.className = "timelapse-readout-date";
+            date.textContent = "—";
+            closeButton.type = "button";
+            closeButton.className = "map-tool-button timelapse-close";
+            closeButton.setAttribute("aria-label", "Close timelapse");
+            closeButton.title = "Close timelapse";
+            closeButton.innerHTML = iconMarkup("close", "×");
+
+            readout.appendChild(day);
+            readout.appendChild(date);
+            timelapseScrubber.appendChild(playButton);
+            timelapseScrubber.appendChild(track);
+            timelapseScrubber.appendChild(readout);
+            appendTimelapseSpeedControl(timelapseScrubber);
+            timelapseScrubber.appendChild(closeButton);
+            elements.mapPane.appendChild(timelapseScrubber);
+
+            timelapseTrack = track;
+            timelapsePlayButton = playButton;
+            timelapseReadoutDay = day;
+            timelapseReadoutDate = date;
+            addAppListener(playButton, "click", toggleTimelapsePlayback);
+            addAppListener(closeButton, "click", function () {
+                setTimelapseEnabled(false);
+            });
+            addAppListener(track, "pointerdown", stopTimelapsePlayback);
+            addAppListener(track, "touchstart", stopTimelapsePlayback, {
+                passive: true
+            });
+            addAppListener(track, "input", function () {
+                if (timelapseTrackSyncing) {
+                    return;
+                }
+                stopTimelapsePlayback();
+                loadTimelapseFrame(Number(track.value));
+            });
+            addAppListener(document, "visibilitychange", timelapseVisibilityChanged);
+            addKeyboardListener(handleTimelapseKeyboard);
+            L.DomEvent.disableClickPropagation(timelapseScrubber);
+            L.DomEvent.disableScrollPropagation(timelapseScrubber);
+        }
+
+        timelapseTrack.max = String(
+            Math.max(0, timelapseIndex ? timelapseIndex.frames.length - 1 : 0)
+        );
+        timelapseScrubber.hidden = false;
+        appRoot.classList.add("is-timelapse");
+        syncTimelapseControls();
+    }
+
+    function hideTimelapseScrubber() {
+        if (timelapseScrubber) {
+            timelapseScrubber.hidden = true;
+        }
+        appRoot.classList.remove("is-timelapse");
+    }
+
+    function setTimelapseEnabled(enabled) {
+        enabled = enabled === true && timelapseHasAccess() &&
+            timelapseAvailability === "available";
+        layerSettings.timelapse = enabled;
+        saveLayerSettings();
+        syncTimelapseLayerRow();
+        syncLayerVisibility();
+    }
+
+    function captureTimelapseLiveVisibility() {
+        return {
+            bases: Boolean(map && poiLayers.get("bases") &&
+                map.hasLayer(poiLayers.get("bases"))),
+            bed: Boolean(map && entityLayers.get("bed") &&
+                map.hasLayer(entityLayers.get("bed"))),
+            fog: Boolean(map && fogOverlay && map.hasLayer(fogOverlay)),
+            heatmap: Boolean(map && heatmapLayer && map.hasLayer(heatmapLayer)),
+            keyboard: Boolean(map && map.keyboard && map.keyboard.enabled()),
+            portal: Boolean(map && entityLayers.get("portal") &&
+                map.hasLayer(entityLayers.get("portal"))),
+            portalNetwork: Boolean(map && portalNetworkLayer &&
+                map.hasLayer(portalNetworkLayer)),
+            ward: Boolean(map && entityLayers.get("ward") &&
+                map.hasLayer(entityLayers.get("ward"))),
+            wardRadius: Boolean(map && wardRadiusLayer && map.hasLayer(wardRadiusLayer))
+        };
+    }
+
+    function hideTimelapseLiveLayers() {
+        setLayerVisible(fogOverlay, false);
+        setLayerVisible(heatmapLayer, false);
+        setLayerVisible(poiLayers.get("bases"), false);
+        setLayerVisible(entityLayers.get("portal"), false);
+        setLayerVisible(entityLayers.get("bed"), false);
+        setLayerVisible(entityLayers.get("ward"), false);
+        setLayerVisible(portalNetworkLayer, false);
+        setLayerVisible(wardRadiusLayer, false);
+    }
+
+    function updateTimelapseRestoreVisibility() {
+        if (!timelapseRestoreVisibility || !timelapseIsActive()) {
+            return;
+        }
+        timelapseRestoreVisibility.fog = Boolean(fogAvailable &&
+            layerSettings.fog);
+        timelapseRestoreVisibility.heatmap = Boolean(timelapseHasAccess() &&
+            layerSettings.heatmap && heatmapLayer);
+        timelapseRestoreVisibility.bases = Boolean(
+            availablePoiGroups.has("bases") && layerSettings.bases &&
+            !isPoiGroupZoomGated("bases")
+        );
+        timelapseRestoreVisibility.portal = Boolean(
+            entityLayersAreAvailable() && layerSettings.portal
+        );
+        timelapseRestoreVisibility.bed = Boolean(
+            entityLayersAreAvailable() && layerSettings.bed
+        );
+        timelapseRestoreVisibility.ward = Boolean(
+            entityLayersAreAvailable() && layerSettings.ward
+        );
+        timelapseRestoreVisibility.portalNetwork = Boolean(
+            entityLayersAreAvailable() && layerSettings.portalNetwork
+        );
+        timelapseRestoreVisibility.wardRadius = Boolean(
+            entityLayersAreAvailable() && layerSettings.ward
+        );
+    }
+
+    function restoreTimelapseLiveLayers() {
+        if (!timelapseRestoreVisibility) {
+            return;
+        }
+        setLayerVisible(fogOverlay, timelapseRestoreVisibility.fog);
+        setLayerVisible(heatmapLayer, timelapseRestoreVisibility.heatmap);
+        setLayerVisible(poiLayers.get("bases"), timelapseRestoreVisibility.bases);
+        setLayerVisible(entityLayers.get("portal"), timelapseRestoreVisibility.portal);
+        setLayerVisible(entityLayers.get("bed"), timelapseRestoreVisibility.bed);
+        setLayerVisible(entityLayers.get("ward"), timelapseRestoreVisibility.ward);
+        setLayerVisible(
+            portalNetworkLayer,
+            timelapseRestoreVisibility.portalNetwork
+        );
+        setLayerVisible(wardRadiusLayer, timelapseRestoreVisibility.wardRadius);
+        if (timelapseRestoreVisibility.keyboard && map && map.keyboard) {
+            map.keyboard.enable();
+        }
+        syncHeatmapControls();
+        if (timelapseRestoreVisibility.heatmap) {
+            startHeatmapPolling();
+        }
+        timelapseRestoreVisibility = null;
+    }
+
+    function activateTimelapse() {
+        if (destroyed || !timelapseHasAccess() || timelapseIsActive() ||
+            timelapseAvailability !== "available" || !map) {
+            return;
+        }
+        ensureTimelapseIndex().then(function (index) {
+            if (destroyed || !timelapseHasAccess() || !index ||
+                !layerSettings.timelapse || timelapseIsActive() || !map) {
+                return;
+            }
+            timelapseRestoreVisibility = captureTimelapseLiveVisibility();
+            hideTimelapseLiveLayers();
+            if (timelapseRestoreVisibility.keyboard && map.keyboard) {
+                map.keyboard.disable();
+            }
+            showTimelapseScrubber();
+            stopHeatmapPolling();
+            syncHeatmapControls();
+            setLayerVisible(timelapseFogLayer, true);
+            setLayerVisible(timelapseMovementLayer, true);
+            setLayerVisible(timelapseMarkerLayer, true);
+            loadTimelapseFrame(index.frames.length - 1);
+        });
+    }
+
+    function deactivateTimelapse() {
+        stopTimelapsePlayback();
+        timelapseRequestSequence++;
+        timelapseRequestedIndex = -1;
+        timelapseCurrentIndex = -1;
+        timelapseRenderedFrame = null;
+        timelapseBasePulses.clear();
+        if (timelapseFogLayer) {
+            timelapseFogLayer.setFrame(null);
+        }
+        if (timelapseMovementLayer) {
+            timelapseMovementLayer.setData(null);
+        }
+        if (timelapseMarkerLayer) {
+            timelapseMarkerLayer.clearLayers();
+        }
+        setLayerVisible(timelapseFogLayer, false);
+        setLayerVisible(timelapseMovementLayer, false);
+        setLayerVisible(timelapseMarkerLayer, false);
+        hideTimelapseScrubber();
+        restoreTimelapseLiveLayers();
+    }
+
+    function previousTimelapseBasePieces(base, previousBases) {
+        var closestPieces = null;
+        var closestDistance = Infinity;
+        for (var index = 0; index < previousBases.length; index++) {
+            var previous = previousBases[index];
+            var deltaX = base[0] - previous[0];
+            var deltaZ = base[1] - previous[1];
+            var distanceSquared = (deltaX * deltaX) + (deltaZ * deltaZ);
+            var matchRadius = Math.max(64, base[2], previous[2]);
+            if (distanceSquared <= matchRadius * matchRadius &&
+                distanceSquared < closestDistance) {
+                closestDistance = distanceSquared;
+                closestPieces = previous[3];
+            }
+        }
+        return closestPieces;
+    }
+
+    function timelapseBasePulseKey(base) {
+        return Math.round(base[0] / 64) + ":" + Math.round(base[1] / 64);
+    }
+
+    function addTimelapsePointMarkers(points, color, radius, className) {
+        points.forEach(function (point) {
+            L.circleMarker(worldToLatLng(point[0], point[1]), {
+                bubblingMouseEvents: false,
+                className: className,
+                color: "#120e0a",
+                fill: true,
+                fillColor: color,
+                fillOpacity: 0.95,
+                interactive: false,
+                opacity: 0.94,
+                pane: "timelapsePane",
+                radius: radius,
+                stroke: true,
+                weight: 1
+            }).addTo(timelapseMarkerLayer);
+        });
+    }
+
+    function renderTimelapseFrame(frame) {
+        if (destroyed || !timelapseHasAccess() || !timelapseIsActive() ||
+            !frame || !timelapseFogLayer || !timelapseMovementLayer ||
+            !timelapseMarkerLayer) {
+            return;
+        }
+        var accentColor = themeColor("--accent", "#d9b168");
+        var frostColor = themeColor("--frost", "#7eb1d6");
+        var mossColor = themeColor("--moss", "#a3c26a");
+        var dungeonColor = themeColor("--dungeon", "#b49acb");
+        var previousBases = timelapseRenderedFrame
+            ? timelapseRenderedFrame.bases
+            : [];
+        var reducedMotion = window.matchMedia(
+            "(prefers-reduced-motion: reduce)"
+        ).matches;
+        var now = Date.now();
+        timelapseBasePulses.forEach(function (expiresAt, key) {
+            if (expiresAt <= now) {
+                timelapseBasePulses.delete(key);
+            }
+        });
+
+        timelapseFogLayer.setFrame(frame);
+        timelapseMarkerLayer.clearLayers();
+        frame.bases.forEach(function (base) {
+            if (!Number.isFinite(base[0]) || !Number.isFinite(base[1])) {
+                return;
+            }
+            var previousPieces = previousTimelapseBasePieces(base, previousBases);
+            var pulseKey = timelapseBasePulseKey(base);
+            if (!reducedMotion && previousPieces !== null && base[3] > previousPieces) {
+                timelapseBasePulses.set(pulseKey, now + 900);
+            }
+            var pieces = Number(base[3]) || 0;
+            var pixelRadius = 5 + (3.2 * Math.sqrt(Math.max(0, pieces) / 25));
+            pixelRadius = Math.max(6, Math.min(20, pixelRadius));
+            var pulsing = !reducedMotion &&
+                (timelapseBasePulses.get(pulseKey) || 0) > now;
+            L.circleMarker(worldToLatLng(base[0], base[1]), {
+                bubblingMouseEvents: false,
+                className: "timelapse-base" +
+                    (pulsing ? " timelapse-base-pulse" : ""),
+                color: accentColor,
+                fillColor: accentColor,
+                fillOpacity: 0.25,
+                interactive: false,
+                opacity: 0.95,
+                pane: "timelapsePane",
+                radius: pixelRadius,
+                weight: 2
+            }).addTo(timelapseMarkerLayer);
+        });
+        addTimelapsePointMarkers(
+            frame.portals,
+            frostColor,
+            5,
+            "timelapse-portal"
+        );
+        addTimelapsePointMarkers(frame.beds, mossColor, 4, "timelapse-bed");
+        addTimelapsePointMarkers(frame.wards, dungeonColor, 4, "timelapse-ward");
+
+        var movementCells = frame.movement.map(function (cell) {
+            return [cell[0] % 128, Math.floor(cell[0] / 128), cell[1]];
+        });
+        timelapseMovementLayer.setData({
+            cells: movementCells,
+            maxCount: frame.movementMax,
+            size: 128,
+            worldRadius: mapMetrics && Number.isFinite(mapMetrics.worldRadius)
+                ? mapMetrics.worldRadius
+                : 10500
+        });
+
+        if (timelapseTrack) {
+            timelapseTrackSyncing = true;
+            timelapseTrack.value = String(timelapseCurrentIndex);
+            timelapseTrackSyncing = false;
+        }
+        if (timelapseReadoutDay) {
+            timelapseReadoutDay.textContent = "Day " + frame.day;
+        }
+        if (timelapseReadoutDate) {
+            timelapseReadoutDate.textContent = new Date(frame.t).toLocaleString(
+                undefined,
+                {
+                    day: "numeric",
+                    hour: "2-digit",
+                    hour12: false,
+                    minute: "2-digit",
+                    month: "short"
+                }
+            );
+        }
+        timelapseRenderedFrame = frame;
+    }
+
+    function stopTimelapsePlayback() {
+        timelapsePlaying = false;
+        if (timelapseAnimationFrame) {
+            window.cancelAnimationFrame(timelapseAnimationFrame);
+        }
+        timelapseAnimationFrame = 0;
+        timelapseAnimationTimestamp = 0;
+        timelapseAnimationAccumulator = 0;
+        syncTimelapseControls();
+    }
+
+    function beginTimelapsePlayback() {
+        if (destroyed || !timelapseHasAccess() || !timelapseIsActive() ||
+            document.hidden || !timelapseIndex ||
+            timelapseIndex.frames.length < 2) {
+            stopTimelapsePlayback();
+            return;
+        }
+        timelapsePlaying = true;
+        timelapseAnimationTimestamp = 0;
+        timelapseAnimationAccumulator = 0;
+        syncTimelapseControls();
+        prefetchTimelapseFrames(timelapseCurrentIndex);
+        timelapseAnimationFrame = window.requestAnimationFrame(
+            timelapseAnimationStep
+        );
+    }
+
+    function playTimelapse() {
+        if (destroyed || !timelapseHasAccess() || !timelapseIsActive() ||
+            document.hidden || !timelapseIndex) {
+            return;
+        }
+        var lastIndex = timelapseIndex.frames.length - 1;
+        var position = Math.max(timelapseCurrentIndex, timelapseRequestedIndex);
+        if (position >= lastIndex) {
+            stopTimelapsePlayback();
+            loadTimelapseFrame(0).then(function (frame) {
+                if (frame && timelapseIsActive()) {
+                    beginTimelapsePlayback();
+                }
+            });
+            return;
+        }
+        beginTimelapsePlayback();
+    }
+
+    function toggleTimelapsePlayback() {
+        if (timelapsePlaying) {
+            stopTimelapsePlayback();
+        } else {
+            playTimelapse();
+        }
+    }
+
+    function timelapseAnimationStep(timestamp) {
+        timelapseAnimationFrame = 0;
+        if (destroyed || !timelapseHasAccess() || !timelapsePlaying ||
+            !timelapseIsActive() || document.hidden || !timelapseIndex) {
+            stopTimelapsePlayback();
+            return;
+        }
+        if (!timelapseAnimationTimestamp) {
+            timelapseAnimationTimestamp = timestamp;
+        } else {
+            timelapseAnimationAccumulator += Math.min(
+                1000,
+                timestamp - timelapseAnimationTimestamp
+            );
+            timelapseAnimationTimestamp = timestamp;
+        }
+
+        var speed = TIMELAPSE_SPEEDS[layerSettings.timelapseSpeed] ||
+            TIMELAPSE_SPEEDS["4x"];
+        var frameDuration = 1000 / speed;
+        var lastIndex = timelapseIndex.frames.length - 1;
+        while (timelapsePlaying &&
+            timelapseAnimationAccumulator >= frameDuration) {
+            timelapseAnimationAccumulator -= frameDuration;
+            var position = Math.max(
+                timelapseCurrentIndex,
+                timelapseRequestedIndex
+            );
+            if (position >= lastIndex) {
+                stopTimelapsePlayback();
+                return;
+            }
+            var nextIndex = position + 1;
+            loadTimelapseFrame(nextIndex);
+            if (nextIndex >= lastIndex) {
+                stopTimelapsePlayback();
+                return;
+            }
+        }
+        if (timelapsePlaying) {
+            timelapseAnimationFrame = window.requestAnimationFrame(
+                timelapseAnimationStep
+            );
+        }
+    }
+
+    function timelapseVisibilityChanged() {
+        if (document.hidden) {
+            stopTimelapsePlayback();
+        }
+    }
+
+    function handleTimelapseKeyboard(event) {
+        if (!timelapseIsActive() || activeTab !== "map" ||
+            event.altKey || event.ctrlKey || event.metaKey) {
+            return;
+        }
+        var target = event.target;
+        var tagName = target && target.tagName
+            ? target.tagName.toLowerCase()
+            : "";
+        var inputType = tagName === "input"
+            ? String(target.type || "text").toLowerCase()
+            : "";
+        if (tagName === "textarea" || tagName === "select" ||
+            (tagName === "input" && inputType !== "range") ||
+            (target && target.isContentEditable)) {
+            return;
+        }
+        if (inputType === "range" && event.key !== "Escape" &&
+            event.key !== " " && event.code !== "Space") {
+            return;
+        }
+        if (tagName === "button" &&
+            (event.key === " " || event.code === "Space")) {
+            return;
+        }
+        var handled = ["ArrowLeft", "ArrowRight", "Home", "End", "Escape", " "]
+            .indexOf(event.key) !== -1 || event.code === "Space";
+        if (!handled) {
+            return;
+        }
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (event.key === "Escape") {
+            setTimelapseEnabled(false);
+            return;
+        }
+        if (!timelapseIndex) {
+            return;
+        }
+        if (event.key === " " || event.code === "Space") {
+            if (!event.repeat) {
+                toggleTimelapsePlayback();
+            }
+            return;
+        }
+
+        stopTimelapsePlayback();
+        var lastIndex = timelapseIndex.frames.length - 1;
+        var position = timelapseRequestedIndex >= 0
+            ? timelapseRequestedIndex
+            : timelapseCurrentIndex;
+        if (event.key === "Home") {
+            position = 0;
+        } else if (event.key === "End") {
+            position = lastIndex;
+        } else if (event.key === "ArrowLeft") {
+            position = Math.max(0, position - 1);
+        } else if (event.key === "ArrowRight") {
+            position = Math.min(lastIndex, position + 1);
+        }
+        loadTimelapseFrame(position);
     }
 
     function formatMapCoordinates(world) {
@@ -8367,7 +9535,8 @@
                 if (key !== "legendCollapsed" && key !== "densityDots" &&
                     key !== "iconSize" && key !== "mapStyle" &&
                     key !== "poiColors" && key !== "poiCollapsed" &&
-                    key !== "poiOpacity" &&
+                    key !== "poiOpacity" && key !== "timelapse" &&
+                    key !== "timelapseSpeed" &&
                     typeof LAYER_DEFAULTS[key] === "boolean" &&
                     Object.prototype.hasOwnProperty.call(layerSettings, key)) {
                     layerSettings[key] = true;
@@ -8445,7 +9614,8 @@
             return key !== "legendCollapsed" && key !== "densityDots" &&
                 key !== "iconSize" && key !== "mapStyle" &&
                 key !== "poiColors" && key !== "poiCollapsed" &&
-                key !== "poiOpacity" &&
+                key !== "poiOpacity" && key !== "timelapse" &&
+                key !== "timelapseSpeed" &&
                 layerSettings[key] === true &&
                 LAYER_DEFAULTS[key] === false;
         });
@@ -8656,6 +9826,16 @@
                 { counted: false }
             );
             appendHeatmapWindowControl(overlaysBody);
+        }
+        if (timelapseHasAccess() && timelapseAvailability === "available") {
+            appendLayerRow(
+                overlaysBody,
+                "timelapse",
+                "World Timelapse",
+                "◷",
+                "timelapse",
+                { counted: false, rowClass: "timelapse-layer-row" }
+            );
         }
         appendLayerRow(
             overlaysBody,
@@ -9011,6 +10191,9 @@
         var count = document.createElement("span");
 
         label.className = "layer-row";
+        if (options.rowClass) {
+            label.className += " " + options.rowClass;
+        }
         checkbox.type = "checkbox";
         checkbox.checked = layerSettings[key];
         checkbox.dataset.layerKey = key;
@@ -9860,6 +11043,8 @@
             return;
         }
 
+        updateTimelapseRestoreVisibility();
+        var historicalLayersVisible = timelapseIsActive();
         setLayerVisible(playerLayer, layerSettings.players);
         setLayerVisible(pinLayer, layerSettings.pins);
         setLayerVisible(webPinLayer, webPinsAvailable && layerSettings.webpins);
@@ -9870,10 +11055,14 @@
             setLayerVisible(
                 poiLayers.get(group),
                 availablePoiGroups.has(group) && layerSettings[group] &&
-                    !isPoiGroupZoomGated(group)
+                    !isPoiGroupZoomGated(group) &&
+                    !(historicalLayersVisible && group === "bases")
             );
         });
-        setLayerVisible(fogOverlay, fogAvailable && layerSettings.fog);
+        setLayerVisible(
+            fogOverlay,
+            !historicalLayersVisible && fogAvailable && layerSettings.fog
+        );
         var heatmapVisible = heatmapIsEnabled();
         setLayerVisible(heatmapLayer, heatmapVisible);
         syncHeatmapControls();
@@ -9886,11 +11075,13 @@
         setLayerVisible(tintOverlay, layerSettings.tint);
         setLayerVisible(
             portalNetworkLayer,
-            entityLayersAreAvailable() && layerSettings.portalNetwork
+            !historicalLayersVisible && entityLayersAreAvailable() &&
+                layerSettings.portalNetwork
         );
         setLayerVisible(
             wardRadiusLayer,
-            entityLayersAreAvailable() && layerSettings.ward
+            !historicalLayersVisible && entityLayersAreAvailable() &&
+                layerSettings.ward
         );
         var shipHeadingsVisible = entityLayersAreAvailable() && layerSettings.ship;
         setLayerVisible(shipHeadingLayer, shipHeadingsVisible);
@@ -9900,9 +11091,12 @@
             clearShipHeadingLines();
         }
         ENTITY_GROUP_ORDER.forEach(function (group) {
+            var hiddenByTimelapse = historicalLayersVisible &&
+                (group === "portal" || group === "bed" || group === "ward");
             setLayerVisible(
                 entityLayers.get(group),
-                entityLayersAreAvailable() && layerSettings[group]
+                !hiddenByTimelapse && entityLayersAreAvailable() &&
+                    layerSettings[group]
             );
         });
         if (minimapSetOpen) {
@@ -9913,6 +11107,12 @@
         renderLegend();
         updateFeedStalenessDots();
         updateLazyPoiLoading();
+        if (timelapseHasAccess() && layerSettings.timelapse === true &&
+            timelapseAvailability === "available") {
+            activateTimelapse();
+        } else {
+            deactivateTimelapse();
+        }
     }
 
     function normalizeDungeonReference(value) {
@@ -15347,6 +16547,7 @@
             loadPoisForCurrentView();
             renderLayerRows();
             syncLayerVisibility();
+            probeTimelapseAvailability();
             requestWebPinsFetch();
             if (hasLiveAccess()) {
                 ensureEntityFeed();
@@ -15832,6 +17033,19 @@
         }
         destroyed = true;
         pollCircuitOpen = true;
+        deactivateTimelapse();
+        timelapseFrameCache.clear();
+        timelapseFrameRequests.clear();
+        timelapseIndexPromise = null;
+        if (timelapseScrubber && timelapseScrubber.parentNode) {
+            timelapseScrubber.parentNode.removeChild(timelapseScrubber);
+        }
+        timelapseScrubber = null;
+        timelapseTrack = null;
+        timelapsePlayButton = null;
+        timelapseReadoutDay = null;
+        timelapseReadoutDate = null;
+        timelapseSpeedControl = null;
         if (cinemaState) {
             teardownCinemaState(cinemaState);
             cinemaState = null;
@@ -15891,6 +17105,7 @@
                 "is-dungeon-open",
                 "is-measuring",
                 "is-pinging",
+                "is-timelapse",
                 "is-towing"
             );
             var fullscreenElement =

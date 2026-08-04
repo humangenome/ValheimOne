@@ -19,6 +19,15 @@
     );
 
     window.VO_ICONS = {
+        play: svg(
+            '<path d="M8 5.5v13l11-6.5-11-6.5Z" fill="currentColor"/>'
+        ),
+        pause: svg(
+            '<path d="M9.5 5.5v13M14.5 5.5v13"/>'
+        ),
+        close: svg(
+            '<path d="M6 6l12 12M18 6 6 18"/>'
+        ),
         spawn: svg(
             '<path d="M3.5 20.5h17"/>' +
             '<path d="M5 20.5l.7-10 2.3-2 2.2 2-.7 10"/>' +

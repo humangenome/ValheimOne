@@ -5108,6 +5108,221 @@
     display: none;
 }
 
+/* World timelapse viewer. */
+#valheimone-embed-root .timelapse-scrubber {
+    position: absolute;
+    z-index: 860;
+    bottom: 22px;
+    left: 50%;
+    display: flex;
+    width: calc(100% - 352px);
+    max-width: 560px;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    background: var(--panel);
+    box-shadow:
+        inset 0 0 0 1px var(--border),
+        0 0 18px var(--accent-soft),
+        0 6px 18px var(--background);
+    transform: translateX(-50%);
+}
+
+#valheimone-embed-root .timelapse-scrubber .map-tool-button {
+    display: grid;
+    width: 30px;
+    height: 30px;
+    flex: 0 0 auto;
+    place-items: center;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--accent);
+    cursor: pointer;
+}
+
+#valheimone-embed-root .timelapse-scrubber .map-tool-button:hover,
+#valheimone-embed-root .timelapse-scrubber .map-tool-button:focus-visible {
+    background: var(--accent-soft);
+}
+
+#valheimone-embed-root .timelapse-scrubber .map-tool-button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
+#valheimone-embed-root .timelapse-scrubber .map-tool-button svg {
+    width: 15px;
+    height: 15px;
+}
+
+#valheimone-embed-root .timelapse-play,
+#valheimone-embed-root .timelapse-close {
+    flex: 0 0 auto;
+}
+
+#valheimone-embed-root .timelapse-play svg,
+#valheimone-embed-root .timelapse-close svg {
+    width: 15px;
+    height: 15px;
+}
+
+#valheimone-embed-root .timelapse-track {
+    width: auto;
+    height: 14px;
+    min-width: 0;
+    flex: 1;
+    margin: 0;
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent;
+    cursor: pointer;
+}
+
+#valheimone-embed-root .timelapse-track::-webkit-slider-runnable-track {
+    height: 3px;
+    border-radius: 999px;
+    background: var(--border-strong);
+}
+
+#valheimone-embed-root .timelapse-track::-webkit-slider-thumb {
+    width: 10px;
+    height: 10px;
+    margin-top: -4px;
+    appearance: none;
+    -webkit-appearance: none;
+    border: 1px solid var(--background);
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 1px var(--border-strong);
+}
+
+#valheimone-embed-root .timelapse-track::-moz-range-track {
+    height: 3px;
+    border-radius: 999px;
+    background: var(--border-strong);
+}
+
+#valheimone-embed-root .timelapse-track::-moz-range-progress {
+    height: 3px;
+    border-radius: 999px;
+    background: var(--accent);
+}
+
+#valheimone-embed-root .timelapse-track::-moz-range-thumb {
+    width: 10px;
+    height: 10px;
+    border: 1px solid var(--background);
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 1px var(--border-strong);
+}
+
+#valheimone-embed-root .timelapse-readout {
+    display: flex;
+    min-width: 92px;
+    flex: 0 0 auto;
+    flex-direction: column;
+    align-items: flex-end;
+    color: var(--text);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.25;
+    white-space: nowrap;
+}
+
+#valheimone-embed-root .timelapse-readout-day {
+    color: var(--accent);
+    font-weight: 700;
+}
+
+#valheimone-embed-root .timelapse-readout-date {
+    color: var(--secondary);
+}
+
+#valheimone-embed-root .timelapse-speed {
+    display: grid;
+    min-width: 0;
+    flex: 0 0 auto;
+    grid-template-columns: repeat(3, 34px);
+    overflow: hidden;
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    background: var(--background);
+}
+
+#valheimone-embed-root .timelapse-speed-option {
+    min-width: 0;
+    min-height: 24px;
+    padding: 2px 4px;
+    border: 0;
+    border-left: 1px solid var(--border);
+    background: transparent;
+    color: var(--secondary);
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+#valheimone-embed-root .timelapse-speed-option:first-child {
+    border-left: 0;
+}
+
+#valheimone-embed-root .timelapse-speed-option:hover {
+    color: var(--accent);
+}
+
+#valheimone-embed-root .timelapse-speed-option.is-selected {
+    background: var(--accent-soft);
+    color: var(--accent);
+}
+
+#valheimone-embed-root .timelapse-speed-option:focus-visible {
+    position: relative;
+    z-index: 1;
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
+#valheimone-embed-root .timelapse-fog-canvas,
+#valheimone-embed-root .timelapse-movement-canvas {
+    pointer-events: none;
+}
+
+#valheimone-embed-root .timelapse-fog-canvas {
+    image-rendering: pixelated;
+}
+
+#valheimone-embed-root .timelapse-base {
+    transition: opacity 180ms ease, r 180ms ease;
+}
+
+#valheimone-embed-root .timelapse-base-pulse {
+    animation: timelapse-base-pulse 900ms ease-out 2;
+    transform-box: fill-box;
+    transform-origin: center;
+}
+
+#valheimone-embed-root.is-timelapse #map > .follow-pill {
+    display: none !important;
+}
+
+@keyframes timelapse-base-pulse {
+    0%,
+    100% {
+        opacity: 0.72;
+        transform: scale(1);
+    }
+
+    50% {
+        opacity: 1;
+        transform: scale(1.16);
+    }
+}
+
 #valheimone-embed-root .codex-pane {
     position: fixed;
     z-index: 850;
@@ -6562,6 +6777,7 @@
 #valheimone-embed-root.is-cinema #render-status,
 #valheimone-embed-root.is-cinema #map > .leaflet-control-container,
 #valheimone-embed-root.is-cinema #map > .measure-hud,
+#valheimone-embed-root.is-cinema #map > .timelapse-scrubber,
 #valheimone-embed-root.is-cinema #map > .follow-pill,
 #valheimone-embed-root.is-cinema #map > .tow-armed-banner {
     display: none !important;
@@ -7046,6 +7262,30 @@
 
     #valheimone-embed-root .codex-item-type {
         display: none;
+    }
+}
+
+@media (max-width: 1000px) {
+    #valheimone-embed-root .timelapse-speed {
+        display: none;
+    }
+}
+
+@media (min-width: 760px) and (max-width: 900px) {
+    #valheimone-embed-root .timelapse-scrubber {
+        bottom: 180px;
+        width: calc(100% - 24px);
+        gap: 6px;
+        padding: 7px 8px;
+    }
+}
+
+@media (max-width: 759px) {
+    #valheimone-embed-root .timelapse-scrubber {
+        bottom: 72px;
+        width: calc(100% - 24px);
+        gap: 6px;
+        padding: 7px 8px;
     }
 }
 
@@ -7541,5 +7781,13 @@
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
+    }
+
+    #valheimone-embed-root .timelapse-base {
+        transition: none;
+    }
+
+    #valheimone-embed-root .timelapse-base-pulse {
+        animation: none;
     }
 }
