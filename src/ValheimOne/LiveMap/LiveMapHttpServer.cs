@@ -52,6 +52,7 @@ internal sealed class LiveMapHttpServer
     private readonly Func<WebPinStore?> _getWebPinStore;
     private readonly Func<ActivityHeatmap?> _getActivityHeatmap;
     private readonly Func<LeaderboardStore?> _getLeaderboardStore;
+    private readonly Func<TimelapseRecorder?> _getTimelapseRecorder;
     private readonly Func<EntityMapSnapshot> _getEntitySnapshot;
     private readonly Func<EntityFocusSnapshot> _getEntityFocusSnapshot;
     private readonly Action<bool, bool> _noteEntitiesRequested;
@@ -111,6 +112,7 @@ internal sealed class LiveMapHttpServer
         Func<WebPinStore?> getWebPinStore,
         Func<ActivityHeatmap?> getActivityHeatmap,
         Func<LeaderboardStore?> getLeaderboardStore,
+        Func<TimelapseRecorder?> getTimelapseRecorder,
         Func<EntityMapSnapshot> getEntitySnapshot,
         Func<EntityFocusSnapshot> getEntityFocusSnapshot,
         Action<bool, bool> noteEntitiesRequested,
@@ -146,6 +148,7 @@ internal sealed class LiveMapHttpServer
         _getWebPinStore = getWebPinStore;
         _getActivityHeatmap = getActivityHeatmap;
         _getLeaderboardStore = getLeaderboardStore;
+        _getTimelapseRecorder = getTimelapseRecorder;
         _getEntitySnapshot = getEntitySnapshot;
         _getEntityFocusSnapshot = getEntityFocusSnapshot;
         _noteEntitiesRequested = noteEntitiesRequested;
@@ -432,6 +435,14 @@ internal sealed class LiveMapHttpServer
             else if (isGet && path == "/api/leaderboard")
             {
                 ServeLeaderboard(response, viewLevel);
+            }
+            else if (isGet && path == "/api/timelapse")
+            {
+                ServeTimelapseIndex(request, response, viewLevel);
+            }
+            else if (isGet && path == "/api/timelapse/frame")
+            {
+                ServeTimelapseFrame(request, response, viewLevel);
             }
             else if (isGet && path == "/api/height")
             {
@@ -2968,6 +2979,268 @@ internal sealed class LiveMapHttpServer
 
         json.Append("]}");
         WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private void ServeTimelapseIndex(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        ViewLevel viewLevel)
+    {
+        if (viewLevel == ViewLevel.Public && !_config.PublicTimelapse)
+        {
+            WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
+        TimelapseRecorder? recorder = _getTimelapseRecorder();
+        if (recorder == null)
+        {
+            WriteJson(response, HttpStatusCode.ServiceUnavailable, "{\"error\":\"not ready\"}");
+            return;
+        }
+
+        TimelapseIndexEntry[] frames = recorder.ListFrames();
+        var json = new StringBuilder(128 + (frames.Length * 128));
+        json.Append("{\"frames\":[");
+        for (int index = 0; index < frames.Length; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            TimelapseIndexEntry frame = frames[index];
+            json.Append("{\"t\":").Append(
+                frame.UnixMs.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"day\":").Append(
+                frame.WorldDay.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"exploredCells\":").Append(
+                frame.ExploredCells.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"exploredPct\":").Append(
+                JsonWriter.NumberOneDecimal(frame.ExploredPercent));
+            json.Append(",\"bases\":").Append(
+                frame.BaseCount.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"portals\":").Append(
+                frame.PortalCount.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"beds\":").Append(
+                frame.BedCount.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"wards\":").Append(
+                frame.WardCount.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"bossMask\":").Append(
+                frame.BossMask.ToString(CultureInfo.InvariantCulture));
+            json.Append(",\"bytes\":").Append(
+                frame.SizeBytes.ToString(CultureInfo.InvariantCulture));
+            json.Append('}');
+        }
+
+        json.Append("],\"count\":").Append(
+            frames.Length.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"bytes\":").Append(
+            recorder.TotalBytes.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"retention\":{\"hourlyDays\":").Append(
+            TimelapseRetention.HourlyRetentionDays.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"dailyDays\":").Append(
+            TimelapseRetention.DailyRetentionDays.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"maxFrames\":").Append(
+            TimelapseRetention.MaximumFrames.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"maxBytes\":").Append(
+            TimelapseRetention.MaximumDiskBytes.ToString(CultureInfo.InvariantCulture));
+        json.Append("},\"intervalMinutes\":").Append(
+            _config.TimelapseIntervalMinutes.ToString(CultureInfo.InvariantCulture));
+        json.Append('}');
+        WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    private void ServeTimelapseFrame(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        ViewLevel viewLevel)
+    {
+        if (viewLevel == ViewLevel.Public && !_config.PublicTimelapse)
+        {
+            WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
+        TimelapseRecorder? recorder = _getTimelapseRecorder();
+        if (recorder == null)
+        {
+            WriteJson(response, HttpStatusCode.ServiceUnavailable, "{\"error\":\"not ready\"}");
+            return;
+        }
+
+        if (!long.TryParse(
+                request.QueryString["t"],
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture,
+                out long t))
+        {
+            WriteJson(response, HttpStatusCode.BadRequest, "{\"error\":\"bad request\"}");
+            return;
+        }
+
+        TimelapseFrame? frame = recorder.ReadFrame(t);
+        if (frame == null)
+        {
+            WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
+        int movementMaximum = 0;
+        for (int index = 0; index < frame.MovementCells.Length; index++)
+        {
+            movementMaximum = Math.Max(movementMaximum, frame.MovementCells[index].Count);
+        }
+
+        var json = new StringBuilder(
+            1024 + (frame.Bases.Length * 64) +
+            ((frame.Portals.Length + frame.Beds.Length + frame.Wards.Length) * 32) +
+            (frame.MovementCells.Length * 24));
+        json.Append("{\"t\":").Append(frame.UnixMs.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"day\":").Append(
+            frame.WorldDay.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"season\":").Append(JsonWriter.Quote(frame.Season));
+        json.Append(",\"bossMask\":").Append(
+            frame.BossMask.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"bosses\":[");
+        for (int index = 0; index < frame.BossKeys.Length; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            json.Append(JsonWriter.Quote(frame.BossKeys[index]));
+        }
+
+        json.Append("],\"size\":").Append(
+            FogTracker.Size.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"exploredCells\":").Append(
+            frame.ExploredCells.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"exploredPct\":").Append(
+            JsonWriter.NumberOneDecimal(frame.ExploredPercent));
+        json.Append(",\"fog\":");
+        AppendFogRuns(json, frame.FogBits);
+        json.Append(",\"bases\":[");
+        for (int index = 0; index < frame.Bases.Length; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            PlayerBaseEntry playerBase = frame.Bases[index];
+            json.Append('[').Append(JsonWriter.Number(playerBase.X));
+            json.Append(',').Append(JsonWriter.Number(playerBase.Z));
+            json.Append(',').Append(JsonWriter.Number(playerBase.Radius));
+            json.Append(',').Append(playerBase.Pieces.ToString(CultureInfo.InvariantCulture));
+            json.Append(']');
+        }
+
+        json.Append("],\"portals\":[");
+        for (int index = 0; index < frame.Portals.Length; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            TimelapsePoint point = frame.Portals[index];
+            json.Append('[').Append(JsonWriter.Number(point.X));
+            json.Append(',').Append(JsonWriter.Number(point.Z)).Append(']');
+        }
+
+        json.Append("],\"beds\":[");
+        for (int index = 0; index < frame.Beds.Length; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            TimelapsePoint point = frame.Beds[index];
+            json.Append('[').Append(JsonWriter.Number(point.X));
+            json.Append(',').Append(JsonWriter.Number(point.Z)).Append(']');
+        }
+
+        json.Append("],\"wards\":[");
+        for (int index = 0; index < frame.Wards.Length; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            TimelapsePoint point = frame.Wards[index];
+            json.Append('[').Append(JsonWriter.Number(point.X));
+            json.Append(',').Append(JsonWriter.Number(point.Z)).Append(']');
+        }
+
+        json.Append("],\"movementSize\":").Append(
+            ActivityHeatmap.GridSize.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"movementMax\":").Append(
+            movementMaximum.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"movement\":[");
+        for (int index = 0; index < frame.MovementCells.Length; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+
+            TimelapseMovementCell cell = frame.MovementCells[index];
+            json.Append('[').Append(cell.Index.ToString(CultureInfo.InvariantCulture));
+            json.Append(',').Append(cell.Count.ToString(CultureInfo.InvariantCulture));
+            json.Append(']');
+        }
+
+        json.Append("]}");
+        byte[] bytes = Encoding.UTF8.GetBytes(json.ToString());
+        string etag = "\"tl-" + t.ToString(CultureInfo.InvariantCulture) + "-" +
+                      bytes.Length.ToString(CultureInfo.InvariantCulture) + "\"";
+        WriteCacheableBytes(
+            request,
+            response,
+            "application/json; charset=utf-8",
+            bytes,
+            null,
+            etag,
+            "private, max-age=86400");
+    }
+
+    private static void AppendFogRuns(StringBuilder json, byte[] fogBits)
+    {
+        const int CellCount = FogTracker.Size * FogTracker.Size;
+        json.Append('[');
+        bool exploredRun = false;
+        int runLength = 0;
+        bool needsComma = false;
+        for (int index = 0; index < CellCount; index++)
+        {
+            bool explored = (fogBits[index >> 3] & (1 << (index & 7))) != 0;
+            if (explored != exploredRun)
+            {
+                if (needsComma)
+                {
+                    json.Append(',');
+                }
+
+                json.Append(runLength.ToString(CultureInfo.InvariantCulture));
+                needsComma = true;
+                exploredRun = explored;
+                runLength = 0;
+            }
+
+            runLength++;
+        }
+
+        if (needsComma)
+        {
+            json.Append(',');
+        }
+
+        json.Append(runLength.ToString(CultureInfo.InvariantCulture));
+        json.Append(']');
     }
 
     private void ServeEntities(

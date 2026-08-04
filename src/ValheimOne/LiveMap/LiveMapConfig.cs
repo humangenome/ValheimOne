@@ -18,6 +18,9 @@ internal sealed class LiveMapConfig
     private readonly ConfigEntryBool _publicPins;
     private readonly ConfigEntryBool _sharedPinEditing;
     private readonly ConfigEntryBool _publicWebPins;
+    private readonly ConfigEntryBool _timelapse;
+    private readonly ConfigEntryInt _timelapseIntervalMinutes;
+    private readonly ConfigEntryBool _publicTimelapse;
     private readonly ConfigEntryBool _mirrorChat;
     private readonly ConfigEntryBool _respectInGameVisibility;
     private readonly ConfigEntryBool _publicShowPlayerNames;
@@ -43,6 +46,9 @@ internal sealed class LiveMapConfig
         ConfigEntryBool publicPins,
         ConfigEntryBool sharedPinEditing,
         ConfigEntryBool publicWebPins,
+        ConfigEntryBool timelapse,
+        ConfigEntryInt timelapseIntervalMinutes,
+        ConfigEntryBool publicTimelapse,
         ConfigEntryBool mirrorChat,
         ConfigEntryBool respectInGameVisibility,
         ConfigEntryBool publicShowPlayerNames,
@@ -67,6 +73,9 @@ internal sealed class LiveMapConfig
         _publicPins = publicPins;
         _sharedPinEditing = sharedPinEditing;
         _publicWebPins = publicWebPins;
+        _timelapse = timelapse;
+        _timelapseIntervalMinutes = timelapseIntervalMinutes;
+        _publicTimelapse = publicTimelapse;
         _mirrorChat = mirrorChat;
         _respectInGameVisibility = respectInGameVisibility;
         _publicShowPlayerNames = publicShowPlayerNames;
@@ -103,6 +112,13 @@ internal sealed class LiveMapConfig
     public bool SharedPinEditing => _sharedPinEditing.Value;
 
     public bool PublicWebPins => _publicWebPins.Value;
+
+    public bool Timelapse => _timelapse.Value;
+
+    public int TimelapseIntervalMinutes =>
+        Math.Max(5, Math.Min(1440, _timelapseIntervalMinutes.Value));
+
+    public bool PublicTimelapse => _publicTimelapse.Value;
 
     public bool MirrorChat => _mirrorChat.Value;
 

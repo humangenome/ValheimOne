@@ -21,8 +21,10 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private Func<bool>? _enabledCheck;
     private Func<WebPinStore?>? _getWebPinStore;
     private Func<ActivityHeatmap?>? _getActivityHeatmap;
+    private Func<TimelapseRecorder?>? _getTimelapseRecorder;
     private Func<LeaderboardStore?>? _getLeaderboardStore;
     private ActivityHeatmap? _activityHeatmap;
+    private TimelapseRecorder? _timelapseRecorder;
     private LeaderboardStore? _leaderboardStore;
     private WorldMapRenderer? _renderer;
     private FogTracker? _fogTracker;
@@ -47,6 +49,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private string _worldName = string.Empty;
     private float _nextPlayerUpdate;
     private float _nextFogUpdate;
+    private float _nextTimelapseCheckTime;
     private bool _poiCatalogBuilt;
     private bool _joinCodeReadFailureLogged;
     private bool _started;
@@ -99,6 +102,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         Func<bool> enabledCheck,
         Func<WebPinStore?> getWebPinStore,
         Func<ActivityHeatmap?> getActivityHeatmap,
+        Func<TimelapseRecorder?> getTimelapseRecorder,
         Func<LeaderboardStore?> getLeaderboardStore)
     {
         var behaviour = host.AddComponent<LiveMapBehaviour>();
@@ -109,6 +113,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         behaviour._enabledCheck = enabledCheck;
         behaviour._getWebPinStore = getWebPinStore;
         behaviour._getActivityHeatmap = getActivityHeatmap;
+        behaviour._getTimelapseRecorder = getTimelapseRecorder;
         behaviour._getLeaderboardStore = getLeaderboardStore;
         behaviour._shutdownScheduler = new ServerShutdownScheduler(log);
         behaviour._consoleBridge = new ConsoleBridge(null, log, behaviour._shutdownScheduler);
@@ -190,6 +195,11 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _resourcePoiTracker?.Tick(now);
         _dungeonRegistry?.Tick(now);
         _playerBaseTracker?.Tick();
+        if (_timelapseRecorder != null && now >= _nextTimelapseCheckTime)
+        {
+            _nextTimelapseCheckTime = now + 60f;
+            CaptureTimelapse();
+        }
         if (!idleChanged && now >= _nextPlayerUpdate)
         {
             RefreshSnapshot();
@@ -306,6 +316,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         PlayerBaseTracker playerBaseTracker = new PlayerBaseTracker(log);
         _playerBaseTracker = playerBaseTracker;
         _activityHeatmap = _getActivityHeatmap?.Invoke();
+        _timelapseRecorder = _getTimelapseRecorder?.Invoke();
         _leaderboardStore = _getLeaderboardStore?.Invoke();
         _leaderboardStore?.ConfigureWorldSeed(world.m_seed);
 
@@ -333,6 +344,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             _getWebPinStore!,
             _getActivityHeatmap!,
             _getLeaderboardStore!,
+            _getTimelapseRecorder!,
             () => entityTracker.Snapshot,
             () => entityTracker.FocusSnapshot,
             entityTracker.NoteEntitiesRequested,
@@ -360,7 +372,92 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         float now = Time.realtimeSinceStartup;
         _nextPlayerUpdate = now + GetEffectivePlayerUpdateSeconds();
         _nextFogUpdate = now + (_idle ? IdleUpdateSeconds : FogUpdateSeconds);
+        _nextTimelapseCheckTime = now;
         _started = true;
+    }
+
+    private void CaptureTimelapse()
+    {
+        TimelapseRecorder? recorder = _timelapseRecorder;
+        LiveMapConfig? config = _config;
+        if (recorder == null || config == null)
+        {
+            return;
+        }
+
+        _playerBaseTracker?.NoteBasesRequested();
+        FogMaskSnapshot fog = _fogTracker?.Snapshot ?? FogMaskSnapshot.Empty;
+        if (fog.Mask.Length != FogTracker.Size * FogTracker.Size)
+        {
+            return;
+        }
+
+        PlayerBaseEntry[] bases =
+            _playerBaseTracker?.Snapshot.Bases ?? Array.Empty<PlayerBaseEntry>();
+        TimelapsePoint[] portals = Array.Empty<TimelapsePoint>();
+        TimelapsePoint[] beds = Array.Empty<TimelapsePoint>();
+        TimelapsePoint[] wards = Array.Empty<TimelapsePoint>();
+        if (config.EntityLayer && _entityTracker != null)
+        {
+            BucketTimelapseEntities(
+                _entityTracker.Snapshot.Entities,
+                out portals,
+                out beds,
+                out wards);
+        }
+
+        long unixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        long nowHourStart = unixMs - (unixMs % (60L * 60L * 1000L));
+        long lastHarvested = recorder.LastHarvestedHourUnixMs;
+        ActivityHeatmapHourSlice[] slices = _activityHeatmap?.HarvestSlices(
+            lastHarvested,
+            nowHourStart) ?? Array.Empty<ActivityHeatmapHourSlice>();
+        LiveMapSnapshot snapshot = _snapshot;
+        var input = new TimelapseCaptureInput(
+            unixMs,
+            fog.Mask,
+            fog.Revision,
+            bases,
+            portals,
+            beds,
+            wards,
+            snapshot.Day,
+            string.Empty,
+            snapshot.GlobalKeys,
+            slices,
+            config.TimelapseIntervalMinutes);
+        recorder.Capture(input);
+    }
+
+    private static void BucketTimelapseEntities(
+        TrackedEntitySnapshot[] entities,
+        out TimelapsePoint[] portals,
+        out TimelapsePoint[] beds,
+        out TimelapsePoint[] wards)
+    {
+        var portalPoints = new List<TimelapsePoint>();
+        var bedPoints = new List<TimelapsePoint>();
+        var wardPoints = new List<TimelapsePoint>();
+        for (int index = 0; index < entities.Length; index++)
+        {
+            TrackedEntitySnapshot entity = entities[index];
+            if (string.Equals(entity.Group, "portal", StringComparison.Ordinal))
+            {
+                portalPoints.Add(new TimelapsePoint(entity.X, entity.Z));
+            }
+            else if (string.Equals(entity.Group, "bed", StringComparison.Ordinal))
+            {
+                bedPoints.Add(new TimelapsePoint(entity.X, entity.Z));
+            }
+            else if (string.Equals(entity.Group, "ward", StringComparison.Ordinal))
+            {
+                wardPoints.Add(new TimelapsePoint(entity.X, entity.Z));
+            }
+        }
+
+        portals = portalPoints.ToArray();
+        beds = bedPoints.ToArray();
+        wards = wardPoints.ToArray();
     }
 
     private bool TryEnqueueMapPing(float x, float z, string label)
@@ -721,6 +818,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _resourcePoiTracker = null;
         _dungeonRegistry = null;
         _activityHeatmap = null;
+        _timelapseRecorder = null;
         _leaderboardStore = null;
         _playerBaseTracker?.Stop();
         _playerBaseTracker = null;

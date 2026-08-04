@@ -20,6 +20,7 @@ public sealed class LiveMapModule : IFeatureModule
     private readonly object _storeLock = new object();
     private WebPinStore? _webPinStore;
     private ActivityHeatmap? _activityHeatmap;
+    private TimelapseRecorder? _timelapseRecorder;
     private LeaderboardStore? _leaderboardStore;
     private LeaderboardBehaviour? _leaderboardBehaviour;
     private bool _shutdown;
@@ -88,6 +89,22 @@ public sealed class LiveMapModule : IFeatureModule
             "PublicWebPins",
             false,
             "Expose web pins read-only to the public view.");
+        ConfigEntryBool timelapse = _feature.Bool(
+            "Timelapse",
+            true,
+            "Record periodic aggregate world-state snapshots (explored fog, base footprints, " +
+            "portals, boss progress, and aggregate movement) so the map can replay world history. " +
+            "Snapshots are state, not images, and are bounded on disk.");
+        ConfigEntryInt timelapseIntervalMinutes = _feature.Int(
+            "TimelapseIntervalMinutes",
+            60,
+            "Minutes between world timelapse snapshots, clamped to 5..1440.");
+        ConfigEntryBool publicTimelapse = _feature.Bool(
+            "PublicTimelapse",
+            false,
+            "Expose world timelapse history to the tokenless public view. Off by default: " +
+            "base-growth history maps where players live and how they expanded over time, which is " +
+            "more revealing than a live position dot, so opening it is an explicit owner decision.");
         ConfigEntryBool mirrorChat = _feature.Bool(
             "MirrorChat",
             false,
@@ -152,6 +169,9 @@ public sealed class LiveMapModule : IFeatureModule
             publicPins,
             sharedPinEditing,
             publicWebPins,
+            timelapse,
+            timelapseIntervalMinutes,
+            publicTimelapse,
             mirrorChat,
             respectInGameVisibility,
             publicShowPlayerNames,
@@ -200,6 +220,17 @@ public sealed class LiveMapModule : IFeatureModule
         }
     }
 
+    internal TimelapseRecorder? TimelapseRecorder
+    {
+        get
+        {
+            lock (_storeLock)
+            {
+                return _timelapseRecorder;
+            }
+        }
+    }
+
     internal LeaderboardStore? LeaderboardStore
     {
         get
@@ -243,6 +274,7 @@ public sealed class LiveMapModule : IFeatureModule
             () => _feature.Enabled.Value,
             () => WebPinStore,
             () => ActivityHeatmap,
+            () => TimelapseRecorder,
             () => LeaderboardStore);
     }
 
@@ -250,6 +282,7 @@ public sealed class LiveMapModule : IFeatureModule
     {
         WebPinStore? store;
         ActivityHeatmap? activityHeatmap;
+        TimelapseRecorder? timelapseRecorder;
         LeaderboardStore? leaderboardStore;
         LeaderboardBehaviour? leaderboardBehaviour;
         lock (_storeLock)
@@ -265,6 +298,8 @@ public sealed class LiveMapModule : IFeatureModule
             _webPinStore = null;
             activityHeatmap = _activityHeatmap;
             _activityHeatmap = null;
+            timelapseRecorder = _timelapseRecorder;
+            _timelapseRecorder = null;
             leaderboardStore = _leaderboardStore;
             _leaderboardStore = null;
             leaderboardBehaviour = _leaderboardBehaviour;
@@ -274,6 +309,7 @@ public sealed class LiveMapModule : IFeatureModule
         leaderboardBehaviour?.StopPermanently();
         store?.Dispose();
         activityHeatmap?.Dispose();
+        timelapseRecorder?.Dispose();
         leaderboardStore?.Dispose();
     }
 
@@ -281,6 +317,7 @@ public sealed class LiveMapModule : IFeatureModule
     {
         WebPinStore? storeToDispose = null;
         ActivityHeatmap? heatmapToDispose = null;
+        TimelapseRecorder? timelapseToDispose = null;
         LeaderboardStore? leaderboardToDispose = null;
         lock (_storeLock)
         {
@@ -293,6 +330,15 @@ public sealed class LiveMapModule : IFeatureModule
             {
                 _webPinStore ??= new WebPinStore(_dataDirectory, _log);
                 _activityHeatmap ??= new ActivityHeatmap(_dataDirectory, _log);
+                if (_config.Timelapse)
+                {
+                    _timelapseRecorder ??= new TimelapseRecorder(_dataDirectory, _log);
+                }
+                else
+                {
+                    timelapseToDispose = _timelapseRecorder;
+                    _timelapseRecorder = null;
+                }
                 _leaderboardStore ??= new LeaderboardStore(_dataDirectory, _log);
             }
             else
@@ -301,6 +347,8 @@ public sealed class LiveMapModule : IFeatureModule
                 _webPinStore = null;
                 heatmapToDispose = _activityHeatmap;
                 _activityHeatmap = null;
+                timelapseToDispose = _timelapseRecorder;
+                _timelapseRecorder = null;
                 leaderboardToDispose = _leaderboardStore;
                 _leaderboardStore = null;
             }
@@ -308,6 +356,7 @@ public sealed class LiveMapModule : IFeatureModule
 
         storeToDispose?.Dispose();
         heatmapToDispose?.Dispose();
+        timelapseToDispose?.Dispose();
         leaderboardToDispose?.Dispose();
     }
 }

@@ -182,6 +182,46 @@ internal sealed class ActivityHeatmap : IDisposable
             cells);
     }
 
+    public ActivityHeatmapHourSlice[] HarvestSlices(
+        long fromHourStartUnixMsExclusive,
+        long toHourStartUnixMsInclusive)
+    {
+        var slices = new List<ActivityHeatmapHourSlice>(HourSliceCount);
+        lock (_lock)
+        {
+            for (int index = 0; index < _slices.Length; index++)
+            {
+                HourSlice slice = _slices[index];
+                if (slice.HourStartUnixMs <= fromHourStartUnixMsExclusive ||
+                    slice.HourStartUnixMs > toHourStartUnixMsInclusive ||
+                    slice.Cells.Count == 0)
+                {
+                    continue;
+                }
+
+                var cells = new ActivityHeatmapCell[slice.Cells.Count];
+                int cellIndex = 0;
+                foreach (KeyValuePair<int, int> entry in slice.Cells)
+                {
+                    cells[cellIndex] = new ActivityHeatmapCell(
+                        entry.Key % GridSize,
+                        entry.Key / GridSize,
+                        entry.Value);
+                    cellIndex++;
+                }
+
+                Array.Sort(cells, CompareActivityCells);
+                slices.Add(new ActivityHeatmapHourSlice(
+                    slice.HourStartUnixMs,
+                    cells));
+            }
+        }
+
+        ActivityHeatmapHourSlice[] result = slices.ToArray();
+        Array.Sort(result, CompareActivitySlices);
+        return result;
+    }
+
     public void Dispose()
     {
         lock (_lock)
@@ -547,6 +587,21 @@ internal sealed class ActivityHeatmap : IDisposable
         return left.HourStartUnixMs.CompareTo(right.HourStartUnixMs);
     }
 
+    private static int CompareActivityCells(
+        ActivityHeatmapCell left,
+        ActivityHeatmapCell right)
+    {
+        int z = left.Z.CompareTo(right.Z);
+        return z != 0 ? z : left.X.CompareTo(right.X);
+    }
+
+    private static int CompareActivitySlices(
+        ActivityHeatmapHourSlice left,
+        ActivityHeatmapHourSlice right)
+    {
+        return left.HourStartUnixMs.CompareTo(right.HourStartUnixMs);
+    }
+
     private static string SingleLineMessage(Exception exception)
     {
         return (exception.Message ?? string.Empty)
@@ -868,4 +923,19 @@ internal readonly struct ActivityHeatmapCell
     public int Z { get; }
 
     public int Count { get; }
+}
+
+internal readonly struct ActivityHeatmapHourSlice
+{
+    public ActivityHeatmapHourSlice(
+        long hourStartUnixMs,
+        ActivityHeatmapCell[] cells)
+    {
+        HourStartUnixMs = hourStartUnixMs;
+        Cells = cells;
+    }
+
+    public long HourStartUnixMs { get; }
+
+    public ActivityHeatmapCell[] Cells { get; }
 }
