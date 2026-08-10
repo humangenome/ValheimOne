@@ -5,6 +5,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <Deterministic>true</Deterministic>
+    <!-- Normalize source paths consistently in local and CI builds. -->
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
     <!-- Keep build-machine paths out of the shipped DLL: without this the assembly
          embeds the full local path to ValheimOne.pdb, which is a build-host detail
          that has no business in a public binary. Also makes the output independent

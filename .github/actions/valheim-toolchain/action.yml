@@ -23,10 +23,28 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Set up .NET 8
+    # SDK 10.0.302 produces IL and metadata heaps byte-identical to the published
+    # v0.13.0 artifact, making this the smallest change to what is already shipped.
+    - name: Set up the pinned .NET SDK
       uses: actions/setup-dotnet@v4
       with:
-        dotnet-version: 8.x
+        global-json-file: global.json
+
+    - name: Verify pinned .NET SDK
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        resolved_sdk="$(dotnet --version)"
+        echo "dotnet --version: ${resolved_sdk}"
+        echo "dotnet --list-sdks:"
+        dotnet --list-sdks
+
+        pinned_sdk="$(jq -er '.sdk.version' global.json)"
+        if [[ "${resolved_sdk}" != "${pinned_sdk}" ]]; then
+          echo "::error::Expected .NET SDK ${pinned_sdk} from global.json, but dotnet resolved ${resolved_sdk}."
+          exit 1
+        fi
 
     - name: Resolve Valheim dedicated-server build ID
       id: game-build
