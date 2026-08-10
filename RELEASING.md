@@ -1,10 +1,10 @@
 # Releasing ValheimOne
 
-The release flow is: **build → reference config → package → smoke → tag → GitHub release draft.**
+The release flow is: **version → reference config → build → contract test → package → record provenance → smoke → tag → CI-verified GitHub release draft.**
 
-Pushing a `v*` tag runs the **Release** workflow (`.github/workflows/release.yml`), which does the packaging half of that list for you: it re-runs the version assert, the contract test, `tools/package-release.sh`, an artifact check, and then creates the GitHub release **as a draft** with all three artifacts attached. CI never publishes a release — publishing is always a human decision.
+Pushing a `v*` tag runs the **Release** workflow (`.github/workflows/release.yml`). It re-runs the version and contract gates, rebuilds and packages on a GitHub runner, and requires those artifacts to match the hashes recorded from the developer machine before it creates a GitHub release **as a draft**. CI never publishes a release — publishing is always a human decision.
 
-Steps 1, 2 and 4 below are still local work. Step 3 and step 6 are what the workflow automates; run them by hand only when you need artifacts without a tag.
+Steps 1–8 are the local release checklist. The workflow repeats the automatable checks in step 9; the local contract-pass record and provenance row must both be committed before tagging.
 
 ## 1. Version bump
 
@@ -34,7 +34,37 @@ cp testserver/BepInEx/config/valheimone.cfg <repo>/tools/release/valheimone.cfg
 
 Diff before committing — only intended new/changed keys should appear. The packaging script fails if the reference config has `Enabled = true` outside `[Server]` or `[ActivityLog]`, or is missing a feature section that exists in source (stale-config guard).
 
-## 3. Package
+## 3. Build
+
+`global.json` pins the exact .NET SDK used for releases, and `build.sh` fails if another SDK resolves. From the repository root:
+
+```bash
+./build.sh
+```
+
+The release build must complete with 0 warnings and 0 errors.
+
+## 4. Contract test
+
+Run the deterministic contract test before every release and after every Valheim update:
+
+```bash
+tools/contract-test.sh
+```
+
+The contract run installs a pinned config — the pristine reference config with the `tools/fixtures/contract.cfg` overlay applied ([Query] enabled) — and restores the harness's prior config afterward, so the enabled-module fingerprint does not depend on local harness state. `CONTRACT PASS` means the pinned world's worldgen fingerprint, Harmony patch contract, and module registration contract still match the checked-in golden fingerprint. `CONTRACT DRIFT` requires review: a worldgen hash change means map caches must be invalidated and worldgen changes reviewed; patch drift reports broken patch points in `failed=`; and module-count drift indicates registration changes.
+
+On every pass the script writes `tools/contract-pass.txt` — the version it passed at, the SHA-256 of the golden fingerprint it matched, the commit, and the timestamp. **Commit that file with the release.** The Release workflow runs the same contract test on its own runner, and additionally refuses to release a version with no recorded local pass, or whose recorded pass was taken against a different golden fingerprint (`tools/ci/assert-contract-pass.sh`).
+
+After reviewing an intentional change, re-baseline and check in the updated golden fingerprint with:
+
+```bash
+tools/contract-test.sh --bless
+```
+
+Never bless solely to make a failing check pass.
+
+## 5. Package
 
 ```bash
 tools/package-release.sh
@@ -50,7 +80,17 @@ Does a clean build and produces, in `artifacts/release/`:
 
 The BepInEx pack is pinned by version + SHA-256 in the script (fetched from Thunderstore, cached in `tools/cache/`). Zips are deterministic for a given build: fixed entry timestamps, sorted entries, no extra fields, and the DLL itself is a deterministic compile.
 
-## 4. Smoke
+## 6. Record provenance
+
+Record the developer machine's authoritative artifact hashes and exact toolchain after the clean package succeeds:
+
+```bash
+tools/record-provenance.sh --skip-build
+```
+
+The script reads the full Git commit, SDK pin, BepInEx pack pin, and installed Valheim dedicated-server build ID, then writes the current version's DLL and zip hashes to `tools/release/provenance.tsv`. SourceLink embeds the commit SHA in the DLL, so record provenance from a clean tree at the exact commit that will be tagged; otherwise CI's cross-machine assertion will fail. Without `--skip-build` the script performs a fresh clean build and package itself. It refuses to replace different existing inputs or hashes unless `--force` is given; use that flag only after reviewing why the artifacts changed. **Commit the provenance row before tagging.**
+
+## 7. Smoke
 
 Install the **plugin zip** (the artifact, not loose build output) onto the harness testserver and boot it:
 
@@ -65,7 +105,7 @@ unzip -o <repo>/artifacts/release/ValheimOne-<version>.zip -d testserver/
 
 Both must print `PASS`. Do not tag on a failed or skipped smoke.
 
-## 5. Tag
+## 8. Tag
 
 ```bash
 git tag v<version>
@@ -74,9 +114,9 @@ git push origin v<version>
 
 Pushing the tag starts the Release workflow. Watch it: `gh run watch $(gh run list --workflow Release --limit 1 --json databaseId --jq '.[0].databaseId')`.
 
-## 6. GitHub release draft
+## 9. CI verification and GitHub release draft
 
-The Release workflow creates it. It re-runs the version assert, checks that a local `CONTRACT PASS` was recorded for this version, rebuilds, packages, proves the zips are byte-identical across two packaging runs, verifies the artifact layout and checksums, and then:
+The Release workflow creates it. It re-runs the version assert, checks that a local `CONTRACT PASS` was recorded for this version, rebuilds, packages, proves the zips are byte-identical across two packaging runs, and compares the fresh DLL and both zips byte-for-byte with `tools/release/provenance.tsv`. **CI refuses to release a version with no provenance row, a pre-pin `reproducible=no` row, or a recorded commit, SDK, or Valheim build ID that differs from the runner's checkout and toolchain.** It then verifies the artifact layout and checksums and:
 
 - creates the release as a **draft** with all three artifacts and a placeholder body, or
 - if a draft already exists for the tag, refreshes its assets and leaves the body alone, or
@@ -104,22 +144,4 @@ gh release create v<version> --draft --title "ValheimOne <version>" \
   artifacts/release/ValheimOne-<version>.zip \
   artifacts/release/ValheimOne-full-<version>.zip \
   artifacts/release/SHA256SUMS-<version>.txt
-```
-
-## Post-game-update contract test (mandatory)
-
-After every Valheim update, run the deterministic contract test before releasing:
-
-```bash
-tools/contract-test.sh
-```
-
-The contract run installs a pinned config — the pristine reference config with the `tools/fixtures/contract.cfg` overlay applied ([Query] enabled) — and restores the harness's prior config afterward, so the enabled-module fingerprint does not depend on local harness state. `CONTRACT PASS` means the pinned world's worldgen fingerprint, Harmony patch contract, and module registration contract still match the checked-in golden fingerprint. `CONTRACT DRIFT` requires review: a worldgen hash change means map caches must be invalidated and worldgen changes reviewed; patch drift reports broken patch points in `failed=`; and module-count drift indicates registration changes.
-
-On every pass the script writes `tools/contract-pass.txt` — the version it passed at, the SHA-256 of the golden fingerprint it matched, the commit, and the timestamp. **Commit that file with the release.** The Release workflow runs the same contract test on its own runner, and additionally refuses to release a version with no recorded local pass, or whose recorded pass was taken against a different golden fingerprint (`tools/ci/assert-contract-pass.sh`).
-
-After reviewing an intentional change, re-baseline and check in the updated golden fingerprint with:
-
-```bash
-tools/contract-test.sh --bless
 ```

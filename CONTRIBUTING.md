@@ -4,6 +4,8 @@ Thanks for helping build ValheimOne. Please discuss large features in an issue b
 
 ## Development basics
 
+Install the exact .NET SDK pinned in `global.json`; `./build.sh` refuses any other resolved SDK.
+
 1. Target Valheim 0.221.12, BepInEx 5.4.2333, and `net472` unless the compatibility target changes deliberately.
 2. Keep features isolated behind `IFeatureModule` and default every feature section to `Enabled = false`.
 3. Declare typed keys and client/server classification through `FeatureRegistry`.

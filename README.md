@@ -119,6 +119,30 @@ Building from source is `./build.sh`; see [RELEASING.md](RELEASING.md) for packa
 
 ---
 
+## Verifying the binary
+
+A byte-for-byte reproduction requires a Git clone checked out at the exact release tag, the .NET SDK pinned in `global.json`, and a clean working tree. GitHub's downloadable source archives will not match: the SDK embeds the Git commit SHA in the DLL, and those archives have no `.git` checkout.
+
+```bash
+git clone https://github.com/HumanGenome/ValheimOne.git
+cd ValheimOne
+git checkout --detach v<version>
+curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --version 10.0.302 --install-dir "$HOME/.dotnet"
+export PATH="$HOME/.dotnet:$PATH" DOTNET_ROOT="$HOME/.dotnet"
+tools/verify-reproducible.sh --release v<version>
+```
+
+The verifier clean-builds the DLL and checks it against both the checked-in release provenance and the DLL inside the GitHub release asset.
+
+```text
+building HEAD commit: <40-hex commit>
+verified: clean build ValheimOne.dll <sha256>
+verified: published v<version> plugin zip ValheimOne.dll <sha256>
+REPRODUCIBLE <version>
+```
+
+---
+
 ## Configuration
 
 Everything lives in one file: `BepInEx/config/valheimone.cfg`. Every gameplay section is off by default, so a fresh install changes nothing until you opt in.

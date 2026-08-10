@@ -127,6 +127,12 @@ jobs:
             echo "deterministic: ${f}"
           done
 
+      - name: Assert cross-machine reproducibility
+        shell: bash
+        env:
+          VALHEIM_BUILDID: ${{ steps.toolchain.outputs.buildid }}
+        run: tools/ci/assert-reproducible.sh
+
       - name: Verify artifacts
         shell: bash
         env:

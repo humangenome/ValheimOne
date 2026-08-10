@@ -4,6 +4,10 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+### Added
+
+- Release provenance now records authoritative DLL and package hashes with the pinned .NET, BepInEx, and Valheim toolchain, while CI and a public verifier enforce cross-machine byte-for-byte reproducibility. Pinning the SDK fixes the root cause: previously, CI and developer clones could select different SDKs and compile with different Roslyn versions.
+
 ## [0.13.0] - 2026-08-04
 
 ### Added

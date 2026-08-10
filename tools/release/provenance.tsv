@@ -1,0 +1,3 @@
+# Contract: one tab-separated row per released version records its authoritative hashes, full Git commit, and exact toolchain; append new releases, and only replace a row for a deliberate re-record with tools/record-provenance.sh (use --force if inputs or hashes change). reproducible=no retains historical hashes without claiming cross-machine reproducibility.
+version	commit	dotnet_sdk	bepinex_pack	valheim_buildid	dll_sha256	plugin_zip_sha256	full_zip_sha256	reproducible
+0.13.0	6db1d416e476aed250d8bdefb05c7ff5db61e017	UNPINNED	5.4.2333	21981590	ac4edfa9af0bea0f7d916186ad5b278907b272b867b7fe7b6df55cfba1abeef9	7c24cf86303aa15f1cd3208c7866d2e4d20dfe40d35c874a05674513e8220ec3	1223ee9e2f2e0de0d0d71257719d55a4c4200f8185fbcd0e7631080705d34a0e	no
