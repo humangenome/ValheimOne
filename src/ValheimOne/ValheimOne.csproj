@@ -26,6 +26,13 @@
          on above. IncludeSourceRevisionInInformationalVersion does not cover
          this; SourceLink must be off explicitly. -->
     <EnableSourceLink>false</EnableSourceLink>
+    <!-- Release emits no PDB at all. A portable PDB records every metadata
+         reference's MVID, and the publicized game assemblies are regenerated
+         per machine with fresh MVIDs - through the PDB checksum the DLL embeds,
+         that made the release hash machine-dependent even with SourceLink off.
+         Only the DLL ships, so Release debug info buys nothing; Debug builds
+         keep full symbols. -->
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
     <AssemblyName>ValheimOne</AssemblyName>
     <RootNamespace>ValheimOne</RootNamespace>
     <Version>0.13.1</Version>
