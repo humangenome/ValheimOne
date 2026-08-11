@@ -6,7 +6,7 @@
     --border: rgba(190, 150, 90, 0.22);
     --border-strong: rgba(217, 177, 104, 0.45);
     --panel: #1c1610;
-    --secondary: #8a7458;
+    --secondary: #a08b6a;
     --sidebar-width: 264px;
     --sun: #e0a83c;
     --text: #e8dcc4;
@@ -94,6 +94,39 @@
     font: inherit;
 }
 
+/* Guard rails for the embedded build: the panel that hosts the embed ships global
+   element styles (section padding, heading line-heights, Bootstrap's code chip and
+   label margins) that otherwise bleed into the scoped bundle. These match browser
+   defaults, so the standalone page renders identically. */
+#valheimone-embed-root section,
+#valheimone-embed-root header,
+#valheimone-embed-root footer,
+#valheimone-embed-root aside,
+#valheimone-embed-root article {
+    margin: 0;
+    padding: 0;
+}
+
+#valheimone-embed-root h1,
+#valheimone-embed-root h2,
+#valheimone-embed-root h3,
+#valheimone-embed-root h4 {
+    line-height: 1.25;
+}
+
+#valheimone-embed-root label {
+    margin: 0;
+    font-weight: inherit;
+}
+
+#valheimone-embed-root code {
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    color: inherit;
+    font-size: inherit;
+}
+
 #valheimone-embed-root .sidebar-state {
     position: fixed;
     width: 1px;
@@ -120,6 +153,25 @@
     box-shadow: inset 0 0 0 1px rgba(255, 226, 180, 0.07), 8px 0 24px rgb(0 0 0 / 24%);
 }
 
+/* Everything between the pinned header block (brand / tabs / server details) and the
+   footer scrolls as one column. Sections keep their natural height, expansion pushes
+   the content below instead of painting over it. */
+#valheimone-embed-root .sidebar-scroll {
+    display: flex;
+    min-height: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-color: var(--border-strong) transparent;
+    scrollbar-width: thin;
+}
+
+#valheimone-embed-root .sidebar-scroll > section {
+    flex: 0 0 auto;
+}
+
 #valheimone-embed-root .brand {
     position: relative;
     display: grid;
@@ -128,7 +180,7 @@
        badges row spills over the view tabs underneath. */
     flex-shrink: 0;
     min-height: 72px;
-    grid-template-columns: 40px minmax(0, 1fr);
+    grid-template-columns: 40px minmax(0, 1fr) auto;
     align-items: center;
     column-gap: var(--sidebar-gap);
     row-gap: 8px;
@@ -239,21 +291,20 @@
 
 #valheimone-embed-root .watch-button {
     display: inline-flex;
-    min-height: 29px;
+    width: 30px;
+    height: 30px;
+    flex: none;
+    grid-column: 3;
+    grid-row: 1;
     align-items: center;
-    gap: 4px;
-    padding: 4px 8px;
-    border: 1px solid rgba(217, 177, 104, 0.48);
-    border-radius: 999px;
-    background: rgba(217, 177, 104, 0.1);
+    justify-content: center;
+    padding: 0;
+    border: 1px solid rgba(217, 177, 104, 0.42);
+    border-radius: 50%;
+    background: rgba(217, 177, 104, 0.08);
     color: var(--accent);
     cursor: pointer;
-    font-family: var(--font-display);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.065em;
     line-height: 1;
-    text-transform: uppercase;
     transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease,
         box-shadow 140ms ease;
 }
@@ -263,19 +314,15 @@
 }
 
 #valheimone-embed-root .watch-button svg {
-    width: 15px;
-    height: 15px;
+    width: 17px;
+    height: 17px;
     aspect-ratio: 1;
-    flex: 0 0 15px;
+    flex: 0 0 17px;
     fill: none;
     stroke: currentColor;
     stroke-linecap: round;
     stroke-linejoin: round;
     stroke-width: 1.7;
-}
-
-#valheimone-embed-root .watch-button span {
-    white-space: nowrap;
 }
 
 #valheimone-embed-root .watch-button:hover,
@@ -296,10 +343,15 @@
 
 #valheimone-embed-root .detail-line {
     display: grid;
-    min-height: 20px;
-    grid-template-columns: 62px minmax(0, 1fr);
+    min-height: 22px;
+    grid-template-columns: max-content minmax(0, 1fr);
     align-items: center;
     gap: var(--sidebar-gap);
+}
+
+/* display: grid above beats the UA [hidden] rule, so restate it. */
+#valheimone-embed-root .detail-line[hidden] {
+    display: none;
 }
 
 #valheimone-embed-root .detail-label {
@@ -309,6 +361,7 @@
     letter-spacing: 0.08em;
     line-height: 1;
     text-transform: uppercase;
+    white-space: nowrap;
 }
 
 #valheimone-embed-root .detail-value {
@@ -321,15 +374,7 @@
     white-space: nowrap;
 }
 
-#valheimone-embed-root .join-code-line {
-    grid-template-columns: 62px minmax(0, 1fr);
-}
-
-#valheimone-embed-root .join-code-line[hidden] {
-    display: none;
-}
-
-#valheimone-embed-root .join-code-detail {
+#valheimone-embed-root .detail-value-wrap {
     display: flex;
     min-width: 0;
     align-items: center;
@@ -337,8 +382,15 @@
     gap: 6px;
 }
 
+#valheimone-embed-root .join-code-line[hidden] {
+    display: none;
+}
+
 #valheimone-embed-root .join-code-value {
     overflow: hidden;
+    padding: 0;
+    background: transparent;
+    border-radius: 0;
     color: var(--accent);
     font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
     font-size: 13px;
@@ -348,10 +400,49 @@
     white-space: nowrap;
 }
 
-#valheimone-embed-root .join-code-copy {
-    min-height: 26px;
-    padding: 3px 6px;
-    font-size: 11px;
+#valheimone-embed-root .meta-copy {
+    display: inline-flex;
+    width: 20px;
+    height: 20px;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--secondary);
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    transition: background-color 120ms ease, color 120ms ease;
+}
+
+#valheimone-embed-root .meta-copy[hidden] {
+    display: none;
+}
+
+#valheimone-embed-root .meta-copy svg {
+    width: 13px;
+    height: 13px;
+    aspect-ratio: 1;
+    flex: 0 0 13px;
+    fill: none;
+    stroke: currentColor;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1.9;
+}
+
+#valheimone-embed-root .meta-copy:hover,
+#valheimone-embed-root .meta-copy:focus-visible {
+    outline: none;
+    background: rgba(217, 177, 104, 0.12);
+    color: var(--accent);
+}
+
+#valheimone-embed-root .meta-copy.is-copied {
+    color: var(--moss);
 }
 
 #valheimone-embed-root .boss-progression-panel {
@@ -597,8 +688,7 @@
 }
 
 #valheimone-embed-root .saga-panel {
-    min-height: 0;
-    flex: 0 1 auto;
+    flex: 0 0 auto;
     border-bottom: 1px solid var(--border);
     background:
         linear-gradient(90deg, rgba(217, 177, 104, 0.035), transparent 45%),
@@ -858,7 +948,7 @@
     padding: 2px 7px 4px;
     border-bottom: 1px solid rgba(190, 150, 90, 0.16);
     color: var(--secondary);
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.045em;
     line-height: 1;
@@ -1010,7 +1100,6 @@
 #valheimone-embed-root .players-panel {
     display: flex;
     min-height: 0;
-    flex: 1 1 160px;
     flex-direction: column;
     padding: 0;
     border-bottom: 1px solid var(--border);
@@ -1025,6 +1114,7 @@
 
 #valheimone-embed-root .player-list {
     min-height: 0;
+    max-height: 300px;
     margin: 0;
     padding: 3px 8px 8px;
     overflow-y: auto;
@@ -1218,7 +1308,7 @@
     color: #cdb9dd;
     cursor: pointer;
     font-family: var(--font-display);
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.025em;
     line-height: 1.1;
@@ -2780,14 +2870,14 @@
 
 #valheimone-embed-root .map-search-result-copy small {
     color: var(--secondary);
-    font-size: 8px;
+    font-size: 10px;
     letter-spacing: 0.05em;
     text-transform: uppercase;
 }
 
 #valheimone-embed-root .map-search-result-coordinates {
     color: var(--secondary);
-    font-size: 8px;
+    font-size: 10px;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
 }
@@ -2875,7 +2965,7 @@
 #valheimone-embed-root .measure-footnote {
     margin-top: 2px;
     color: var(--secondary);
-    font-size: 9px;
+    font-size: 11px;
     font-style: italic;
 }
 
@@ -3105,7 +3195,7 @@
     margin-bottom: 2px;
     color: var(--accent);
     font-family: var(--font-display);
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.045em;
 }
@@ -3232,7 +3322,7 @@
 #valheimone-embed-root .webpin-dialog-field > span {
     color: var(--accent);
     font-family: var(--font-display);
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.075em;
     text-transform: uppercase;
@@ -3313,7 +3403,7 @@
 #valheimone-embed-root .webpin-icon-choice-name {
     width: 100%;
     overflow: hidden;
-    font-size: 7px;
+    font-size: 9px;
     line-height: 1;
     text-align: center;
     text-overflow: ellipsis;
@@ -3468,7 +3558,7 @@
 #valheimone-embed-root .dungeon-kicker {
     color: var(--dungeon);
     font-family: var(--font-display);
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -3500,7 +3590,7 @@
     border-radius: 999px;
     background: rgba(18, 14, 10, 0.46);
     color: var(--secondary);
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.035em;
     line-height: 1.1;
@@ -3647,7 +3737,7 @@
     border-radius: 999px;
     background: rgba(18, 14, 10, 0.82);
     color: #d7c39d;
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.025em;
 }
@@ -4764,7 +4854,7 @@
     overflow: hidden;
     color: var(--accent);
     font-family: var(--font-display);
-    font-size: 8px;
+    font-size: 10px;
     letter-spacing: 0.11em;
     line-height: 1.25;
     text-overflow: ellipsis;
@@ -4802,7 +4892,7 @@
 
 #valheimone-embed-root .vo-popup-label {
     color: var(--secondary);
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.045em;
     text-transform: uppercase;
@@ -4851,7 +4941,7 @@
 
 #valheimone-embed-root .vo-raid-progress-text {
     color: var(--secondary);
-    font-size: 9px;
+    font-size: 10px;
     line-height: 1;
     text-align: right;
 }
@@ -4954,7 +5044,7 @@
     padding: 6px 11px 7px;
     border-top: 1px solid var(--border);
     color: var(--secondary);
-    font-size: 9px;
+    font-size: 10px;
     font-style: italic;
     line-height: 1;
     text-align: right;
@@ -5374,7 +5464,7 @@
     margin: 0;
     color: var(--text);
     font-family: var(--font-display);
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 700;
     letter-spacing: 0.045em;
     line-height: 1.15;
@@ -5385,8 +5475,8 @@
     display: block;
     margin-top: 3px;
     color: var(--secondary);
-    font-size: 9px;
-    line-height: 1.1;
+    font-size: 11px;
+    line-height: 1.2;
 }
 
 #valheimone-embed-root .codex-controls {
@@ -5438,7 +5528,7 @@
     outline: 0;
     background: transparent;
     color: var(--text);
-    font-size: 11px;
+    font-size: 13px;
 }
 
 #valheimone-embed-root .codex-search input::placeholder {
@@ -5450,46 +5540,163 @@
 }
 
 #valheimone-embed-root .codex-category-label {
+    position: relative;
     display: flex;
     height: 32px;
     flex: 0 0 auto;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
 }
 
 #valheimone-embed-root .codex-category-label > span {
     color: var(--secondary);
     font-family: var(--font-display);
-    font-size: 8px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.065em;
     text-transform: uppercase;
 }
 
-#valheimone-embed-root .codex-category-label select {
-    width: 132px;
+#valheimone-embed-root .codex-category-button {
+    display: flex;
+    min-width: 148px;
     height: 32px;
-    padding: 0 28px 0 9px;
+    align-items: center;
+    gap: 7px;
+    padding: 0 10px;
     border: 1px solid var(--border-strong);
     border-radius: 7px;
-    outline: 0;
     background: var(--background);
     color: var(--text);
     cursor: pointer;
     font-family: "Averia Serif Libre", Georgia, serif;
-    font-size: 11px;
+    font-size: 13px;
+    transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
-#valheimone-embed-root .codex-category-label select:focus-visible {
+#valheimone-embed-root .codex-category-button:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+#valheimone-embed-root .codex-category-button:focus-visible,
+#valheimone-embed-root .codex-category-button.is-open {
     border-color: rgba(217, 177, 104, 0.7);
+    outline: none;
     box-shadow: 0 0 0 2px rgba(217, 177, 104, 0.1);
+}
+
+#valheimone-embed-root .codex-category-current-icon {
+    display: inline-flex;
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+}
+
+#valheimone-embed-root .codex-category-current-icon svg {
+    display: block;
+    width: 15px;
+    height: 15px;
+}
+
+#valheimone-embed-root .codex-category-current {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#valheimone-embed-root .codex-category-chevron {
+    flex: 0 0 auto;
+    color: var(--secondary);
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1;
+    transform: rotate(90deg);
+    transition: transform 120ms ease;
+}
+
+#valheimone-embed-root .codex-category-button.is-open .codex-category-chevron {
+    transform: rotate(-90deg);
+}
+
+#valheimone-embed-root .codex-category-menu {
+    position: absolute;
+    z-index: 30;
+    top: calc(100% + 5px);
+    right: 0;
+    min-width: 190px;
+    padding: 5px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: #1a140e;
+    box-shadow: 0 14px 34px rgb(0 0 0 / 45%);
+}
+
+#valheimone-embed-root .codex-category-menu[hidden] {
+    display: none;
+}
+
+#valheimone-embed-root .codex-category-option {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 9px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    font-family: "Averia Serif Libre", Georgia, serif;
+    font-size: 13px;
+    text-align: left;
+    transition: background-color 100ms ease;
+}
+
+#valheimone-embed-root .codex-category-option:hover,
+#valheimone-embed-root .codex-category-option:focus-visible,
+#valheimone-embed-root .codex-category-option.is-active {
+    outline: none;
+    background: rgba(217, 177, 104, 0.1);
+}
+
+#valheimone-embed-root .codex-category-option.is-selected {
+    color: var(--accent);
+}
+
+#valheimone-embed-root .codex-category-option-icon {
+    display: inline-flex;
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+}
+
+#valheimone-embed-root .codex-category-option-icon svg {
+    display: block;
+    width: 16px;
+    height: 16px;
+}
+
+#valheimone-embed-root .codex-category-option-check {
+    margin-left: auto;
+    color: var(--accent);
+    font-size: 12px;
 }
 
 #valheimone-embed-root .codex-count {
     min-width: 112px;
     flex: 0 0 auto;
     color: var(--secondary);
-    font-size: 10px;
+    font-size: 12px;
     font-variant-numeric: tabular-nums;
     text-align: right;
     white-space: nowrap;
@@ -5504,7 +5711,7 @@
     gap: 11px;
     padding: 20px;
     color: var(--text);
-    font-size: 12px;
+    font-size: 14px;
 }
 
 #valheimone-embed-root .codex-state[hidden],
@@ -5526,15 +5733,16 @@
 #valheimone-embed-root .codex-state-copy strong {
     color: #e8a08c;
     font-family: var(--font-display);
-    font-size: 12px;
+    font-size: 13px;
 }
 
 #valheimone-embed-root .codex-state-copy span {
     color: var(--secondary);
-    font-size: 10px;
+    font-size: 12px;
 }
 
 #valheimone-embed-root .codex-scroll {
+    --codex-columns: 34px minmax(170px, 1fr) 150px 76px 68px 96px 20px;
     position: relative;
     min-height: 0;
     flex: 1;
@@ -5544,6 +5752,30 @@
         #120e0a;
     scrollbar-color: var(--border-strong) transparent;
     scrollbar-width: thin;
+}
+
+#valheimone-embed-root .codex-head {
+    position: sticky;
+    z-index: 3;
+    top: 0;
+    display: grid;
+    height: 32px;
+    grid-template-columns: var(--codex-columns);
+    align-items: center;
+    gap: 9px;
+    padding: 0 11px;
+    border-bottom: 1px solid var(--border-strong);
+    background: #18120d;
+    color: var(--secondary);
+    font-family: var(--font-display);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+}
+
+#valheimone-embed-root .codex-head-num {
+    text-align: right;
 }
 
 #valheimone-embed-root .codex-list {
@@ -5575,7 +5807,7 @@
     display: grid;
     width: 100%;
     height: 42px;
-    grid-template-columns: 30px minmax(150px, 1fr) 132px auto 17px;
+    grid-template-columns: var(--codex-columns);
     align-items: center;
     gap: 9px;
     padding: 0 11px;
@@ -5631,60 +5863,50 @@
 
 #valheimone-embed-root .codex-item-name {
     color: var(--text);
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 700;
-    line-height: 1.1;
+    line-height: 1.15;
 }
 
 #valheimone-embed-root .codex-item-token {
     margin-top: 2px;
-    color: var(--secondary);
+    color: #a8977c;
     font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-    font-size: 8px;
-    line-height: 1;
+    font-size: 10px;
+    line-height: 1.1;
 }
 
 #valheimone-embed-root .codex-item-type {
-    color: var(--secondary);
-    font-size: 9px;
+    color: #bcab8f;
+    font-size: 12px;
 }
 
-#valheimone-embed-root .codex-quick-stats {
-    display: flex;
-    min-width: 0;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 7px;
-}
-
-#valheimone-embed-root .codex-quick-stat {
-    color: var(--secondary);
-    font-size: 9px;
+#valheimone-embed-root .codex-cell-num {
+    overflow: hidden;
+    color: var(--text);
+    font-size: 12px;
     font-variant-numeric: tabular-nums;
+    text-align: right;
+    text-overflow: ellipsis;
     white-space: nowrap;
-}
-
-#valheimone-embed-root .codex-quick-stat b {
-    color: #b4a68f;
-    font-size: 8px;
-    font-weight: 700;
-    text-transform: uppercase;
 }
 
 #valheimone-embed-root .codex-quick-stat.is-portal,
 #valheimone-embed-root .codex-quick-stat.is-no-portal {
     display: inline-flex;
-    min-height: 20px;
+    min-height: 21px;
     align-items: center;
-    padding: 2px 6px;
+    justify-content: center;
+    padding: 2px 8px;
     border: 1px solid rgba(163, 194, 106, 0.25);
     border-radius: 999px;
     background: rgba(163, 194, 106, 0.07);
     color: var(--moss);
-    font-size: 8px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.03em;
     text-transform: uppercase;
+    white-space: nowrap;
 }
 
 #valheimone-embed-root .codex-quick-stat.is-no-portal {
@@ -5722,22 +5944,22 @@
 
 #valheimone-embed-root .codex-description {
     margin: 0 0 10px;
-    color: #d8c8aa;
-    font-size: 12px;
+    color: #e0d2b2;
+    font-size: 14px;
     font-style: italic;
-    line-height: 1.4;
+    line-height: 1.45;
 }
 
 #valheimone-embed-root .codex-stat-block {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
-    gap: 5px;
+    grid-template-columns: repeat(auto-fit, minmax(118px, max-content));
+    gap: 6px;
     margin: 0;
 }
 
 #valheimone-embed-root .codex-stat {
     min-width: 0;
-    padding: 6px 8px;
+    padding: 7px 11px;
     border: 1px solid var(--border);
     border-radius: 6px;
     background: rgba(18, 14, 10, 0.48);
@@ -5746,23 +5968,24 @@
 #valheimone-embed-root .codex-stat dt {
     color: var(--secondary);
     font-family: var(--font-display);
-    font-size: 7px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.065em;
-    line-height: 1;
+    line-height: 1.1;
     text-transform: uppercase;
 }
 
 #valheimone-embed-root .codex-stat dd {
     margin: 3px 0 0;
     color: var(--text);
-    font-size: 10px;
+    font-size: 13px;
     font-variant-numeric: tabular-nums;
-    line-height: 1.3;
+    line-height: 1.35;
 }
 
 #valheimone-embed-root .codex-detail-section {
     margin-top: 12px;
+    padding: 0;
 }
 
 #valheimone-embed-root .codex-detail-section h2 {
@@ -5771,27 +5994,28 @@
     border-bottom: 1px solid var(--border);
     color: var(--accent);
     font-family: var(--font-display);
-    font-size: 9px;
+    font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.075em;
+    line-height: 1.25;
     text-transform: uppercase;
 }
 
 #valheimone-embed-root .codex-detail-section-body {
     display: grid;
-    gap: 5px;
-    padding-top: 6px;
+    gap: 6px;
+    padding-top: 7px;
 }
 
 #valheimone-embed-root .codex-recipe,
 #valheimone-embed-root .codex-conversion {
-    padding: 6px 8px;
+    padding: 7px 10px;
     border: 1px solid var(--border);
     border-radius: 6px;
     background: rgba(18, 14, 10, 0.34);
-    color: #cabb9f;
-    font-size: 10px;
-    line-height: 1.4;
+    color: #d3c5a7;
+    font-size: 13px;
+    line-height: 1.45;
 }
 
 #valheimone-embed-root .codex-recipe-heading {
@@ -5825,7 +6049,7 @@
 
 #valheimone-embed-root .codex-per-level {
     color: var(--secondary);
-    font-size: 8px;
+    font-size: 11px;
     white-space: nowrap;
 }
 
@@ -5834,27 +6058,27 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 5px;
+    gap: 6px;
 }
 
 #valheimone-embed-root .codex-reverse-label {
     margin-right: 2px;
-    color: var(--secondary);
-    font-size: 9px;
+    color: #bcab8f;
+    font-size: 12px;
 }
 
 #valheimone-embed-root .codex-use-chip,
 #valheimone-embed-root .codex-drop {
     display: inline-flex;
-    min-height: 23px;
+    min-height: 25px;
     align-items: center;
-    padding: 3px 7px;
+    padding: 3px 10px;
     border: 1px solid var(--border);
     border-radius: 999px;
     background: rgba(217, 177, 104, 0.07);
     color: var(--accent);
-    font-size: 9px;
-    line-height: 1.1;
+    font-size: 12px;
+    line-height: 1.2;
     text-decoration: none;
 }
 
@@ -5982,7 +6206,7 @@
     align-items: center;
     gap: 6px;
     color: var(--moss);
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 750;
     letter-spacing: 0.07em;
     text-transform: uppercase;
@@ -6319,7 +6543,7 @@
     background: var(--panel);
     color: var(--secondary);
     font-family: var(--font-display);
-    font-size: 8px;
+    font-size: 9px;
     font-weight: 700;
     letter-spacing: 0.09em;
     text-transform: uppercase;
@@ -6380,7 +6604,7 @@
     overflow: hidden;
     color: var(--secondary);
     font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-    font-size: 9px;
+    font-size: 11px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -6408,7 +6632,7 @@
     border-radius: 999px;
     background: var(--panel);
     color: var(--sun);
-    font-size: 8px;
+    font-size: 9px;
     font-weight: 750;
     letter-spacing: 0.05em;
     text-transform: uppercase;
@@ -6462,7 +6686,7 @@
 
 #valheimone-embed-root .console-section-heading > span {
     color: var(--secondary);
-    font-size: 9px;
+    font-size: 11px;
     font-variant-numeric: tabular-nums;
 }
 
@@ -6546,7 +6770,7 @@
     min-width: 0;
     overflow: hidden;
     color: var(--secondary);
-    font-size: 9px;
+    font-size: 11px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
@@ -6590,7 +6814,7 @@
 #valheimone-embed-root .console-list-action {
     min-height: 25px;
     padding: 3px 7px;
-    font-size: 9px;
+    font-size: 10px;
 }
 
 #valheimone-embed-root .console-list-action.is-danger {
@@ -7256,11 +7480,14 @@
 }
 
 @media (max-width: 1100px) {
-    #valheimone-embed-root .codex-item-row {
-        grid-template-columns: 30px minmax(120px, 1fr) auto 17px;
+    #valheimone-embed-root .codex-scroll {
+        --codex-columns: 30px minmax(120px, 1fr) 96px 17px;
     }
 
-    #valheimone-embed-root .codex-item-type {
+    #valheimone-embed-root .codex-item-type,
+    #valheimone-embed-root .codex-cell-num,
+    #valheimone-embed-root .codex-head-cat,
+    #valheimone-embed-root .codex-head-num {
         display: none;
     }
 }
@@ -7601,8 +7828,12 @@
         margin-left: auto;
     }
 
+    #valheimone-embed-root .codex-scroll {
+        --codex-columns: 28px minmax(90px, 1fr) auto 14px;
+    }
+
+    #valheimone-embed-root .codex-head,
     #valheimone-embed-root .codex-item-row {
-        grid-template-columns: 28px minmax(90px, 1fr) auto 14px;
         gap: 6px;
         padding: 0 7px;
     }
@@ -7612,19 +7843,11 @@
         height: 25px;
     }
 
-    #valheimone-embed-root .codex-quick-stats {
-        gap: 4px;
-    }
-
-    #valheimone-embed-root .codex-quick-stat {
-        font-size: 8px;
-    }
-
     #valheimone-embed-root .codex-quick-stat.is-portal,
     #valheimone-embed-root .codex-quick-stat.is-no-portal {
-        padding-right: 5px;
-        padding-left: 5px;
-        font-size: 7px;
+        padding-right: 6px;
+        padding-left: 6px;
+        font-size: 9px;
     }
 
     #valheimone-embed-root .codex-item-detail {
@@ -7732,22 +7955,6 @@
 }
 
 @media (max-width: 759px) and (max-height: 700px) {
-    #valheimone-embed-root #sidebar {
-        overflow-x: hidden;
-        overflow-y: auto;
-    }
-
-    #valheimone-embed-root #sidebar > .brand,
-    #valheimone-embed-root #sidebar > .view-tabs,
-    #valheimone-embed-root #sidebar > .server-details,
-    #valheimone-embed-root #sidebar > .time-panel,
-    #valheimone-embed-root #sidebar > .boss-progression-panel,
-    #valheimone-embed-root #sidebar > .players-panel,
-    #valheimone-embed-root #sidebar > .saga-panel,
-    #valheimone-embed-root #sidebar > .sidebar-footer {
-        flex: 0 0 auto;
-    }
-
     #valheimone-embed-root .player-list {
         max-height: 160px;
     }
@@ -7764,12 +7971,6 @@
 
     #valheimone-embed-root .saved-chip {
         width: auto;
-    }
-}
-
-@media (max-width: 260px) {
-    #valheimone-embed-root .watch-button span {
-        display: none;
     }
 }
 

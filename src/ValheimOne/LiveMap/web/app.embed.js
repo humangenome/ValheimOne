@@ -10,6 +10,10 @@
     var embedApiBase = embedMode && typeof embedConfig.apiBase === "string"
         ? embedConfig.apiBase
         : "";
+    // Hosts that render their own top-level navigation (the hosting panel) set
+    // externalNav and drive the view through ValheimOneEmbed.setView, so the
+    // sidebar's internal view switcher stays hidden.
+    var externalNavMode = embedMode && embedConfig.externalNav === true;
     var appRoot = embedRoot || document.body;
     var styleRoot = embedRoot || document.documentElement;
     var destroyed = false;
@@ -763,6 +767,7 @@
     var playerLayer = null;
     var pinLayer = null;
     var latestPins = [];
+    var latestPinsSignature = null;
     var webPinLayer = null;
     var latestWebPins = [];
     var webPinsRevision = null;
@@ -928,7 +933,11 @@
     var timelapseRestoreVisibility = null;
     var timelapseBasePulses = new Map();
     var initialCodexToken = codexTokenFromHash(appHash());
-    var requestedTab = initialCodexToken !== null ? "codex" : loadRequestedTab();
+    // Under an external navigation host the panel's own tab bar decides the view,
+    // so the embed always boots on the map regardless of remembered state.
+    var requestedTab = externalNavMode
+        ? "map"
+        : (initialCodexToken !== null ? "codex" : loadRequestedTab());
     var activeTab = "map";
     var consoleAvailable = false;
     var catalogPayload = null;
@@ -943,6 +952,11 @@
     var codexSearchTimer = 0;
     var codexShowAllReverseUses = false;
     var pendingCodexToken = initialCodexToken || "";
+    var codexCategoryValue = "all";
+    var codexScrollFrame = 0;
+    var codexRenderedEntries = new Map();
+    var codexRenderedDetail = null;
+    var codexRenderedStructureKey = "";
     var consolePollingStarted = false;
     var consoleLogPollTimer = 0;
     var statsPollingStarted = false;
@@ -1027,6 +1041,9 @@
         confirmMessage: embedElementById("console-confirm-message"),
         confirmSubmit: embedElementById("console-confirm-submit"),
         codexCategory: embedElementById("codex-category"),
+        codexCategoryCurrent: embedElementById("codex-category-current"),
+        codexCategoryCurrentIcon: embedElementById("codex-category-current-icon"),
+        codexCategoryMenu: embedElementById("codex-category-menu"),
         codexCount: embedElementById("codex-count"),
         codexList: embedElementById("codex-list"),
         codexPane: embedElementById("codex-pane"),
@@ -1096,6 +1113,8 @@
         sagaNote: embedElementById("saga-note"),
         sagaPanel: embedElementById("saga-panel"),
         sagaToggle: embedElementById("saga-toggle"),
+        serverCopy: embedElementById("server-copy"),
+        serverLine: embedElementById("server-line"),
         serverName: embedElementById("server-name"),
         sidebarState: embedElementById("sidebar-state"),
         sidebarWindNeedle: embedElementById("sidebar-wind-needle"),
@@ -1113,6 +1132,7 @@
         consolePlayerCount: embedElementById("console-player-count"),
         consolePlayerList: embedElementById("console-player-list"),
         worldClock: embedElementById("world-clock"),
+        worldCopy: embedElementById("world-copy"),
         worldName: embedElementById("world-name"),
         windChip: embedElementById("wind-chip"),
         watchButton: embedElementById("watch-button")
@@ -1480,8 +1500,9 @@
         var isAvailable = currentView === "admin" && status && status.console === true;
         consoleAvailable = isAvailable;
         elements.consoleTab.hidden = !isAvailable;
-        elements.tabList.hidden = [elements.mapTab, elements.consoleTab, elements.codexTab]
-            .filter(function (button) { return !button.hidden; }).length <= 1;
+        elements.tabList.hidden = externalNavMode ||
+            [elements.mapTab, elements.consoleTab, elements.codexTab]
+                .filter(function (button) { return !button.hidden; }).length <= 1;
         elements.metricFrameItem.hidden = !isAvailable;
         elements.metricZdoItem.hidden = !isAvailable;
         if (!isAvailable) {
@@ -1722,12 +1743,82 @@
         return catalogPromise;
     }
 
+    var CODEX_CATEGORY_ORDER = [
+        "all", "weapons", "armor", "tools", "materials", "consumables", "trophies", "misc"
+    ];
+
+    function codexCategoryLabel(category) {
+        return category === "all" ? "All" : (CODEX_CATEGORY_LABELS[category] || category);
+    }
+
+    function codexCategoryIconMarkup(category) {
+        return category === "all"
+            ? iconMarkup("codex_misc", "❖")
+            : iconMarkup("codex_" + category, "◇");
+    }
+
+    function setCodexCategoryMenuOpen(isOpen) {
+        if (!elements.codexCategoryMenu) {
+            return;
+        }
+        elements.codexCategoryMenu.hidden = !isOpen;
+        elements.codexCategory.classList.toggle("is-open", isOpen);
+        elements.codexCategory.setAttribute("aria-expanded", String(isOpen));
+    }
+
+    function renderCodexCategoryMenu() {
+        if (!elements.codexCategoryMenu) {
+            return;
+        }
+        elements.codexCategoryMenu.textContent = "";
+        CODEX_CATEGORY_ORDER.forEach(function (category) {
+            var option = codexElement(
+                "button",
+                "codex-category-option" +
+                    (category === codexCategoryValue ? " is-selected" : "")
+            );
+            option.type = "button";
+            option.setAttribute("role", "option");
+            option.setAttribute(
+                "aria-selected",
+                String(category === codexCategoryValue)
+            );
+            option.dataset.codexCategoryOption = category;
+            var icon = codexElement("span", "codex-category-option-icon");
+            icon.innerHTML = codexCategoryIconMarkup(category);
+            option.appendChild(icon);
+            option.appendChild(codexElement("span", "", codexCategoryLabel(category)));
+            if (category === codexCategoryValue) {
+                option.appendChild(codexElement("span", "codex-category-option-check", "✓"));
+            }
+            elements.codexCategoryMenu.appendChild(option);
+        });
+    }
+
+    function setCodexCategory(category, applyFilters) {
+        var normalized = CODEX_CATEGORY_ORDER.indexOf(category) !== -1
+            ? category
+            : "all";
+        codexCategoryValue = normalized;
+        if (elements.codexCategoryCurrent) {
+            elements.codexCategoryCurrent.textContent = codexCategoryLabel(normalized);
+        }
+        if (elements.codexCategoryCurrentIcon) {
+            elements.codexCategoryCurrentIcon.innerHTML =
+                codexCategoryIconMarkup(normalized);
+        }
+        renderCodexCategoryMenu();
+        if (applyFilters !== false) {
+            applyCodexFilters(true);
+        }
+    }
+
     function applyCodexFilters(resetScroll) {
         if (!catalogPayload) {
             return;
         }
         var queryText = elements.codexSearch.value.trim().toLocaleLowerCase();
-        var category = elements.codexCategory.value || "all";
+        var category = codexCategoryValue || "all";
         codexFilteredItems = catalogItems.filter(function (item) {
             if (category !== "all" && codexCategoryForType(item.type) !== category) {
                 return false;
@@ -1778,13 +1869,6 @@
         return Math.floor((offset - codexExpandedHeight) / CODEX_ROW_HEIGHT);
     }
 
-    function createCodexQuickStat(label, value, className) {
-        var stat = codexElement("span", "codex-quick-stat" + (className ? " " + className : ""));
-        stat.appendChild(codexElement("b", "", label));
-        stat.appendChild(document.createTextNode(" " + value));
-        return stat;
-    }
-
     function createCodexItemRow(item, index, top, expanded) {
         var entry = codexElement("div", "codex-item-entry");
         entry.setAttribute("role", "listitem");
@@ -1809,16 +1893,14 @@
         identity.appendChild(codexElement("small", "codex-item-token", item.token));
         row.appendChild(identity);
         row.appendChild(codexElement("span", "codex-item-type", humanizeCatalogName(item.type) || "Misc"));
-
-        var quickStats = codexElement("span", "codex-quick-stats");
-        quickStats.appendChild(createCodexQuickStat("Wt", formatCatalogNumber(item.weight)));
-        quickStats.appendChild(createCodexQuickStat("Stack", formatCatalogNumber(item.maxStackSize)));
-        quickStats.appendChild(createCodexQuickStat(
-            "",
-            item.teleportable === false ? "No portal" : "Portal",
-            item.teleportable === false ? "is-no-portal" : "is-portal"
+        row.appendChild(codexElement("span", "codex-cell-num", formatCatalogNumber(item.weight)));
+        row.appendChild(codexElement("span", "codex-cell-num", formatCatalogNumber(item.maxStackSize)));
+        row.appendChild(codexElement(
+            "span",
+            "codex-quick-stat " +
+                (item.teleportable === false ? "is-no-portal" : "is-portal"),
+            item.teleportable === false ? "No portal" : "Portal"
         ));
-        row.appendChild(quickStats);
         row.appendChild(codexElement("span", "codex-row-chevron", "›"));
         entry.appendChild(row);
         return entry;
@@ -2024,6 +2106,36 @@
         }
     }
 
+    function clearCodexRenderedWindow() {
+        codexRenderedEntries.clear();
+        codexRenderedDetail = null;
+        codexRenderedStructureKey = "";
+        elements.codexList.textContent = "";
+    }
+
+    function appendCodexWindowRow(index, expandedIndex) {
+        var top = index * CODEX_ROW_HEIGHT +
+            (expandedIndex >= 0 && index > expandedIndex ? codexExpandedHeight : 0);
+        var isExpanded = index === expandedIndex;
+        var entry = createCodexItemRow(
+            codexFilteredItems[index],
+            index,
+            top,
+            isExpanded
+        );
+        elements.codexList.appendChild(entry);
+        codexRenderedEntries.set(index, entry);
+        if (isExpanded) {
+            var detail = createCodexDetail(
+                codexFilteredItems[index],
+                index,
+                top + CODEX_ROW_HEIGHT
+            );
+            elements.codexList.appendChild(detail);
+            codexRenderedDetail = { element: detail, index: index };
+        }
+    }
+
     function renderCodexWindow(force) {
         if (!catalogPayload || elements.codexScroll.hidden) {
             return;
@@ -2040,7 +2152,7 @@
                 return;
             }
             codexWindowKey = emptyKey;
-            elements.codexList.textContent = "";
+            clearCodexRenderedWindow();
             elements.codexList.appendChild(codexElement(
                 "p",
                 "codex-empty",
@@ -2059,36 +2171,48 @@
             codexFilteredItems.length,
             codexIndexAtOffset(viewBottom, expandedIndex) + CODEX_WINDOW_OVERSCAN + 1
         );
-        var windowKey = [
-            start,
-            end,
+        var structureKey = [
             codexExpandedToken,
             codexExpandedHeight,
             codexShowAllReverseUses,
             codexFilteredItems.length
         ].join("|");
+        var windowKey = start + "|" + end + "|" + structureKey;
         if (!force && codexWindowKey === windowKey) {
             return;
         }
         codexWindowKey = windowKey;
-        elements.codexList.textContent = "";
 
-        for (var index = start; index < end; index++) {
-            var top = index * CODEX_ROW_HEIGHT +
-                (expandedIndex >= 0 && index > expandedIndex ? codexExpandedHeight : 0);
-            var isExpanded = index === expandedIndex;
-            elements.codexList.appendChild(createCodexItemRow(
-                codexFilteredItems[index],
-                index,
-                top,
-                isExpanded
-            ));
-            if (isExpanded) {
-                elements.codexList.appendChild(createCodexDetail(
-                    codexFilteredItems[index],
-                    index,
-                    top + CODEX_ROW_HEIGHT
-                ));
+        var index;
+        if (force || structureKey !== codexRenderedStructureKey) {
+            // Structure changed (filter, expansion, detail height): rebuild the window.
+            clearCodexRenderedWindow();
+            codexRenderedStructureKey = structureKey;
+            for (index = start; index < end; index++) {
+                appendCodexWindowRow(index, expandedIndex);
+            }
+        } else {
+            // Same structure, new scroll window: recycle — drop rows that left the
+            // window and append the few that entered, instead of rebuilding all of it.
+            codexRenderedEntries.forEach(function (element, entryIndex) {
+                if (entryIndex < start || entryIndex >= end) {
+                    if (element.parentNode === elements.codexList) {
+                        elements.codexList.removeChild(element);
+                    }
+                    codexRenderedEntries.delete(entryIndex);
+                }
+            });
+            if (codexRenderedDetail &&
+                (codexRenderedDetail.index < start || codexRenderedDetail.index >= end)) {
+                if (codexRenderedDetail.element.parentNode === elements.codexList) {
+                    elements.codexList.removeChild(codexRenderedDetail.element);
+                }
+                codexRenderedDetail = null;
+            }
+            for (index = start; index < end; index++) {
+                if (!codexRenderedEntries.has(index)) {
+                    appendCodexWindowRow(index, expandedIndex);
+                }
             }
         }
 
@@ -2135,7 +2259,7 @@
         }
 
         elements.codexSearch.value = "";
-        elements.codexCategory.value = "all";
+        setCodexCategory("all", false);
         applyCodexFilters(false);
         openCodexItem(item, true, updateHash);
     }
@@ -2167,13 +2291,49 @@
                 applyCodexFilters(true);
             }, CODEX_SEARCH_DEBOUNCE_MS);
         });
-        addAppListener(elements.codexCategory, "change", function () {
-            window.clearTimeout(codexSearchTimer);
-            codexSearchTimer = 0;
-            applyCodexFilters(true);
+        addAppListener(elements.codexCategory, "click", function () {
+            if (elements.codexCategory.disabled || !elements.codexCategoryMenu) {
+                return;
+            }
+            setCodexCategoryMenuOpen(elements.codexCategoryMenu.hidden);
         });
+        addAppListener(elements.codexCategory, "keydown", function (event) {
+            if (event.key === "Escape" && elements.codexCategoryMenu &&
+                !elements.codexCategoryMenu.hidden) {
+                setCodexCategoryMenuOpen(false);
+            }
+        });
+        if (elements.codexCategoryMenu) {
+            addAppListener(elements.codexCategoryMenu, "click", function (event) {
+                var option = event.target.closest("[data-codex-category-option]");
+                if (!option) {
+                    return;
+                }
+                setCodexCategoryMenuOpen(false);
+                window.clearTimeout(codexSearchTimer);
+                codexSearchTimer = 0;
+                setCodexCategory(option.dataset.codexCategoryOption, true);
+            });
+            addAppListener(document, "click", function (event) {
+                if (elements.codexCategoryMenu.hidden) {
+                    return;
+                }
+                if (event.target && typeof event.target.closest === "function" &&
+                    event.target.closest("#codex-category-control")) {
+                    return;
+                }
+                setCodexCategoryMenuOpen(false);
+            });
+        }
+        setCodexCategory("all", false);
         addAppListener(elements.codexScroll, "scroll", function () {
-            renderCodexWindow(false);
+            if (codexScrollFrame) {
+                return;
+            }
+            codexScrollFrame = window.requestAnimationFrame(function () {
+                codexScrollFrame = 0;
+                renderCodexWindow(false);
+            });
         });
         addAppListener(elements.codexList, "click", function (event) {
             var jumpLink = event.target.closest("[data-codex-token]");
@@ -4420,13 +4580,22 @@
 
     function flashCopyButton(button) {
         window.clearTimeout(button._voCopyTimer);
-        if (!button._voCopyLabel) {
-            button._voCopyLabel = button.textContent;
+        // Icon-only buttons restore their markup; text buttons their label.
+        if (!button._voCopyLabel && !button._voCopyMarkup) {
+            if (button.childElementCount > 0) {
+                button._voCopyMarkup = button.innerHTML;
+            } else {
+                button._voCopyLabel = button.textContent;
+            }
         }
         button.textContent = "✓";
         button.classList.add("is-copied");
         button._voCopyTimer = window.setTimeout(function () {
-            button.textContent = button._voCopyLabel;
+            if (button._voCopyMarkup) {
+                button.innerHTML = button._voCopyMarkup;
+            } else {
+                button.textContent = button._voCopyLabel;
+            }
             button.classList.remove("is-copied");
             button._voCopyTimer = 0;
         }, 1200);
@@ -5744,6 +5913,7 @@
         map.on("zoomend", updateRegionLayerVisibility);
         map.on("moveend zoomend", scheduleHashUpdate);
         syncLayerVisibility();
+        centerInitialViewForOverlays();
         updatePlayerMarkers(latestPlayers);
         applyInitialPlayersView();
         applyPendingHashFollow();
@@ -5754,6 +5924,58 @@
         ensureEntityFeed();
         startPinsPolling();
         startWebPinsPolling();
+    }
+
+    // The Layers panel floats over the right side of the map, so a view centred on
+    // the map container sits visually pushed right. Nudge the default view so the
+    // world circle centres in the VISIBLE map area instead. Explicit views (hash
+    // coordinates, player fit) are respected and never nudged.
+    function centerInitialViewForOverlays() {
+        if (!map || hashViewApplied || firstPlayersViewApplied) {
+            return;
+        }
+        var container = map.getContainer();
+        if (!container) {
+            return;
+        }
+        var containerRect = container.getBoundingClientRect();
+        if (!containerRect || containerRect.width <= 0) {
+            return;
+        }
+        var layersControl = container.querySelector(".layers-control");
+        if (!layersControl || layersControl.offsetParent === null) {
+            return;
+        }
+        var layersRect = layersControl.getBoundingClientRect();
+        var overlap = containerRect.right - layersRect.left;
+        if (!Number.isFinite(overlap) || overlap <= 0 ||
+            overlap >= containerRect.width * 0.6) {
+            return;
+        }
+        var offsetPx = Math.round(overlap / 2);
+        // At overview zoom the whole world fits the viewport, so maxBounds clamps
+        // a plain panBy back to centre — Leaflet centres bounds that are narrower
+        // than the view. Extending the east bound by the full overlap shifts that
+        // centred position by overlap/2, which is exactly the nudge we want; when
+        // the world is wider than the view (deep zoom, narrow screens) the panBy
+        // below does the moving instead and the looser east edge is harmless.
+        var maxBounds = map.options.maxBounds;
+        if (maxBounds) {
+            var center = map.getCenter();
+            var centerPoint = map.latLngToContainerPoint(center);
+            var shifted = map.containerPointToLatLng([
+                centerPoint.x + overlap,
+                centerPoint.y
+            ]);
+            var lngDelta = shifted.lng - center.lng;
+            if (Number.isFinite(lngDelta) && lngDelta > 0) {
+                map.setMaxBounds(L.latLngBounds(
+                    L.latLng(maxBounds.getSouth(), maxBounds.getWest()),
+                    L.latLng(maxBounds.getNorth(), maxBounds.getEast() + lngDelta)
+                ));
+            }
+        }
+        map.panBy([offsetPx, 0], { animate: false });
     }
 
     function initialiseDataLayers() {
@@ -14231,6 +14453,16 @@
         });
     }
 
+    // Dense worlds put thousands of DOM markers on the overview otherwise, which
+    // makes the whole page (and any host embedding it) slow to paint and click.
+    // Cluster everything below the map's 1:1 overview zoom; one zoom step in
+    // de-clusters exactly as before.
+    function overviewClusterZoom() {
+        return mapMetrics && Number.isFinite(mapMetrics.baseZoom)
+            ? Math.max(OVERVIEW_CLUSTER_ZOOM, mapMetrics.baseZoom)
+            : OVERVIEW_CLUSTER_ZOOM;
+    }
+
     function bucketRecordsOnGrid(records, weightForRecord, accumulateRecord) {
         var buckets = Object.create(null);
         records.forEach(function (record) {
@@ -14281,7 +14513,7 @@
             }
             var targetZoom = Math.min(
                 map.getMaxZoom(),
-                Math.max(OVERVIEW_CLUSTER_ZOOM, map.getZoom() + 1)
+                Math.max(overviewClusterZoom(), map.getZoom() + 1)
             );
             map.setView(marker.getLatLng(), targetZoom, { animate: true });
         });
@@ -14516,6 +14748,11 @@
             }
         });
         buckets.forEach(function (bucket) {
+            if (bucket.records.length === 1 &&
+                (bucket.records[0].memberCount || 1) === 1) {
+                createPoiMarker(bucket.records[0]).addTo(layer);
+                return;
+            }
             createPoiClusterMarker(group, bucket).addTo(layer);
         });
     }
@@ -14525,7 +14762,7 @@
             return;
         }
 
-        var useClusters = map.getZoom() < OVERVIEW_CLUSTER_ZOOM;
+        var useClusters = map.getZoom() < overviewClusterZoom();
         POI_GROUP_ORDER.forEach(function (group) {
             if (isPoiGroupZoomGated(group)) {
                 return;
@@ -14541,8 +14778,8 @@
 
         var zoom = map.getZoom();
         var usedClusters = overviewClusterRenderZoom !== null &&
-            overviewClusterRenderZoom < OVERVIEW_CLUSTER_ZOOM;
-        var useClusters = zoom < OVERVIEW_CLUSTER_ZOOM;
+            overviewClusterRenderZoom < overviewClusterZoom();
+        var useClusters = zoom < overviewClusterZoom();
         if (!useClusters && !usedClusters) {
             overviewClusterRenderZoom = zoom;
             return;
@@ -14738,7 +14975,7 @@
             setFeedState("pois", true);
             renderPoiGroup(
                 group,
-                map.getZoom() < OVERVIEW_CLUSTER_ZOOM &&
+                map.getZoom() < overviewClusterZoom() &&
                     !poiGroupHasZoomGate(group)
             );
             syncLayerVisibility();
@@ -15915,7 +16152,7 @@
         latestPins.forEach(function (pin) {
             pin.marker = null;
         });
-        if (map.getZoom() >= OVERVIEW_CLUSTER_ZOOM) {
+        if (map.getZoom() >= overviewClusterZoom()) {
             latestPins.forEach(function (pin) {
                 createPinMarker(pin).addTo(pinLayer);
             });
@@ -15926,6 +16163,10 @@
             bucket.checkedWeight = (bucket.checkedWeight || 0) + (pin.checked ? 1 : 0);
         });
         buckets.forEach(function (bucket) {
+            if (bucket.records.length === 1) {
+                createPinMarker(bucket.records[0]).addTo(pinLayer);
+                return;
+            }
             createPinClusterMarker(bucket).addTo(pinLayer);
         });
     }
@@ -15955,9 +16196,18 @@
                 };
                 nextPins.push(pinRecord);
             });
-            latestPins = nextPins;
             recordPollSuccess("pins");
-            renderPins();
+            // Rebuilding a couple thousand pin markers every poll makes the page
+            // hitch even when nothing changed; only re-render when the data moved.
+            var nextSignature = nextPins.map(function (pin) {
+                return pin.x + "," + pin.z + "," + (pin.checked ? 1 : 0) + "," +
+                    pin.name + "," + pin.author;
+            }).join(";");
+            if (nextSignature !== latestPinsSignature) {
+                latestPinsSignature = nextSignature;
+                latestPins = nextPins;
+                renderPins();
+            }
             feedLastUpdated.pins = Date.now();
             setFeedState("pins", true);
             if (pinsWereLoaded) {
@@ -16723,8 +16973,7 @@
         feedLastUpdated.status = Date.now();
         latestStatusSnapshotStale = status.stale === true;
         setFeedState("status", true);
-        elements.serverName.textContent = textOrDash(status.serverName);
-        elements.worldName.textContent = textOrDash(status.worldName);
+        updateServerDetails(status.worldName, status.serverName);
         updateJoinCode(status.joinCode);
         updateMapMetricsFromStatus(status);
         renderWorldTime(status.day, status.timeOfDay);
@@ -16744,6 +16993,33 @@
         renderCinemaHud();
         tryBootCinemaFromHash();
         recordPollSuccess("status");
+    }
+
+    function setMetaCopyValue(button, value) {
+        if (!button) {
+            return;
+        }
+        if (value) {
+            button.hidden = false;
+            button.setAttribute("data-copy", value);
+        } else {
+            button.hidden = true;
+            button.removeAttribute("data-copy");
+        }
+    }
+
+    function updateServerDetails(worldName, serverName) {
+        var world = typeof worldName === "string" ? worldName.trim() : "";
+        var server = typeof serverName === "string" ? serverName.trim() : "";
+        elements.worldName.textContent = textOrDash(world);
+        elements.serverName.textContent = textOrDash(server);
+        setMetaCopyValue(elements.worldCopy, world);
+        setMetaCopyValue(elements.serverCopy, server);
+        // On hosted servers world and server names usually default to the same
+        // value; two identical rows read as a mistake, so collapse to one.
+        if (elements.serverLine) {
+            elements.serverLine.hidden = world !== "" && world === server;
+        }
     }
 
     function updateJoinCode(joinCode) {
@@ -17066,6 +17342,8 @@
         window.clearTimeout(noticeToastTimer);
         window.clearTimeout(saveButtonTimer);
         window.clearTimeout(codexSearchTimer);
+        window.cancelAnimationFrame(codexScrollFrame);
+        codexScrollFrame = 0;
         window.clearTimeout(dungeonRegistryState.timer);
         window.clearTimeout(dungeonDetailPollTimer);
         window.clearTimeout(mapContextMenuTimer);
@@ -17129,6 +17407,9 @@
                 },
                 invalidateSize: function () {
                     return;
+                },
+                setView: function () {
+                    return;
                 }
             };
         }
@@ -17180,10 +17461,22 @@
     connectEventStream();
     addAppListener(document, "visibilitychange", handleMarkerTweenVisibility);
     window.addEventListener("beforeunload", destroyApp);
+    if (externalNavMode) {
+        elements.tabList.hidden = true;
+    }
     if (embedMode) {
         hostWindow.ValheimOneEmbed = {
             destroy: destroyApp,
-            invalidateSize: invalidateEmbedSize
+            invalidateSize: invalidateEmbedSize,
+            setView: function (view) {
+                if (destroyed) {
+                    return;
+                }
+                setActiveTab(
+                    view === "codex" ? "codex" : (view === "console" ? "console" : "map"),
+                    false
+                );
+            }
         };
     }
 }(window));

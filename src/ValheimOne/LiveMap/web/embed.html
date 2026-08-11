@@ -30,17 +30,16 @@
                 <div class="brand-name">VALHEIM<span class="accent">ONE</span></div>
                 <div class="brand-subtitle">World Chart</div>
             </div>
+            <button id="watch-button" class="watch-button" type="button"
+                    aria-label="Cinema mode" title="Cinema mode" hidden>
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="m3 12 4.5-4.5L12 5l4.5 2.5L21 12l-4.5 4.5L12 19l-4.5-2.5L3 12Z" />
+                    <path d="m9 12 3-3 3 3-3 3-3-3ZM12 5v4m0 6v4" />
+                </svg>
+            </button>
             <div class="brand-badges">
                 <span id="public-view-badge" class="public-view-badge" hidden>Public view</span>
                 <span id="offline-badge" class="offline-badge" hidden>Offline</span>
-                <button id="watch-button" class="watch-button" type="button"
-                        aria-label="Enter Cinema Mode" title="Enter Cinema Mode" hidden>
-                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                        <path d="m3 12 4.5-4.5L12 5l4.5 2.5L21 12l-4.5 4.5L12 19l-4.5-2.5L3 12Z" />
-                        <path d="m9 12 3-3 3 3-3 3-3-3ZM12 5v4m0 6v4" />
-                    </svg>
-                    <span>Cinema Mode</span>
-                </button>
             </div>
         </header>
 
@@ -56,22 +55,46 @@
         <section class="server-details" aria-label="Server details">
             <div class="detail-line">
                 <span class="detail-label">World</span>
-                <span class="detail-value" id="world-name">—</span>
+                <span class="detail-value-wrap">
+                    <span class="detail-value" id="world-name">—</span>
+                    <button class="vo-copy meta-copy" id="world-copy" type="button"
+                            aria-label="Copy world name" title="Copy" hidden>
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <rect x="9" y="9" width="11" height="11" rx="2" />
+                            <path d="M5 15V6a2 2 0 0 1 2-2h9" />
+                        </svg>
+                    </button>
+                </span>
             </div>
-            <div class="detail-line">
+            <div class="detail-line" id="server-line">
                 <span class="detail-label">Server</span>
-                <span class="detail-value" id="server-name">—</span>
+                <span class="detail-value-wrap">
+                    <span class="detail-value" id="server-name">—</span>
+                    <button class="vo-copy meta-copy" id="server-copy" type="button"
+                            aria-label="Copy server name" title="Copy" hidden>
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <rect x="9" y="9" width="11" height="11" rx="2" />
+                            <path d="M5 15V6a2 2 0 0 1 2-2h9" />
+                        </svg>
+                    </button>
+                </span>
             </div>
             <div class="detail-line join-code-line" id="join-code-line" hidden>
-                <span class="detail-label">Join code</span>
-                <span class="join-code-detail">
+                <span class="detail-label">Join Code</span>
+                <span class="detail-value-wrap">
                     <code class="join-code-value" id="join-code"></code>
-                    <button class="vo-copy join-code-copy" id="join-code-copy" type="button"
-                            aria-label="Copy join code">Copy</button>
+                    <button class="vo-copy meta-copy" id="join-code-copy" type="button"
+                            aria-label="Copy join code" title="Copy">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <rect x="9" y="9" width="11" height="11" rx="2" />
+                            <path d="M5 15V6a2 2 0 0 1 2-2h9" />
+                        </svg>
+                    </button>
                 </span>
             </div>
         </section>
 
+        <div class="sidebar-scroll" id="sidebar-scroll">
         <section class="time-panel" aria-label="World time">
             <div class="time-primary">
                 <div class="time-copy">
@@ -182,6 +205,7 @@
                 <ol id="saga-list" class="saga-list" role="log" aria-live="polite"></ol>
             </div>
         </section>
+        </div>
 
 
     </aside>
@@ -385,19 +409,18 @@
                         <input id="codex-search" type="search" autocomplete="off" spellcheck="false"
                                placeholder="Search name, token, or lore…" disabled>
                     </label>
-                    <label class="codex-category-label" for="codex-category">
-                        <span>Category</span>
-                        <select id="codex-category" disabled>
-                            <option value="all">All</option>
-                            <option value="weapons">Weapons</option>
-                            <option value="armor">Armor</option>
-                            <option value="tools">Tools</option>
-                            <option value="materials">Materials</option>
-                            <option value="consumables">Consumables</option>
-                            <option value="trophies">Trophies</option>
-                            <option value="misc">Misc</option>
-                        </select>
-                    </label>
+                    <div class="codex-category-label" id="codex-category-control">
+                        <span id="codex-category-caption">Category</span>
+                        <button id="codex-category" class="codex-category-button" type="button"
+                                aria-haspopup="listbox" aria-expanded="false" disabled>
+                            <span class="codex-category-current-icon" id="codex-category-current-icon"
+                                  aria-hidden="true"></span>
+                            <span class="codex-category-current" id="codex-category-current">All</span>
+                            <span class="codex-category-chevron" aria-hidden="true">›</span>
+                        </button>
+                        <div id="codex-category-menu" class="codex-category-menu" role="listbox"
+                             aria-labelledby="codex-category-caption" hidden></div>
+                    </div>
                     <span id="codex-count" class="codex-count" aria-live="polite">— items</span>
                 </div>
             </header>
@@ -406,6 +429,15 @@
                 <span>Open the Codex to load its pages</span>
             </div>
             <div id="codex-scroll" class="codex-scroll" hidden>
+                <div class="codex-head" aria-hidden="true">
+                    <span></span>
+                    <span>Item</span>
+                    <span class="codex-head-cat">Category</span>
+                    <span class="codex-head-num">Weight</span>
+                    <span class="codex-head-num">Stack</span>
+                    <span class="codex-head-portal">Portal</span>
+                    <span></span>
+                </div>
                 <div id="codex-list" class="codex-list" role="list"
                      aria-label="Codex items"></div>
             </div>

@@ -4,9 +4,28 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-08-11
+
 ### Added
 
 - Release provenance now records authoritative DLL and package hashes with the pinned .NET, BepInEx, and Valheim toolchain, while CI and a public verifier enforce cross-machine byte-for-byte reproducibility. Pinning the SDK fixes the root cause: previously, CI and developer clones could select different SDKs and compile with different Roslyn versions.
+- The Codex list now has a sticky column header (Item, Category, Weight, Stack, Portal) with properly aligned columns, and the category filter is a themed dropdown with a per-category icon menu instead of a native select.
+- The sidebar's World, Server, and Join Code rows each carry a small copy icon; the old Copy button is gone. When the world and server names are identical the two rows collapse into a single World row.
+- Embedding hosts that render their own navigation can pass `externalNav: true` in the embed config and drive the view through `ValheimOneEmbed.setView("map"|"console"|"codex")`; the sidebar's internal view switcher stays hidden in that mode.
+
+### Changed
+
+- The default map view now centres the world circle in the visible map area, compensating for the floating Layers panel; explicit hash views and the initial players fit are unaffected.
+- Overview clustering for cartography pins and point-of-interest layers now engages below the map's 1:1 overview zoom (previously only below zoom 2), so dense long-lived worlds no longer render thousands of individual markers on first open. Grid cells holding a single record still render the plain marker, keeping sparse worlds visually unchanged.
+- The sidebar below the server details is now a single scrolling column: Players, Chat, Leaderboard, and Server Events keep their natural height, expanding a section pushes the content below it, and nothing overlaps. Cinema Mode moved from a full-width pill to a compact icon beside the brand mark.
+- A readability pass across the dashboard: Codex rows, item details, recipes, and chips moved from 7–10 px type to 10–14 px; popups, console side panels, dungeon dialogs, and search results lifted similarly; the shared secondary text colour is brighter against the dark background.
+- Codex item details render with compact, consistent section spacing. Element-level style guards (section padding, heading line-height, code chips, label margins) keep host-page styles from inflating the embedded layout.
+
+### Fixed
+
+- `PublicShowPlayerNames` now defaults to `false`, so a public map link never shows player names unless the server owner explicitly opts in. Explicitly saved values are unaffected.
+- Scrolling the Codex no longer rebuilds the whole visible window every few pixels; rows are recycled and renders are coalesced per animation frame, removing the main-thread stalls on large catalogs.
+- Cartography pins no longer tear down and rebuild every marker on each poll when nothing changed.
 
 ## [0.13.0] - 2026-08-04
 

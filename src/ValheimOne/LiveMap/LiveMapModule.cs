@@ -118,9 +118,10 @@ public sealed class LiveMapModule : IFeatureModule
             "The token-authenticated admin view always shows all players.");
         ConfigEntryBool publicShowPlayerNames = _feature.Bool(
             "PublicShowPlayerNames",
-            true,
+            false,
             "Show player names on the public view. " +
-            "When disabled, public players render as anonymous markers.");
+            "Disabled by default so a public link never exposes player names; " +
+            "public players render as anonymous markers unless the owner opts in.");
         ConfigEntryBool entityLayer = _feature.Bool(
             "EntityLayer",
             false,
