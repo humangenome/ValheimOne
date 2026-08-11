@@ -78,7 +78,11 @@ mkdir -p "${out_dir}" "${stage_root}"
 make_zip() {
     local stage_dir="$1" zip_path="$2"
     rm -f "${zip_path}"
-    find "${stage_dir}" -exec touch -t "${zip_touch_stamp}" {} +
+    # TZ=UTC on the touch as well as the zip: touch -t interprets the stamp in
+    # the machine's local timezone, so without it two machines in different
+    # zones store different DOS timestamps for the same fixed stamp and the
+    # zips are not cross-machine reproducible.
+    find "${stage_dir}" -exec env TZ=UTC touch -t "${zip_touch_stamp}" {} +
     (cd "${stage_dir}" && find . -type f | sed 's|^\./||' | LC_ALL=C sort | TZ=UTC zip -q -X "${zip_path}" -@)
 }
 
