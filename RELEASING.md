@@ -88,7 +88,7 @@ Record the developer machine's authoritative artifact hashes and exact toolchain
 tools/record-provenance.sh --skip-build
 ```
 
-The script reads the full Git commit, SDK pin, BepInEx pack pin, and installed Valheim dedicated-server build ID, then writes the current version's DLL and zip hashes to `tools/release/provenance.tsv`. SourceLink embeds the commit SHA in the DLL, so record provenance from a clean tree at the exact commit that will be tagged; otherwise CI's cross-machine assertion will fail. Without `--skip-build` the script performs a fresh clean build and package itself. It refuses to replace different existing inputs or hashes unless `--force` is given; use that flag only after reviewing why the artifacts changed. **Commit the provenance row before tagging.**
+The script reads the full Git commit, SDK pin, BepInEx pack pin, and installed Valheim dedicated-server build ID, then writes the current version's DLL and zip hashes to `tools/release/provenance.tsv`. Record provenance from a clean tree with every source change already committed; the only commit allowed between the recorded build and the tag is the one that adds the ledger row itself (the DLL embeds no commit SHA, so that commit does not change the artifacts). Without `--skip-build` the script performs a fresh clean build and package itself. It refuses to replace different existing inputs or hashes unless `--force` is given; use that flag only after reviewing why the artifacts changed. **Commit the provenance row before tagging.**
 
 ## 7. Smoke
 

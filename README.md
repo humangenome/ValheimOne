@@ -121,7 +121,7 @@ Building from source is `./build.sh`; see [RELEASING.md](RELEASING.md) for packa
 
 ## Verifying the binary
 
-A byte-for-byte reproduction requires a Git clone checked out at the exact release tag, the .NET SDK pinned in `global.json`, and a clean working tree. GitHub's downloadable source archives will not match: the SDK embeds the Git commit SHA in the DLL, and those archives have no `.git` checkout.
+A byte-for-byte reproduction requires a Git clone checked out at the exact release tag, the .NET SDK pinned in `global.json`, and a clean working tree. The compile is deterministic and embeds no commit SHA or build-host paths, so identical sources and toolchain produce an identical DLL.
 
 ```bash
 git clone https://github.com/HumanGenome/ValheimOne.git

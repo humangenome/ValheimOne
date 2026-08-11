@@ -12,11 +12,18 @@
          that has no business in a public binary. Also makes the output independent
          of where the repo is checked out. -->
     <PathMap>$(MSBuildThisFileDirectory)=/_/</PathMap>
+    <!-- Do not embed the Git HEAD SHA in InformationalVersion. The provenance
+         ledger row for a release lives inside the release commit, so a DLL that
+         embeds its own commit SHA can never be rebuilt byte-identically from the
+         tagged sources (the ledger commit differs from the build commit by
+         construction). Reproducibility is proven by content-hash equality of the
+         deterministic compile; the ledger records the commits. -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <AssemblyName>ValheimOne</AssemblyName>
     <RootNamespace>ValheimOne</RootNamespace>
-    <Version>0.13.0</Version>
-    <AssemblyVersion>0.13.0.0</AssemblyVersion>
-    <FileVersion>0.13.0.0</FileVersion>
+    <Version>0.13.1</Version>
+    <AssemblyVersion>0.13.1.0</AssemblyVersion>
+    <FileVersion>0.13.1.0</FileVersion>
     <ValheimManaged>$(HOME)/valheim-modding/server/valheim_server_Data/Managed</ValheimManaged>
     <ValheimPublicized>$(HOME)/valheim-modding/publicized</ValheimPublicized>
     <BepInExCore>$(HOME)/valheim-modding/bepinex/BepInExPack_Valheim/BepInEx/core</BepInExCore>

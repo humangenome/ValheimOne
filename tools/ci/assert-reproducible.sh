@@ -105,7 +105,13 @@ compare_value() {
 }
 
 compare_value 'dotnet SDK' "${recorded_sdk}" "${actual_sdk}"
-compare_value 'Git commit' "${recorded_commit}" "${actual_commit}"
+# The provenance row is committed after the recorded build, so the release commit
+# always differs from the recorded one by the ledger/contract-pass files alone.
+# The DLL embeds no commit SHA (IncludeSourceRevisionInInformationalVersion=false),
+# so the artifact hash comparisons below are the reproducibility gate; the commits
+# are printed for the audit trail.
+printf 'provenance recorded at commit %s; this run builds %s\n' \
+    "${recorded_commit}" "${actual_commit}"
 compare_value 'BepInEx pack' "${recorded_bepinex}" "${actual_bepinex}"
 compare_value 'Valheim build ID' "${recorded_buildid}" "${valheim_buildid}"
 compare_value 'ValheimOne.dll' "${expected_dll}" "${actual_dll}"

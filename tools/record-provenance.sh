@@ -45,7 +45,7 @@ done
 [[ -f ${provenance} ]] || fail "missing provenance ledger ${provenance}"
 
 if ! commit="$(git -C "${repo_root}" rev-parse --verify HEAD 2>/dev/null)"; then
-    fail 'unable to resolve the Git commit; provenance must be recorded from a Git checkout because the commit SHA is embedded in ValheimOne.dll'
+    fail 'unable to resolve the Git commit; provenance must be recorded from a Git checkout so the ledger can name the sources it certifies'
 fi
 [[ ${commit} =~ ^[0-9a-f]{40}$ ]] || fail "Git HEAD is not a full 40-hex commit SHA: ${commit}"
 
