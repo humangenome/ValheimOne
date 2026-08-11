@@ -19,6 +19,13 @@
          construction). Reproducibility is proven by content-hash equality of the
          deterministic compile; the ledger records the commits. -->
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <!-- The SDK's implicit SourceLink writes {repo URL, HEAD SHA} into the PDB,
+         and the DLL embeds that PDB's checksum in its debug directory - so with
+         SourceLink on, the DLL hash changes with every commit (and with the
+         builder's remote-URL casing), defeating the property the ledger relies
+         on above. IncludeSourceRevisionInInformationalVersion does not cover
+         this; SourceLink must be off explicitly. -->
+    <EnableSourceLink>false</EnableSourceLink>
     <AssemblyName>ValheimOne</AssemblyName>
     <RootNamespace>ValheimOne</RootNamespace>
     <Version>0.13.1</Version>

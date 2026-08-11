@@ -23,6 +23,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Fixed
 
+- Release builds no longer carry the SDK's implicit SourceLink document map (repository URL plus HEAD commit SHA) in the PDB, whose checksum the DLL embeds — that made the shipped DLL's hash change with every commit and with the builder's remote-URL casing, so the provenance ledger could never describe a tag containing itself. With SourceLink off the deterministic build is commit-independent and the cross-machine reproducibility gate holds by construction.
 - `PublicShowPlayerNames` now defaults to `false`, so a public map link never shows player names unless the server owner explicitly opts in. Explicitly saved values are unaffected.
 - Scrolling the Codex no longer rebuilds the whole visible window every few pixels; rows are recycled and renders are coalesced per animation frame, removing the main-thread stalls on large catalogs.
 - Cartography pins no longer tear down and rebuild every marker on each poll when nothing changed.
