@@ -20,10 +20,26 @@ public sealed class MapSharingModule : IFeatureModule, IVersionHandshakeExtensio
     private const int PersistenceMagic = 0x564F4D50;
     private const int PersistenceVersion = 1;
 
-    private static readonly AccessTools.FieldRef<Minimap, bool[]> ExploredField =
-        AccessTools.FieldRefAccess<Minimap, bool[]>("m_explored");
-    private static readonly AccessTools.FieldRef<Minimap, Texture2D> FogTextureField =
-        AccessTools.FieldRefAccess<Minimap, Texture2D>("m_fogTexture");
+    // Resolved lazily and tolerantly: Minimap is a client-only type whose field shapes
+    // change between game builds (m_explored became a BitArray in 0.221.13). Resolving
+    // these eagerly in a static initializer made an incompatible build a hard plugin
+    // load failure, so a client-only feature could take down the whole server mod.
+    private static readonly AccessTools.FieldRef<Minimap, bool[]>? ExploredField =
+        TryFieldRef<bool[]>("m_explored");
+    private static readonly AccessTools.FieldRef<Minimap, Texture2D>? FogTextureField =
+        TryFieldRef<Texture2D>("m_fogTexture");
+
+    private static AccessTools.FieldRef<Minimap, F>? TryFieldRef<F>(string fieldName)
+    {
+        try
+        {
+            return AccessTools.FieldRefAccess<Minimap, F>(fieldName);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
 
     [ThreadStatic]
     private static bool s_forcingPositionSharing;
@@ -269,6 +285,17 @@ public sealed class MapSharingModule : IFeatureModule, IVersionHandshakeExtensio
 
     private void BeginClientMap(Minimap minimap)
     {
+        // Bail before adopting the minimap: every other client-map path is gated on
+        // _clientMinimap being set, so refusing here disables the feature cleanly on a
+        // game build whose Minimap fields we cannot read.
+        if (ExploredField == null || FogTextureField == null)
+        {
+            _log.Warning(
+                "Shared exploration is unavailable on this Valheim build; the minimap " +
+                "fields could not be read. Every other feature is unaffected.");
+            return;
+        }
+
         _clientMinimap = minimap;
         bool[] explored = ExploredField(minimap);
         int size = minimap.m_textureSize;
@@ -312,7 +339,7 @@ public sealed class MapSharingModule : IFeatureModule, IVersionHandshakeExtensio
         float now = Time.realtimeSinceStartup;
         if (now >= _nextClientSyncAt && _clientQueue.IsIdle)
         {
-            bool[] explored = ExploredField(minimap);
+            bool[] explored = ExploredField!(minimap);
             if (IsValidDimensions(minimap.m_textureSize, explored.Length) && sent.Length == explored.Length)
             {
                 QueueTransfer(_clientQueue, explored, sent, minimap.m_textureSize, omitEmpty: true);
@@ -341,7 +368,7 @@ public sealed class MapSharingModule : IFeatureModule, IVersionHandshakeExtensio
         float now = Time.realtimeSinceStartup;
         if (_clientMinimap != null && _clientSent != null && now >= _nextClientSyncAt)
         {
-            bool[] localExplored = ExploredField(_clientMinimap);
+            bool[] localExplored = ExploredField!(_clientMinimap);
             if (IsValidDimensions(_clientMinimap.m_textureSize, localExplored.Length) &&
                 localExplored.Length == _clientSent.Length)
             {
@@ -593,7 +620,7 @@ public sealed class MapSharingModule : IFeatureModule, IVersionHandshakeExtensio
             return;
         }
 
-        bool[] explored = ExploredField(minimap);
+        bool[] explored = ExploredField!(minimap);
         bool[]? sent = _clientSent;
         foreach (ExploredMapRange range in ranges)
         {
@@ -618,8 +645,8 @@ public sealed class MapSharingModule : IFeatureModule, IVersionHandshakeExtensio
             return;
         }
 
-        bool[] explored = ExploredField(minimap);
-        Texture2D fogTexture = FogTextureField(minimap);
+        bool[] explored = ExploredField!(minimap);
+        Texture2D fogTexture = FogTextureField!(minimap);
         Color32[] pixels = fogTexture.GetPixels32();
         if (pixels.Length != explored.Length)
         {

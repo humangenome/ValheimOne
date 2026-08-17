@@ -4,6 +4,12 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.13.2] - 2026-08-17
+
+### Fixed
+
+- A single unresolvable vanilla field no longer prevents the whole plugin from loading. The map-sharing module resolved two `Minimap` fields in an eager static initializer, so on a game build where either field's shape had changed, Harmony's type validation threw a `TypeInitializationException` out of the plugin's `Awake` — before the per-module patch loop and outside its error handling. Every module died with it: live map, console, query, Discord, and the activity log. The two fields are now resolved lazily and tolerantly, and shared exploration disables itself with a logged warning when they are unavailable. `Minimap` is a client-only type, so this was a client-side optional feature taking down an entire server mod.
+
 ## [0.13.1] - 2026-08-11
 
 ### Added
