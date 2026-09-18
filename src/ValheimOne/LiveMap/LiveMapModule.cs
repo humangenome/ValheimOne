@@ -110,7 +110,8 @@ public sealed class LiveMapModule : IFeatureModule
             false,
             "Mirror player Say and Shout chat onto authenticated live-map views. " +
             "Disabled by default because chat is player speech and the server owner must " +
-            "explicitly opt in.");
+            "explicitly opt in. When enabled, the last 200 Say and Shout lines persist in " +
+            "chat-history.json and reload after a restart.");
         ConfigEntryBool respectInGameVisibility = _feature.Bool(
             "RespectInGameVisibility",
             true,
@@ -125,11 +126,13 @@ public sealed class LiveMapModule : IFeatureModule
         ConfigEntryBool entityLayer = _feature.Bool(
             "EntityLayer",
             false,
-            "Serve ships, carts, and portals as a toggleable admin map layer.");
+            "Serve ships, carts, and portals as a toggleable admin and shared map layer. " +
+            "Public views stay empty unless PublicEntityGroups names those groups.");
         ConfigEntryBool resourceLayers = _feature.Bool(
             "ResourceLayers",
             true,
-            "Serve request-gated ore and forage layers on shared and admin maps.");
+            "Serve request-gated ore and forage layers on shared and admin maps, and on the " +
+            "public view when PublicPoiGroups names those groups.");
         ConfigEntryString fogMode = _feature.String(
             "FogMode",
             "off",
@@ -139,8 +142,8 @@ public sealed class LiveMapModule : IFeatureModule
             "FogHideUnexplored",
             false,
             "Hide unexplored areas completely on the fogged public view: an opaque cover instead " +
-            "of the ghosted tint, and region names, spawn and trader markers stay hidden until " +
-            "someone explores them. No effect when FogMode is off.");
+            "of the ghosted tint, and region names plus allowed point-of-interest, last-seen, and " +
+            "entity markers stay hidden until someone explores them. No effect when FogMode is off.");
         ConfigEntryBool sharedFog = _feature.Bool(
             "SharedFog",
             false,
@@ -151,8 +154,40 @@ public sealed class LiveMapModule : IFeatureModule
             "SharedPoiGroups",
             "all",
             "Point-of-interest layers available to Shared viewers: all, none, or space-separated " +
-            "group keys such as spawn trader boss. Only named groups are served. " +
-            "See the configuration reference for the complete list. Admin access is unchanged.");
+            "group or category keys such as spawn trader boss dungeons ores. Only named groups " +
+            "are served. See the configuration reference for the complete list. Admin access is unchanged.");
+        ConfigEntryString publicPoiGroups = _feature.String(
+            "PublicPoiGroups",
+            "spawn trader",
+            "Point-of-interest layers available to the tokenless public view: all, none, or " +
+            "space-separated group or category keys such as spawn trader boss dungeons ores. " +
+            "Defaults to spawn and trader so a public link does not reveal boss altars, " +
+            "dungeons, or deposits until the owner opts in. FogHideUnexplored still withholds " +
+            "unexplored markers. See the configuration reference for the complete list. " +
+            "Admin access is unchanged.");
+        ConfigEntryString publicEntityGroups = _feature.String(
+            "PublicEntityGroups",
+            "none",
+            "Entity groups available to the tokenless public view: none, all, or space-separated " +
+            "keys such as ship portal cart ward bed tombstone. Requires EntityLayer. Off by " +
+            "default because live boats and portal tags reveal current player routes. " +
+            "FogHideUnexplored still withholds unexplored markers. Admin and shared access is unchanged.");
+        ConfigEntryBool publicChat = _feature.Bool(
+            "PublicChat",
+            false,
+            "Show the read-only chat panel on the tokenless public view. Off by default because " +
+            "chat is player speech. The public view never gains a send box. MirrorChat still " +
+            "controls whether player Say and Shout are captured.");
+        ConfigEntryBool publicLeaderboard = _feature.Bool(
+            "PublicLeaderboard",
+            false,
+            "Show the wipe leaderboard on the tokenless public view. Off by default because it " +
+            "names players and their playtime, deaths, and travel. Admin and shared access is unchanged.");
+        ConfigEntryBool publicEvents = _feature.Bool(
+            "PublicEvents",
+            false,
+            "Show the live raid-event overlay on the tokenless public view. Off by default " +
+            "because a raid circle marks where players are fighting. Admin and shared access is unchanged.");
         ConfigEntryBool consoleEnabled = _feature.Bool(
             "ConsoleEnabled",
             false,
@@ -200,6 +235,11 @@ public sealed class LiveMapModule : IFeatureModule
             fogHideUnexplored,
             sharedFog,
             sharedPoiGroups,
+            publicPoiGroups,
+            publicEntityGroups,
+            publicChat,
+            publicLeaderboard,
+            publicEvents,
             consoleEnabled,
             consoleWhitelist,
             allowAllCommands,
@@ -272,7 +312,8 @@ public sealed class LiveMapModule : IFeatureModule
             harmony,
             () => _feature.Enabled.Value,
             () => _config.MirrorChat,
-            _log);
+            _log,
+            _dataDirectory);
         if (LiveMapBehaviour.Instance != null)
         {
             _log.Warning("[LiveMap] behaviour already exists; skipping duplicate initialization.");
@@ -330,6 +371,7 @@ public sealed class LiveMapModule : IFeatureModule
         }
 
         leaderboardBehaviour?.StopPermanently();
+        MapPingPatch.ShutdownChatPersistence();
         store?.Dispose();
         activityHeatmap?.Dispose();
         timelapseRecorder?.Dispose();

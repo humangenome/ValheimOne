@@ -409,6 +409,7 @@ internal static class PoiGroups
         return false;
     }
 
+    // Historical public allowlist. PublicPoiGroups defaults to these keys.
     public static bool IsPublic(string key)
     {
         return string.Equals(key, "spawn", StringComparison.Ordinal) ||
