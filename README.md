@@ -76,7 +76,7 @@ A live server log and a command box with history and autocomplete, running white
 
 Twenty-six opt-in modules covering carry weight, stamina, food, drops, gathering, build rules, portals, taming, raids, production speeds and more. Everything is off until you turn it on, and most values hot-reload without a restart.
 
-Modules marked **Synced** need ValheimOne on each participating PC; the server then sends those players its settings. Console players cannot install those client mods. The live map, browser console and alerts do not require a client plugin. See [docs/gameplay-modules.md](docs/gameplay-modules.md) for each module's scope.
+Modules marked **Synced** need ValheimOne on each participating PC; the server then sends those players its settings. Console players cannot install those client mods. The live map, browser console and alerts do not require a client plugin. See [docs/gameplay-modules.md](docs/gameplay-modules.md) for each module's scope and [Install on your PC](#install-on-your-pc) for the player steps.
 
 ### 🔔 Discord Alerts
 
@@ -114,6 +114,37 @@ Valheim Dedicated Server/
 ```
 
 > **Official Hosting:** ValheimOne is included with [Valheim server hosting from SurvivalServers](https://www.survivalservers.com/services/game_servers/valheim/?utm_source=github&utm_medium=readme&utm_campaign=valheim_one), with map and console controls in the control panel. You can also install the free mod on your own dedicated server using the steps above.
+
+<a id="install-on-your-pc"></a>
+
+### Install on your PC (players)
+
+You can join a ValheimOne server with an unmodded game, on PC or console. The live map, browser console and alerts need nothing on your side. Drops, Gathering and World Events apply to every player as well.
+
+Every other gameplay module is applied by the player's own game, so it only works on a PC that also has ValheimOne. Consoles cannot install mods.
+
+1. Close Valheim. Open the [latest release](https://github.com/HumanGenome/ValheimOne/releases/latest) and download `ValheimOne-full-<version>.zip` under **Assets**. The green Code button gives you the source, not the mod.
+2. In Steam, right click Valheim, then Manage, then Browse local files. Extract the ZIP into that folder so `winhttp.dll` and `BepInEx/` sit next to `valheim.exe`.
+3. Start Valheim from Steam. A BepInEx console window opens next to the game. Join the server. It sends its settings to your game at join, and your local config file is not changed.
+
+```text
+Valheim/
+├── BepInEx/
+│   ├── config/valheimone.cfg
+│   └── plugins/ValheimOne.dll
+├── doorstop_config.ini
+├── winhttp.dll
+└── valheim.exe
+```
+
+- **Already running BepInEx:** use the plugin-only ZIP instead. BepInEx alone changes nothing; the mod is `BepInEx/plugins/ValheimOne.dll`.
+- **Mod manager profile:** if the manager's search does not list ValheimOne, copy `ValheimOne.dll` into that profile's `BepInEx/plugins` folder and start the game from the manager. A profile and the game folder are separate installs.
+- **Linux and Steam Deck:** set the Steam launch option `./start_game_bepinex.sh %command%`.
+- **Check it:** `BepInEx/LogOutput.log` shows `Sent VO_Hello to server` and `Server config applied` after you join. The server log shows `is modded: handshake ok` or `is vanilla: no VO_Hello received within 15s` for each player.
+- **Versions:** keep the server and every PC on the same minor version, 0.13.x with 0.13.x. After a Valheim patch, check the releases page before you play.
+- **Enforce Mod:** `EnforceMod = true` in `[Server]` kicks vanilla and console players. Leave it `false` on a mixed or crossplay server.
+- **Red error at launch:** 0.13.14 and older print `Failed to patch ... ZPlayFabMatchmaking::CreateLobby` on a player's PC. It is harmless, and 0.13.15 removes it.
+- **Remove it:** delete `BepInEx/plugins/ValheimOne.dll` and `BepInEx/config/valheimone.cfg`. To turn every mod off, rename `winhttp.dll`.
 
 Building from source is `./build.sh`; see [RELEASING.md](RELEASING.md) for packaging.
 
