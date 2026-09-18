@@ -138,7 +138,7 @@ Valheim/
 ```
 
 - **Already running BepInEx:** use the plugin-only ZIP instead. BepInEx alone changes nothing; the mod is `BepInEx/plugins/ValheimOne.dll`.
-- **Mod manager profile:** if the manager's search does not list ValheimOne, copy `ValheimOne.dll` into that profile's `BepInEx/plugins` folder and start the game from the manager. A profile and the game folder are separate installs.
+- **Mod manager profile:** if the manager's search does not list ValheimOne, use its Import local mod setting with the plugin-only ZIP and start the game from the manager. A profile and the game folder are separate installs.
 - **Linux and Steam Deck:** set the Steam launch option `./start_game_bepinex.sh %command%`.
 - **Check it:** `BepInEx/LogOutput.log` shows `Sent VO_Hello to server` and `Server config applied` after you join. The server log shows `is modded: handshake ok` or `is vanilla: no VO_Hello received within 15s` for each player.
 - **Versions:** keep the server and every PC on the same minor version, 0.13.x with 0.13.x. After a Valheim patch, check the releases page before you play.
