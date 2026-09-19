@@ -195,3 +195,19 @@ Before calling a release complete:
 - Confirm the plugin file still requires BepInEx and Full does not require installing the loader twice. The upload API's requirements-popup flag does not itself create a dependency.
 - Check that the description, install requirements, permissions and media still match the released product. Gameplay modules marked Synced require ValheimOne on each participating PC; the map and server tools do not.
 - If a file is quarantined, preserve it and request [Nexus moderator review](https://help.nexusmods.com/article/117-why-has-my-mod-been-quarantined) with the public source, build instructions and release checksums. Do not call a quarantine harmless without evidence or delete it to evade review. Record the blocker and leave distribution verification incomplete until downloads work.
+
+## 11. Thunderstore distribution
+
+The [Thunderstore package](https://thunderstore.io/package/HumanGenome/ValheimOne/) carries the same DLL as GitHub Latest in Thunderstore's own layout. Build it after the GitHub release is published:
+
+```bash
+tools/package-thunderstore.sh
+```
+
+It takes `BepInEx/plugins/ValheimOne.dll` out of `artifacts/release/ValheimOne-<version>.zip` (or the published asset passed with `--plugin-zip`), checks it against `tools/release/provenance.tsv`, and writes `artifacts/release/ValheimOne-<version>-thunderstore.zip` with `manifest.json`, `README.md`, `CHANGELOG.md`, `icon.png`, `LICENSE` and `plugins/ValheimOne.dll`. Nothing is compiled, no config file is shipped, and the dependency string follows the BepInEx pack pin in `tools/package-release.sh`.
+
+- The page text is `tools/release/thunderstore/README.md`, not the repository README. Thunderstore's global rules reject packages that advertise an outside platform or service, so the Thunderstore page, manifest and changelog carry no hosting note, tracking link or offer. The script fails if one appears. When the repository README gains a feature or an install step, update the Thunderstore README in the same commit.
+- The changelog is the current minor line of `CHANGELOG.md`; the script fails when the released version has no section.
+- Thunderstore versions are immutable. The script refuses to replace an existing archive with different bytes; a changed package needs a new version.
+- Upload with the team's service-account token to the `valheim` community with the categories `mods`, `server-side`, `tools`, `utility` and the current game-update category. Never place the token in source.
+- An accepted upload is not a listing. Read `community_listings[].review_status` from `https://thunderstore.io/api/experimental/package/HumanGenome/ValheimOne/` and load `https://thunderstore.io/c/valheim/p/HumanGenome/ValheimOne/` signed out. A rejected listing stays rejected across new versions until a moderator approves it, and the rejection reason is shown only to a signed-in team member on that page.
