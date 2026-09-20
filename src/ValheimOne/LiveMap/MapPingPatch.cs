@@ -75,7 +75,7 @@ internal static class MapPingPatch
     private const int ShoutType = 2;
     private const int PingType = 3;
     private const int RecentPingCapacity = 16;
-    private const int RecentChatCapacity = 32;
+    private const int RecentChatCapacity = ChatHistoryStore.Capacity;
     private const int MaximumChatTextLength = 256;
     private const long ServerChatCaptureLifetimeMilliseconds = 10_000L;
     private const string ServerUserId = "Server_0";
@@ -120,17 +120,20 @@ internal static class MapPingPatch
     private static int _nextChatIndex;
     private static int _chatCount;
     private static long _nextServerChatCaptureId;
+    private static ChatHistoryStore? _chatHistoryStore;
     private static int _failureLogged;
 
     public static void ApplyPatches(
         Harmony harmony,
         Func<bool> enabledCheck,
         Func<bool> mirrorChatCheck,
-        ModLogger log)
+        ModLogger log,
+        string dataDirectory)
     {
         _enabledCheck = enabledCheck;
         _mirrorChatCheck = mirrorChatCheck;
         _log = log;
+        ConfigureChatPersistence(dataDirectory, log);
         MethodInfo handleRoutedRpc = AccessTools.Method(
             typeof(ZRoutedRpc),
             "HandleRoutedRPC",
@@ -435,6 +438,7 @@ internal static class MapPingPatch
             Array.Copy(retained, RecentChats, retainedCount);
             _nextChatIndex = retainedCount % RecentChatCapacity;
             _chatCount = retainedCount;
+            PersistChatLocked();
         }
     }
 
@@ -462,6 +466,8 @@ internal static class MapPingPatch
         {
             _chatCount++;
         }
+
+        PersistChatLocked();
     }
 
     private static PendingServerChatCapture? FindServerChatCaptureLocked(long captureId)
@@ -533,5 +539,85 @@ internal static class MapPingPatch
         }
 
         return text.Substring(0, length).TrimEnd();
+    }
+
+    public static void ShutdownChatPersistence()
+    {
+        ChatHistoryStore? store;
+        lock (RecentChatsLock)
+        {
+            PersistChatLocked();
+            store = _chatHistoryStore;
+            _chatHistoryStore = null;
+        }
+
+        store?.Dispose();
+    }
+
+    private static void ConfigureChatPersistence(string dataDirectory, ModLogger log)
+    {
+        ChatHistoryStore? previous;
+        lock (RecentChatsLock)
+        {
+            previous = _chatHistoryStore;
+            _chatHistoryStore = null;
+        }
+
+        previous?.Dispose();
+        if (string.IsNullOrWhiteSpace(dataDirectory))
+        {
+            return;
+        }
+
+        var store = new ChatHistoryStore(dataDirectory, log);
+        MapChatSnapshot[] loaded = store.Load();
+        lock (RecentChatsLock)
+        {
+            _chatHistoryStore = store;
+            HydrateChatLocked(loaded);
+        }
+
+        ClearChatBufferWhenDisabled();
+    }
+
+    private static void HydrateChatLocked(MapChatSnapshot[] loaded)
+    {
+        Array.Clear(RecentChats, 0, RecentChats.Length);
+        _nextChatIndex = 0;
+        _chatCount = 0;
+        _nextChatSequence = 0L;
+        for (int index = 0; index < loaded.Length; index++)
+        {
+            MapChatSnapshot chat = loaded[index];
+            RecentChats[_nextChatIndex] = chat;
+            _nextChatIndex = (_nextChatIndex + 1) % RecentChatCapacity;
+            if (_chatCount < RecentChatCapacity)
+            {
+                _chatCount++;
+            }
+
+            if (chat.Sequence > _nextChatSequence)
+            {
+                _nextChatSequence = chat.Sequence;
+            }
+        }
+    }
+
+    private static void PersistChatLocked()
+    {
+        ChatHistoryStore? store = _chatHistoryStore;
+        if (store == null)
+        {
+            return;
+        }
+
+        var snapshot = new MapChatSnapshot[_chatCount];
+        int firstIndex = (_nextChatIndex - _chatCount + RecentChatCapacity) % RecentChatCapacity;
+        for (int offset = 0; offset < _chatCount; offset++)
+        {
+            snapshot[offset] = RecentChats[(firstIndex + offset) % RecentChatCapacity];
+        }
+
+        store.ScheduleSave(snapshot);
     }
 }

@@ -107,17 +107,17 @@ With a non-empty `AccessToken`, the same port serves admin actions; console-spec
 
 | Endpoint | Method | Purpose |
 |---|---|---|
-| `/api/events` | GET (SSE) | Server-Sent-Events stream. Map-view auth rules apply. Named events include `players`, change-detected `status`, new `chat` messages for admin/shared views, and — for console-authorized admin tokens only — incremental `log` batches. Sends `retry: 5000`; capped at 8 concurrent streams (`409` beyond). |
-| `/api/chat` | GET | Admin/shared only; public returns `404`. Returns the current 32-message ring buffer oldest-first as `{"chats":[{"sequence":1,"x":0,"z":0,"playerName":"...","text":"...","shout":false,"unixMs":1720000000000}]}`. Player chat follows `MirrorChat`; server-originated shouts remain available when mirroring is off. |
+| `/api/events` | GET (SSE) | Server-Sent-Events stream. Map-view auth rules apply. Named events include `players`, change-detected `status`, new `chat` messages for admin/shared views and for public views when `PublicChat = true`, and — for console-authorized admin tokens only — incremental `log` batches. Sends `retry: 5000`; capped at 8 concurrent streams (`409` beyond). |
+| `/api/chat` | GET | Admin/shared by default; public returns `404` unless `PublicChat = true`. Returns the persisted 200-message log oldest-first as `{"chats":[{"sequence":1,"x":0,"z":0,"playerName":"...","text":"...","shout":false,"unixMs":1720000000000}]}`. Player Say and Shout follow `MirrorChat`; server-originated shouts remain available when mirroring is off. History is written to `chat-history.json` and survives plugin restarts. The public view never gains a send box. |
 | `/api/heatmap` | GET `?window=24h|7d` | Admin/shared only; public returns `404`. Returns the aggregate activity grid used by the default-off Activity Heatmap layer. |
 | `/api/timelapse` | GET | Admin/shared only by default; public returns `404` unless `PublicTimelapse = true`. Returns the frame index, disk usage, capture interval, and active retention bounds. |
 | `/api/timelapse/frame` | GET `?t=<unix-ms>` | Uses the same access rules as the timelapse index. Returns one aggregate history frame with explored fog, bases, movement, world day and boss progression, plus portal, bed, and ward positions when captured. |
-| `/api/leaderboard` | GET | Admin/shared only; public returns `404`. Returns per-wipe playtime, deaths, and distance traveled for up to 50 display names; no platform identifiers are exposed. |
+| `/api/leaderboard` | GET | Admin/shared by default; public returns `404` unless `PublicLeaderboard = true`. Returns per-wipe playtime, deaths, and distance traveled for up to 50 display names; no platform identifiers are exposed. |
 | `/api/dungeons` | GET | Admin/shared only; public returns `404`. Returns discovered dungeon entrances with generation and interior state, room counts, and live-player counts. |
 | `/api/dungeons/{id}` | GET | Admin/shared only; public returns `404`. Returns one dungeon's generated room layout and live players inside for the View Interior schematic; unknown IDs return `404`. |
-| `/api/entities` | GET | Admin view + `EntityLayer = true` only. Ship/cart/portal positions from ZDO scans (5 s refresh, 500-entity cap) plus the active raid `event` object. |
+| `/api/entities` | GET | Requires `EntityLayer = true`. Admin and shared views receive every scanned group. The public view is `404` unless `PublicEntityGroups` names groups such as `ship portal`; those responses omit unlisted groups. Raid `event` objects follow `PublicEvents`. `FogHideUnexplored` drops unexplored entities from public (and Shared-fog) responses. |
 
-Admins also get an `"event"` raid object (`{name,x,z,radius,elapsed,duration}` or `null`) on `/api/status` regardless of `EntityLayer`.
+Admins also get an `"event"` raid object (`{name,x,z,radius,elapsed,duration}` or `null`) on `/api/status` regardless of `EntityLayer`. Shared views receive it as well. Public views receive it only when `PublicEvents = true`. Status also reports `"chat"` and `"leaderboard"` booleans for the current view.
 
 Notes:
 
@@ -174,8 +174,29 @@ Unknown keys grant no additional group access. Shared viewers cannot override th
 through URL parameters. Chat, stats, player positions and user-created pins are separate from
 these point-of-interest layers. Fog hides unknown points even within an allowed group.
 
+Category keys select every group in that layer section: `bosses`, `dungeons`, `spawners`,
+`ores`, `forage`, `structures`, `live`. Individual keys remain valid:
+
 `spawn`, `boss`, `trader`, `dungeon_crypt`, `dungeon_sunkencrypt`, `dungeon_trollcave`, `dungeon_frostcave`, `dungeon_mine`, `dungeon_ashlands`, `spawner_greydwarf`, `spawner_bonepile`, `spawner_draugrpile`, `spawner_firehole`, `spawner_charred`, `spawner_other`, `ore_copper`, `ore_tin`, `ore_iron`, `ore_silver`, `ore_obsidian`, `ore_meteorite`, `ore_leviathan`, `forage_berries`, `forage_thistle`, `forage_mushroom`, `forage_seeds`, `forage_crops`, `forage_dragonegg`, `forage_blackcore`, `structure_camp`, `structure_tarpit`, `structure_shipwreck`, `structure_ruins`, `structure_mistlands`, `structure_runestone`, `bases`, `misc`, `ghosts`.
 
 Admin map requests may use `fogpreview=1` on `/api/pois`, `/api/regions` and `/fog.png`
 to render an exploration preview. This is an optional display choice, never an authentication
 parameter. It cannot disable owner-enforced fog or permit a denied Shared group.
+
+## Public point-of-interest and entity groups
+
+`PublicPoiGroups` accepts `all`, `none`, or the same space-separated group and category
+keys as Shared. The default `spawn trader` is the historical public allowlist. Unknown
+keys grant no additional group access. Public viewers cannot override this setting through
+URL parameters. Fog hides unknown points even within an allowed group.
+
+`PublicEntityGroups` accepts `none` (default), `all`, or space-separated entity keys:
+`ship`, `cart`, `portal`, `tombstone`, `ward`, `bed`, `creatures`. It requires
+`EntityLayer = true`. `FogHideUnexplored` drops unexplored entities. Raid events follow
+`PublicEvents` instead of this list. Dungeon interior schematics stay on `/api/dungeons`
+and remain admin/shared only.
+
+`PublicChat`, `PublicLeaderboard`, and `PublicEvents` default to `false`. They expose the
+read-only chat panel (still captured according to `MirrorChat`), live speech bubbles over
+player markers, the wipe leaderboard, and
+the live raid overlay. Those three are not fog-gated.

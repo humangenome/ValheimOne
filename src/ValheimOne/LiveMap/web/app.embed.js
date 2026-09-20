@@ -257,9 +257,9 @@
     var SHIP_HEADING_LENGTH_M = 30;
     var MAP_PING_LIFETIME_MS = 30000;
     var COORDINATE_SEARCH_PULSE_MS = 4000;
-    var CHAT_BUBBLE_LIFETIME_MS = 8000;
+    var CHAT_BUBBLE_LIFETIME_MS = 10000;
     var CHAT_BUBBLE_LIMIT = 8;
-    var CHAT_HISTORY_LIMIT = 32;
+    var CHAT_HISTORY_LIMIT = 200;
     var SAVED_BADGE_REFRESH_MS = 30000;
     var SAVED_STALE_MS = 30 * 60 * 1000;
     var DAY_TOAST_DURATION_MS = 4000;
@@ -799,6 +799,8 @@
     var availablePoiGroups = new Set();
     var entityLayers = new Map();
     var entityAvailability = "unknown";
+    var chatFeedAvailable = false;
+    var leaderboardFeedAvailable = false;
     var entityRequestPending = false;
     var entityPollTimer = 0;
     var entityFocusPollTimer = 0;
@@ -8649,6 +8651,15 @@
         return match;
     }
 
+    function isPlayerSpeechChat(chat) {
+        var name = (chat.playerName || "").trim().toLowerCase();
+        return Boolean(name) && name !== "server";
+    }
+
+    function speechBubbleSpeakerKey(chat) {
+        return (chat.playerName || "").trim().toLowerCase();
+    }
+
     function removeChatBubble(record) {
         if (!record || record.removed) {
             return;
@@ -8666,7 +8677,7 @@
     }
 
     function renderChatBubble(chat) {
-        if (currentView === "public") {
+        if (!chatFeedAvailable || !isPlayerSpeechChat(chat)) {
             return;
         }
         if (!map || !chatLayer) {
@@ -8683,20 +8694,32 @@
             return;
         }
 
+        var speakerKey = speechBubbleSpeakerKey(chat);
+        activeChatBubbles.slice().forEach(function (existing) {
+            if (existing.speakerKey === speakerKey) {
+                removeChatBubble(existing);
+            }
+        });
+
         var playerRecord = matchingPlayerMarker(chat.playerName);
         var anchor = playerRecord
             ? playerRecord.marker.getLatLng()
             : worldToLatLng(chat.x, chat.z);
         var shell = document.createElement("div");
-        var name = document.createElement("span");
         var text = document.createElement("span");
-        shell.className = "map-chat-bubble" + (chat.shout ? " is-shout" : "");
-        name.className = "map-chat-name";
+        shell.className = "map-chat-bubble" +
+            (chat.shout ? " is-shout" : " is-say") +
+            (playerRecord ? " is-anchored" : "");
         text.className = "map-chat-text";
-        name.textContent = (chat.shout ? "📯 " : "") +
-            (chat.shout ? chat.playerName.toUpperCase() : chat.playerName);
         text.textContent = chat.text;
-        shell.appendChild(name);
+        if (!playerRecord) {
+            var name = document.createElement("span");
+            name.className = "map-chat-name";
+            name.textContent = chat.shout
+                ? chat.playerName.toUpperCase()
+                : chat.playerName;
+            shell.appendChild(name);
+        }
         shell.appendChild(text);
 
         var marker = L.marker(anchor, {
@@ -8714,6 +8737,7 @@
             marker: marker,
             playerKey: playerRecord ? playerRecord.player.key : "",
             playerName: chat.playerName,
+            speakerKey: speakerKey,
             removed: false,
             timer: 0
         };
@@ -8827,12 +8851,18 @@
         }
     }
 
+    function chatIdentity(chat) {
+        return String(chat.unixMs) + "|" + chat.playerName + "|" + chat.text + "|" +
+            (chat.shout ? "1" : "0");
+    }
+
     function appendChatHistory(chat, deferRender) {
-        if (chatSequences.has(chat.sequence)) {
+        var identity = chatIdentity(chat);
+        if (chatSequences.has(identity)) {
             return false;
         }
 
-        chatSequences.add(chat.sequence);
+        chatSequences.add(identity);
         chatHistory.push(chat);
         chatHistory.sort(function (left, right) {
             return left.sequence - right.sequence;
@@ -8845,7 +8875,7 @@
     }
 
     async function ensureChatHistory() {
-        if ((currentView !== "admin" && currentView !== "shared") ||
+        if (!chatFeedAvailable ||
             chatHistoryRequested || (eventSource && !eventSourceOpen)) {
             return;
         }
@@ -8855,7 +8885,7 @@
         try {
             var payload = await fetchJson("api/chat");
             if (requestSequence !== chatHistoryRequestSequence ||
-                currentView === "public" || !payload ||
+                !chatFeedAvailable || !payload ||
                 !Array.isArray(payload.chats)) {
                 return;
             }
@@ -8873,7 +8903,7 @@
     }
 
     function handleChatPayload(payload) {
-        if (currentView === "public") {
+        if (!chatFeedAvailable) {
             return;
         }
 
@@ -8882,10 +8912,11 @@
             return;
         }
         appendChatHistory(chat, false);
-        if (liveChatSequences.has(chat.sequence)) {
+        var identity = chatIdentity(chat);
+        if (liveChatSequences.has(identity)) {
             return;
         }
-        liveChatSequences.add(chat.sequence);
+        liveChatSequences.add(identity);
 
         var sagaId = "chat:" + chat.unixMs + ":" + chat.sequence;
         if (!sagaChatEvents.some(function (event) { return event.id === sagaId; })) {
@@ -9986,15 +10017,23 @@
         heatmapWindowControlElement = null;
         renderJumpChips();
 
-        var liveFeeds = hasLiveAccess() ? ["players", "entities"] : ["players"];
+        var liveFeeds = ["players"];
+        if (entityAvailability !== "unavailable") {
+            liveFeeds.push("entities");
+        }
         var liveBody = appendLayerSection("live", "Live", liveFeeds);
         appendLayerRow(liveBody, "players", "Players", "●", "players");
         appendLayerRow(liveBody, "trails", "Trails", "〰", "trails");
-        if (hasLiveAccess() && availablePoiGroups.has("ghosts")) {
+        if (availablePoiGroups.has("ghosts")) {
             appendLayerRow(liveBody, "ghosts", "Last seen", "♙", "ghosts");
         }
-        if (hasLiveAccess() && entityAvailability !== "unavailable") {
+        if (entityAvailability !== "unavailable") {
             ENTITY_GROUP_ORDER.forEach(function (group) {
+                if (entityAvailability === "available" &&
+                    entityGroupMeta.size > 0 &&
+                    !entityGroupMeta.has(group)) {
+                    return;
+                }
                 appendLayerRow(
                     liveBody,
                     group,
@@ -10049,9 +10088,13 @@
             appendLayerStatus(placesBody, "POIs: no data yet");
         }
 
-        var overlayFeeds = hasLiveAccess()
-            ? ["fog", "entities", "heatmap"]
-            : ["fog"];
+        var overlayFeeds = ["fog"];
+        if (entityAvailability !== "unavailable") {
+            overlayFeeds.push("entities");
+        }
+        if (hasLiveAccess()) {
+            overlayFeeds.push("heatmap");
+        }
         var overlaysBody = appendLayerSection("overlays", "Overlays", overlayFeeds);
         appendMapStyleControl(overlaysBody);
         if (fogAvailable && !fogStatus.locked) {
@@ -10087,13 +10130,15 @@
             "regions",
             { counted: false }
         );
-        appendLayerRow(
-            overlaysBody,
-            "portalNetwork",
-            "Portal network",
-            "╌",
-            "portal-network"
-        );
+        if (entityAvailability !== "unavailable") {
+            appendLayerRow(
+                overlaysBody,
+                "portalNetwork",
+                "Portal network",
+                "╌",
+                "portal-network"
+            );
+        }
         appendLayerRow(
             overlaysBody,
             "tint",
@@ -15122,7 +15167,7 @@
     }
 
     function entityLayersAreAvailable() {
-        return hasLiveAccess() && entityAvailability === "available";
+        return entityAvailability === "available";
     }
 
     function entityDataIsNeeded() {
@@ -15156,7 +15201,7 @@
     }
 
     function updateEntityAvailability(status) {
-        if (!hasLiveAccess() || typeof status.entities !== "boolean") {
+        if (typeof status.entities !== "boolean") {
             return;
         }
 
@@ -15540,7 +15585,7 @@
     function updateEntityPolling(immediate) {
         window.clearTimeout(entityPollTimer);
         entityPollTimer = 0;
-        if (!map || !hasLiveAccess() || document.hidden || pollCircuitOpen ||
+        if (!map || document.hidden || pollCircuitOpen ||
             entityAvailability === "unavailable" ||
             entityRequestPending || !entityDataIsNeeded()) {
             return;
@@ -15565,7 +15610,7 @@
     }
 
     async function pollEntities() {
-        if (!map || !hasLiveAccess() || document.hidden || pollCircuitOpen ||
+        if (!map || document.hidden || pollCircuitOpen ||
             entityRequestPending ||
             entityAvailability === "unavailable") {
             return;
@@ -15632,7 +15677,7 @@
     function updateEntityFocusPolling(immediate) {
         window.clearTimeout(entityFocusPollTimer);
         entityFocusPollTimer = 0;
-        if (!map || !hasLiveAccess() || document.hidden || pollCircuitOpen ||
+        if (!map || document.hidden || pollCircuitOpen ||
             entityAvailability === "unavailable" ||
             entityFocusRequestPending || !followTarget ||
             (followTarget.kind !== "ship" && followTarget.kind !== "cart")) {
@@ -15712,7 +15757,7 @@
     }
 
     function ensureEntityFeed() {
-        if (!map || !hasLiveAccess() || entityAvailability === "unavailable") {
+        if (!map || entityAvailability === "unavailable") {
             return;
         }
 
@@ -15724,7 +15769,7 @@
     }
 
     function normalizeRaidEvent(value) {
-        if (!hasLiveAccess() || !value ||
+        if (!value ||
             !Number.isFinite(Number(value.x)) || !Number.isFinite(Number(value.z)) ||
             !Number.isFinite(Number(value.radius)) || Number(value.radius) <= 0) {
             return null;
@@ -16276,7 +16321,7 @@
     }
 
     function leaderboardIsExpanded() {
-        return hasLiveAccess() && !elements.leaderboardPanel.hidden &&
+        return leaderboardFeedAvailable && !elements.leaderboardPanel.hidden &&
             !elements.leaderboardPanel.classList.contains("is-collapsed");
     }
 
@@ -16768,6 +16813,18 @@
         renderSagaFeed();
     }
 
+    function updateSidebarFeedAvailability(status) {
+        var view = status && (status.view === "admin" || status.view === "shared")
+            ? status.view
+            : "public";
+        chatFeedAvailable = typeof status.chat === "boolean"
+            ? status.chat
+            : view !== "public";
+        leaderboardFeedAvailable = typeof status.leaderboard === "boolean"
+            ? status.leaderboard
+            : view !== "public";
+    }
+
     function updateView(view) {
         var nextView = view === "admin" || view === "shared" ? view : "public";
         if (nextView !== "admin") {
@@ -16778,16 +16835,23 @@
             ? "Shared view"
             : "Public view";
         elements.watchButton.hidden = nextView === "public";
-        elements.chatPanel.hidden = nextView === "public";
+        elements.chatPanel.hidden = !chatFeedAvailable;
         elements.chatForm.hidden = nextView !== "admin";
         elements.sagaPanel.hidden = nextView === "public";
-        elements.leaderboardPanel.hidden = nextView === "public";
+        elements.leaderboardPanel.hidden = !leaderboardFeedAvailable;
         if (nextView !== "admin") {
             setChatSendNotice("");
         }
         if (nextView === currentView) {
-            ensureSagaActivity();
-            ensureChatHistory();
+            if (currentView !== "public") {
+                ensureSagaActivity();
+            }
+            if (chatFeedAvailable) {
+                ensureChatHistory();
+            }
+            if (leaderboardFeedAvailable && leaderboardIsExpanded()) {
+                scheduleLeaderboardPoll(0);
+            }
             return;
         }
 
@@ -16807,13 +16871,18 @@
         syncWebPinControl();
         if (currentView === "public") {
             clearSagaActivity();
-            clearLeaderboard();
         } else {
             ensureSagaActivity();
+        }
+        if (chatFeedAvailable) {
             ensureChatHistory();
+        }
+        if (leaderboardFeedAvailable) {
             if (leaderboardIsExpanded()) {
                 scheduleLeaderboardPoll(0);
             }
+        } else {
+            clearLeaderboard();
         }
         dismissMapContextMenu();
         if (currentView === "public" && cinemaState) {
@@ -16826,17 +16895,7 @@
             syncLayerVisibility();
             probeTimelapseAvailability();
             requestWebPinsFetch();
-            if (hasLiveAccess()) {
-                ensureEntityFeed();
-            } else {
-                window.clearTimeout(entityPollTimer);
-                entityPollTimer = 0;
-                if (followTarget && followTarget.kind !== "player") {
-                    clearFollow();
-                }
-                setFeedState("entities", true);
-                applyRaidEvent(null);
-            }
+            ensureEntityFeed();
         }
         tryBootCinemaFromHash();
     }
@@ -17110,6 +17169,7 @@
         updateLastSaved(status.lastSavedUnixMs);
         renderPlayerCount(status.players);
         updateRenderRevision(status.map);
+        updateSidebarFeedAvailability(status);
         updateView(status.view);
         updateEntityAvailability(status);
         updateConsoleAvailability(status);

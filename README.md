@@ -44,7 +44,7 @@ Turn on the heatmap to see where everyone has been over the last day or week, op
 
 ### 🔗 Share It With Your Players
 
-Three views, and you decide who gets which. **Admin** sees everything. **Shared** shows live players and every layer but never grants a single admin action. **Public** is read-only, with its own fog and public-layer settings. Check the tokenless link before sharing it. With `FogMode = trails` or `explored`, enable `FogHideUnexplored = true` for an opaque cover and to withhold unexplored region names, spawn and trader markers. Public viewers cannot turn that cover off through the map controls. The default fog is a translucent tint; Admin and Shared views still show the full terrain. Fog controls the displayed map, not access to the underlying terrain tiles.
+Three views, and you decide who gets which. **Admin** sees everything. **Shared** shows live players and every layer but never grants a single admin action. **Public** is read-only, with its own fog and public-layer settings. Check the tokenless link before sharing it. With `FogMode = trails` or `explored`, enable `FogHideUnexplored = true` for an opaque cover and to withhold unexplored region names and every allowed public marker (spawn, trader, bosses, dungeons, ores, structures, last seen, ships, portals, and the rest). Public viewers cannot turn that cover off through the map controls. The default fog is a translucent tint; Admin and Shared views still show the full terrain. Fog controls the displayed map, not access to the underlying terrain tiles.
 
 ![ValheimOne public map with explored fog](docs/screenshots/livemap-public-fog.png)
 
@@ -104,7 +104,7 @@ You need a Valheim Dedicated Server with the Valheim-compatible [BepInEx pack](h
 2. Stop the server and extract the ZIP into its root folder. The plugin belongs at `BepInEx/plugins/ValheimOne.dll`. Preserve your existing `BepInEx/config/valheimone.cfg` when updating; do not replace it with the packaged defaults. On Linux, use the Full pack's `start_server_bepinex.sh` with your usual server arguments.
 3. Start once to generate any missing config, then stop before the initial configuration. In the existing `[LiveMap]` section of `BepInEx/config/valheimone.cfg`, set `Enabled = true`, choose a long unique `AccessToken`, and set `PublicView = false` while configuring access. The live map is disabled by default.
 4. Start the server and wait for the world to load. The default map port is TCP `8790`. On a trusted network, open `http://your-server-ip:8790/?token=YOUR_ADMIN_TOKEN` with your own values. Use an HTTPS reverse proxy for authenticated access over the Internet.
-5. Set `ConsoleEnabled = true` in `[LiveMap]` if you want browser commands. Set `EntityLayer = true` to collect the optional ships, carts and portals layer. For sharing, configure a separate `ShareToken` or enable the tokenless `PublicView`, then choose the fog and public layers. Keep your admin token private.
+5. Set `ConsoleEnabled = true` in `[LiveMap]` if you want browser commands. Set `EntityLayer = true` to collect the optional ships, carts and portals layer. For a public link, `PublicPoiGroups` and `PublicEntityGroups` stay narrow until you name extra groups, and `PublicChat`, `PublicLeaderboard`, and `PublicEvents` stay off. For sharing, configure a separate `ShareToken` or enable the tokenless `PublicView`, then choose the fog and public layers. Keep your admin token private.
 
 ```text
 Valheim Dedicated Server/
@@ -187,6 +187,19 @@ Public opaque fog remains controlled by `FogHideUnexplored`.
 or a space-separated selection such as `spawn trader` to show only those groups.
 The setting applies to both the layer list and direct point-of-interest requests.
 [Available group keys](docs/query.md#shared-point-of-interest-groups) are documented in the API reference.
+
+The tokenless public view keeps a narrower default: `PublicPoiGroups = spawn trader`.
+Add category keys such as `bosses`, `dungeons`, `spawners`, `ores`, and `structures`,
+or individual group keys, to show those markers on a public link. `live` adds Last seen.
+`PublicEntityGroups = none` hides live ships, portals, carts, wards, beds, and tombstones;
+set `EntityLayer = true` and name groups such as `ship portal cart ward bed tombstone`
+to publish them. `PublicChat`, `PublicLeaderboard`, and `PublicEvents` add the read-only
+chat panel, wipe leaderboard, and raid overlay; all three default off. `all` remains
+available for the group lists. With `FogMode = trails` or `explored` and
+`FogHideUnexplored = true`, unexplored terrain stays covered and only explored markers
+are served, including the extra public layers. Player-made pins, chat, and the
+leaderboard are not fog-gated. These settings are server-authoritative and apply live
+after the configuration reloads.
 
 Admins can enable **Fog preview** in Layers when `FogMode` is enabled. It starts off and
 remembers the choice separately from Public fog. Turning it on also hides unexplored
