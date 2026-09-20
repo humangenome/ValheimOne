@@ -65,6 +65,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestChestTransfer();
             TestStations();
             TestProductionSettings();
+            TestWeatherDamage();
             string result = $"RUNTIME REGRESSION PASS assertions={_assertions} game={(global::Version.GetVersionString())}";
             Logger.LogInfo(result);
             File.WriteAllText(Path.Combine(_root, "result.txt"), result + "\n");
@@ -667,6 +668,28 @@ public sealed class RuntimeRegression : BaseUnityPlugin
                     "disabling production overrides restores " + row.Station.name);
         }
         finally { Set(typeof(ProductionSpeedsModule), "_active", previous); }
+    }
+
+    private void TestWeatherDamage()
+    {
+        var settings = new ValheimOneConfig(Path.Combine(_root, "structural-overlay.cfg"));
+        var module = new StructuralIntegrityModule(settings.Features);
+        object? previous = Get(typeof(StructuralIntegrityModule), "_active");
+        try
+        {
+            Set(typeof(StructuralIntegrityModule), "_active", module);
+            WearNTear wall = NewStation("woodwall", new Vector3(760, 600, 700)).GetComponent<WearNTear>()!;
+            Check(wall.m_noRoofWear, "a native wood wall wears without a roof by default");
+            Check(settings.ApplyOverlay("[StructuralIntegrity] / Enabled=true\n[StructuralIntegrity] / NoWeatherDamage=true\n") == 2,
+                "no weather damage arrives through the synced overlay");
+            Check(!wall.m_noRoofWear, "no weather damage switches the wall's rain and water wear off");
+            Check(settings.ApplyOverlay("[StructuralIntegrity] / Enabled=true\n[StructuralIntegrity] / NoWeatherDamage=false\n") == 2,
+                "no weather damage can be switched back off live");
+            Check(wall.m_noRoofWear, "switching no weather damage off restores the wall's own wear flag");
+            settings.ClearOverlay();
+            Check(wall.m_noRoofWear, "disabling structural integrity leaves the wall on its own wear flag");
+        }
+        finally { Set(typeof(StructuralIntegrityModule), "_active", previous); }
     }
 
     private static void CopyItems(ZDO source, ZDO destination)

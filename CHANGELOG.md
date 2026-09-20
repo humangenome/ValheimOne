@@ -4,6 +4,12 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.13.16] - 2026-09-20
+
+### Fixed
+
+- `[StructuralIntegrity]` `NoWeatherDamage` now actually stops rain and water wear. The game's `WearNTear.m_noRoofWear` flag means "wears when it has no roof" and is true on every building piece by default; the module was OR-ing the option into that flag, so turning No Weather Damage on left every piece exactly as it was. The option now clears the flag while it is on and restores each piece's own value when it is off or the section is disabled. The material support-loss reductions in the same section were unaffected. Both the server and every participating PC need this release for the option to take effect, because the wear timer runs on whichever game owns the piece.
+
 ## [0.13.15] - 2026-09-16
 
 ### Fixed

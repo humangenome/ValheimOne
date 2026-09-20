@@ -185,10 +185,12 @@ public sealed class StructuralIntegrityModule : IFeatureModule
 
     private void ApplyToWearNTear(WearNTear piece, WearNTearBaseline baseline)
     {
-        // High confidence from the 0.221.12 metadata seam: UpdateWear owns rain state and its
-        // HaveRoof path sits beside the explicitly named m_noRoofWear flag. Do not skip UpdateWear,
-        // because that would also suppress unrelated vanilla wear logic.
-        piece.m_noRoofWear = _noWeatherDamage.Value || baseline.NoRoofWear;
+        // The game's m_noRoofWear means "wears when it has no roof": UpdateWear runs its rain and
+        // water timer only while the flag is true, and every building piece ships with it true.
+        // No Weather Damage therefore has to switch the flag OFF; when the option is off the piece
+        // keeps its own value. Do not skip UpdateWear itself, that would also suppress the
+        // unrelated vanilla support wear.
+        piece.m_noRoofWear = !_noWeatherDamage.Value && baseline.NoRoofWear;
     }
 
     private float GetReduction(WearNTear.MaterialType materialType)
