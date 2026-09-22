@@ -46,14 +46,14 @@ public sealed class FoodDurationModule : IFeatureModule
             eatFood,
             postfix: new HarmonyMethod(typeof(FoodDurationModule), nameof(EatFoodPostfix)));
 
-        var updateFood = AccessTools.Method(
+        var totalFood = AccessTools.Method(
             typeof(Player),
-            nameof(Player.UpdateFood),
-            new[] { typeof(float), typeof(bool) })
-            ?? throw new MissingMethodException(nameof(Player), nameof(Player.UpdateFood));
+            "GetTotalFoodValue",
+            new[] { typeof(float).MakeByRefType(), typeof(float).MakeByRefType(), typeof(float).MakeByRefType() })
+            ?? throw new MissingMethodException(nameof(Player), "GetTotalFoodValue");
         harmony.Patch(
-            updateFood,
-            postfix: new HarmonyMethod(typeof(FoodDurationModule), nameof(UpdateFoodPostfix)));
+            totalFood,
+            prefix: new HarmonyMethod(typeof(FoodDurationModule), nameof(GetTotalFoodValuePrefix)));
     }
 
     private static void EatFoodPostfix(
@@ -84,7 +84,9 @@ public sealed class FoodDurationModule : IFeatureModule
         }
     }
 
-    private static void UpdateFoodPostfix(Player __instance)
+    // UpdateFood calculates and applies player maxima before it returns. Restore
+    // each unexpired food before the native sum, preserving its timer and expiry.
+    private static void GetTotalFoodValuePrefix(Player __instance)
     {
         FoodDurationModule? active = _active;
         if (active == null || !active.IsEnabled)
