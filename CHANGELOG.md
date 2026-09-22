@@ -4,6 +4,12 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.13.17] - 2026-09-22
+
+### Fixed
+
+- A dedicated server whose world shares its seed with other crossplay servers can register with PlayFab again. The game draws its crossplay join code from `UnityEngine.Random`, whose state after world load is fixed by the world's location seeds, so every server on the same seed draws the same codes in the same order. Each such server has to regenerate past every live lobby ahead of it on that list, PlayFab throttles the regeneration calls after about two dozen, and the game's error handler then unregisters the server for good: the panel says Started, the world runs, and no player can find it. The join code is now drawn from the operating system's random source, so the first draw is unique and the list is never walked. Dedicated servers only; no config keys were added.
+
 ## [0.13.16] - 2026-09-20
 
 ### Fixed

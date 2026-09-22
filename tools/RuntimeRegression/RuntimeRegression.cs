@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.Serialization;
 using BepInEx;
@@ -159,6 +160,21 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         object serverData = Activator.CreateInstance(serverDataField.FieldType, true);
         WriteMember(serverData, "serverName", "Regression lobby");
         serverDataField.SetValue(_lobbyFixture, serverData);
+        // The join code must come from the OS random source, not the world-seeded Unity generator.
+        MethodInfo generate = AccessTools.Method(typeof(ZPlayFabMatchmaking), "GenerateJoinCode");
+        PropertyInfo joinCodeProperty = AccessTools.Property(typeof(ZPlayFabMatchmaking), "JoinCode");
+        var drawn = new System.Collections.Generic.HashSet<string>();
+        for (int i = 0; i < 3; i++)
+        {
+            generate.Invoke(_lobbyFixture, null);
+            string code = (string)joinCodeProperty.GetValue(null);
+            Check(code.Length == 6 && code.All(char.IsDigit), "join code draw " + i + " is six digits");
+            Check((string)ReadMember(serverData, "joinCode")! == code, "join code draw " + i + " lands in the server data");
+            drawn.Add(code);
+        }
+        Check(drawn.Count > 1, "join code draws are not a fixed sequence");
+        Check(CrossplayLobbyCompatibility.RandomJoinCode().Length == 6, "random join code helper pads to six digits");
+
         object result = Activator.CreateInstance(callback.GetParameters()[0].ParameterType);
         PropertyInfo? listProperty = AccessTools.Property(result.GetType(), "Lobbies");
         Type listType = listProperty?.PropertyType ?? AccessTools.Field(result.GetType(), "Lobbies").FieldType;
