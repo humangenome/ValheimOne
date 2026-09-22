@@ -4,6 +4,16 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.13.18] - 2026-09-22
+
+### Fixed
+
+- `Food.NoDegradation` now keeps the player’s maximum health, stamina and eitr at full food strength until expiry. The old patch restored the food records after the game had already applied degraded totals to the player. Food timers and expiration remain unchanged.
+
+### Upgrade
+
+- Update ValheimOne on every participating player’s PC as well as the server. This setting runs on the player’s game; updating only the server cannot apply the fix. Preserve existing configuration.
+
 ## [0.13.17] - 2026-09-22
 
 ### Fixed

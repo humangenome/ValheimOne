@@ -8,7 +8,7 @@ Features use four modes: **server-authoritative** logic runs under server owners
 - `Player` (`[Player]`) — sets carry weight, the Megingjord bonus, auto-pickup range, encumbered pickup, and rested seconds per comfort level. **Mode:** server-authoritative. These values are applied by each player's own game, so a player needs ValheimOne on their PC to get them.
 - `PlayerStamina` (`[Stamina]`) — scales stamina regeneration, delay, movement drains, and action costs. **Mode:** synced.
 - `BuildingQoL` (`[Building]`) — removes structural-support requirements, suppresses ordinary placement blocking, and overrides build reach and rotation step. **Mode:** synced.
-- `FoodDuration` (`[Food]`) — scales food duration and can hold benefits at full strength until expiry. **Mode:** synced.
+- `FoodDuration` (`[Food]`) — scales food duration and can hold benefits at full strength until expiry. `Enabled = true` and `NoDegradation = true` preserve the full health, stamina and eitr benefits while the food timer still counts down. Each participating player needs ValheimOne; use 0.13.18 or later for the no-degradation fix. **Mode:** synced.
 - `ItemTweaks` (`[Items]`) — scales item stack sizes, weights, and maximum durability. **Mode:** synced.
 - `ItemDropMultiplier` (`[Drops]`) — scales destructible, creature, and pickable yields. **Mode:** server-authoritative.
 - `Gathering` (`[Gathering]`) — applies per-material yield modifiers and adjusts supported non-guaranteed drop chances. **Mode:** server-authoritative.
