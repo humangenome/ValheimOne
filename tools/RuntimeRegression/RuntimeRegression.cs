@@ -67,6 +67,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestStations();
             TestProductionSettings();
             TestWeatherDamage();
+            TestFoodDegradation();
             string result = $"RUNTIME REGRESSION PASS assertions={_assertions} game={(global::Version.GetVersionString())}";
             Logger.LogInfo(result);
             File.WriteAllText(Path.Combine(_root, "result.txt"), result + "\n");
@@ -706,6 +707,67 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             Check(wall.m_noRoofWear, "disabling structural integrity leaves the wall on its own wear flag");
         }
         finally { Set(typeof(StructuralIntegrityModule), "_active", previous); }
+    }
+
+    private void TestFoodDegradation()
+    {
+        var settings = new ValheimOneConfig(Path.Combine(_root, "food-overlay.cfg"));
+        var module = new FoodDurationModule(settings.Features);
+        object? previous = Get(typeof(FoodDurationModule), "_active");
+        try
+        {
+            Set(typeof(FoodDurationModule), "_active", module);
+            Player player = NewPlayer(new Vector3(800, 600, 800));
+            player.SetSeenTutorial("eitr");
+            var food = new Player.Food
+            {
+                m_item = ObjectDB.instance.GetItemPrefab("CookedMeat").GetComponent<ItemDrop>().m_itemData.Clone(),
+                m_time = 50f,
+            };
+            // Keep the native edible item private to the fixture and exercise all
+            // three benefits through the game's real UpdateFood/SetMax methods.
+            food.m_item.m_shared = new ItemDrop.ItemData.SharedData
+            {
+                m_name = "regression-food", m_foodBurnTime = 100f,
+                m_food = 80f, m_foodStamina = 60f, m_foodEitr = 40f,
+            };
+            player.GetFoods().Add(food);
+            float baseHealth = (float)Get(player, "m_baseHP")!;
+            float baseStamina = (float)Get(player, "m_baseStamina")!;
+            Check(settings.ApplyOverlay("[Food] / Enabled=true\n[Food] / NoDegradation=true\n") == 2,
+                "food no-degradation arrives through the synced overlay");
+            Call(player, "UpdateFood", 0f, true);
+            Check(Math.Abs(player.GetMaxHealth() - (baseHealth + 80f)) < 0.01f,
+                "no-degradation reaches the native maximum health, not just food records");
+            Check(Math.Abs((float)Get(player, "m_maxStamina")! - (baseStamina + 60f)) < 0.01f,
+                "no-degradation reaches the native maximum stamina");
+            Check(Math.Abs((float)Get(player, "m_maxEitr")! - 40f) < 0.01f,
+                "no-degradation reaches the native maximum eitr");
+            Check(food.m_time == 49f, "no-degradation leaves the food expiry timer running");
+            Check(food.m_health == 80f && food.m_stamina == 60f && food.m_eitr == 40f,
+                "food display values agree with native maximum benefits");
+            settings.ApplyOverlay("[Food] / Enabled=true\n[Food] / NoDegradation=false\n");
+            Call(player, "UpdateFood", 0f, true);
+            float decay = Mathf.Pow(48f / 100f, 0.3f);
+            Check(Math.Abs(player.GetMaxHealth() - (baseHealth + 80f * decay)) < 0.01f &&
+                Math.Abs((float)Get(player, "m_maxStamina")! - (baseStamina + 60f * decay)) < 0.01f &&
+                Math.Abs((float)Get(player, "m_maxEitr")! - 40f * decay) < 0.01f,
+                "switching no-degradation off restores native decay for all benefits");
+            settings.ApplyOverlay("[Food] / Enabled=false\n[Food] / NoDegradation=true\n");
+            Call(player, "UpdateFood", 0f, true);
+            Check(food.m_health < 80f && player.GetMaxHealth() < baseHealth + 80f,
+                "disabled Food module preserves native decay even with NoDegradation configured");
+            settings.ApplyOverlay("[Food] / Enabled=true\n[Food] / NoDegradation=true\n");
+            food.m_time = 2f;
+            Call(player, "UpdateFood", 0f, true);
+            Check(food.m_time == 1f && player.GetMaxHealth() == baseHealth + 80f,
+                "full benefits remain until the last food second");
+            Call(player, "UpdateFood", 0f, true);
+            Check(player.GetFoods().Count == 0 && player.GetMaxHealth() == baseHealth &&
+                (float)Get(player, "m_maxStamina")! == baseStamina && (float)Get(player, "m_maxEitr")! == 0f,
+                "expired food is removed and its benefits end normally");
+        }
+        finally { Set(typeof(FoodDurationModule), "_active", previous); }
     }
 
     private static void CopyItems(ZDO source, ZDO destination)
