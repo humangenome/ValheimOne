@@ -44,6 +44,12 @@ public sealed class NetworkModule : IFeatureModule
         new KeyValuePair<string, string>("org.bepinex.plugins.network", "Network"),
     };
 
+    // Server Devcommands (JereKuusela) puts a void prefix and a postfix on SendZDOs for its ghost mode: on a
+    // player's own game they hide the local player while the world is sent and put it back after; on a dedicated
+    // server there is no local player and both return at once. Neither can skip SendZDOs, change its result or
+    // touch the queue read, so they leave the send limit alone. 22 of the 44 stand-downs on 10/20 were only this.
+    public const string ServerDevcommandsGuid = "server_devcommands";
+
     public const int VanillaQueueLimit = 10240;
     public const int LiftedQueueLimit = 32768;
     public const int QueueHeadroom = LiftedQueueLimit - VanillaQueueLimit;
@@ -284,7 +290,7 @@ public sealed class NetworkModule : IFeatureModule
             var owners = new SortedSet<string>(StringComparer.Ordinal);
             AddForeignOwners(owners, AccessTools.Method(typeof(ZSteamSocket), nameof(ZSteamSocket.GetSendQueueSize)));
             AddForeignOwners(owners, AccessTools.Method(typeof(ZPlayFabSocket), nameof(ZPlayFabSocket.GetSendQueueSize)));
-            AddForeignOwners(owners, AccessTools.Method(typeof(ZDOMan), "SendZDOs"));
+            AddForeignOwners(owners, AccessTools.Method(typeof(ZDOMan), "SendZDOs"), ignoreObservers: true);
             AddForeignOwners(owners, AccessTools.Method(typeof(ZSteamSocket), "RegisterGlobalCallbacks"));
             if (owners.Count > 0)
             {
@@ -299,7 +305,7 @@ public sealed class NetworkModule : IFeatureModule
         }
     }
 
-    private static void AddForeignOwners(SortedSet<string> owners, MethodBase? method)
+    private static void AddForeignOwners(SortedSet<string> owners, MethodBase? method, bool ignoreObservers = false)
     {
         if (method == null)
         {
@@ -314,7 +320,46 @@ public sealed class NetworkModule : IFeatureModule
 
         foreach (string owner in info.Owners.Where(owner => owner != ValheimOnePlugin.PluginGuid))
         {
+            if (ignoreObservers && OnlyObservesSendZDOs(info, owner))
+            {
+                continue;
+            }
+
             owners.Add(owner);
         }
+    }
+
+    // True only for Server Devcommands when everything it has on SendZDOs is a void prefix (it cannot skip the
+    // method) or a postfix that does not take the result: no transpiler, finalizer or IL manipulator. Any other
+    // shape from it, and every other mod, still counts as changing the send limit.
+    internal static bool OnlyObservesSendZDOs(Patches info, string owner)
+    {
+        if (!string.Equals(owner, ServerDevcommandsGuid, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (info.Transpilers.Any(patch => patch.owner == owner) ||
+            info.Finalizers.Any(patch => patch.owner == owner) ||
+            info.ILManipulators.Any(patch => patch.owner == owner))
+        {
+            return false;
+        }
+
+        return info.Prefixes.Where(patch => patch.owner == owner).All(ObserverOnly) &&
+               info.Postfixes.Where(patch => patch.owner == owner).All(ObserverOnly);
+    }
+
+    // A void patch that takes nothing by reference and not the result: it can neither skip the original nor change
+    // its arguments or what it returns.
+    private static bool ObserverOnly(Patch patch)
+    {
+        MethodInfo? method = patch.PatchMethod;
+        return method != null &&
+               method.ReturnType == typeof(void) &&
+               method.GetParameters().All(parameter =>
+                   !parameter.ParameterType.IsByRef &&
+                   !string.Equals(parameter.Name, "__result", StringComparison.Ordinal) &&
+                   !string.Equals(parameter.Name, "__runOriginal", StringComparison.Ordinal));
     }
 }

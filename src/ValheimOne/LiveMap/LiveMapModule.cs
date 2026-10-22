@@ -17,6 +17,7 @@ public sealed class LiveMapModule : IFeatureModule
     private readonly ModLogger _log;
     private readonly FeatureRegistry _registry;
     private readonly string _dataDirectory;
+    private readonly string _worldDataDirectory;
     private readonly object _storeLock = new object();
     private WebPinStore? _webPinStore;
     private ActivityHeatmap? _activityHeatmap;
@@ -29,12 +30,14 @@ public sealed class LiveMapModule : IFeatureModule
         FeatureRegistry registry,
         ActivityLogModule activityLog,
         ServerSessionEventSource sessionEvents,
-        string dataDirectory)
+        string dataDirectory,
+        string? worldDataDirectory = null)
     {
         _registry = registry;
         _activityLog = activityLog;
         _sessionEvents = sessionEvents;
         _dataDirectory = dataDirectory;
+        _worldDataDirectory = string.IsNullOrEmpty(worldDataDirectory) ? dataDirectory : worldDataDirectory!;
         _log = new ModLogger(BepInEx.Logging.Logger.CreateLogSource("ValheimOne.LiveMap"));
         _feature = registry.Register(Name, Section, Classification);
 
@@ -351,11 +354,11 @@ public sealed class LiveMapModule : IFeatureModule
 
             if (_feature.Enabled.Value)
             {
-                _webPinStore ??= new WebPinStore(_dataDirectory, _log);
-                _activityHeatmap ??= new ActivityHeatmap(_dataDirectory, _log);
+                _webPinStore ??= new WebPinStore(_worldDataDirectory, _log);
+                _activityHeatmap ??= new ActivityHeatmap(_worldDataDirectory, _log);
                 if (_config.Timelapse)
                 {
-                    _timelapseRecorder ??= new TimelapseRecorder(_dataDirectory, _log);
+                    _timelapseRecorder ??= new TimelapseRecorder(_worldDataDirectory, _log);
                 }
                 else
                 {

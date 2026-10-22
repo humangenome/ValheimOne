@@ -967,25 +967,8 @@ internal sealed class WorldMapRenderer
         return zoom;
     }
 
-    private static string SanitizeWorldName(string worldName)
-    {
-        var sanitized = new StringBuilder(Math.Min(worldName.Length, 80));
-        for (int index = 0; index < worldName.Length && sanitized.Length < 80; index++)
-        {
-            char character = worldName[index];
-            if (char.IsLetterOrDigit(character) || character == '-' || character == '_' || character == '.')
-            {
-                sanitized.Append(character);
-            }
-            else
-            {
-                sanitized.Append('_');
-            }
-        }
-
-        string result = sanitized.ToString().Trim();
-        return string.IsNullOrEmpty(result) || result == "." || result == ".." ? "world" : result;
-    }
+    // One rule for every per-world folder (the map cache here, pins and activity in WorldDataDirectory).
+    private static string SanitizeWorldName(string worldName) => WorldDataDirectory.SanitizeWorldName(worldName);
 
     private static byte ShadeChannel(byte value, float shade)
     {

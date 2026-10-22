@@ -13,7 +13,6 @@ namespace ValheimOne.LiveMap;
 internal sealed class LiveMapHttpServer
 {
     private const int MaximumRequestBodyBytes = 8 * 1024;
-    private const int MaximumEventStreams = 8;
     private const int EventStreamTickMilliseconds = 1000;
     private const int EventStreamHeartbeatTicks = 15;
     private const int EventStreamLogBatchSize = 100;
@@ -93,7 +92,7 @@ internal sealed class LiveMapHttpServer
     private long _webPinWriteLastPruneTicks;
     private bool _accessTokenWarningLogged;
     private bool _consoleTokenWarningLogged;
-    private int _eventStreamCount;
+    private readonly EventStreamSlots _eventStreams = new EventStreamSlots();
     private volatile bool _stopping;
 
     public LiveMapHttpServer(
@@ -1115,18 +1114,20 @@ internal sealed class LiveMapHttpServer
         HttpListenerResponse response,
         ViewLevel viewLevel)
     {
-        int streamCount = Interlocked.Increment(ref _eventStreamCount);
+        EventStreamView streamView = ToEventStreamView(viewLevel);
+        if (!_eventStreams.TryAcquire(streamView))
+        {
+            // This view's streams are all taken; the map keeps polling instead.
+            TryWriteJson(
+                response,
+                HttpStatusCode.Conflict,
+                "{\"error\":\"too many event streams\"}");
+            TryCloseEventStream(response);
+            return;
+        }
+
         try
         {
-            if (streamCount > MaximumEventStreams)
-            {
-                WriteJson(
-                    response,
-                    HttpStatusCode.Conflict,
-                    "{\"error\":\"too many event streams\"}");
-                return;
-            }
-
             bool sendLogs = viewLevel == ViewLevel.Admin &&
                             _config.ConsoleEnabled &&
                             HasConsoleToken(request) &&
@@ -1299,8 +1300,21 @@ internal sealed class LiveMapHttpServer
         }
         finally
         {
-            Interlocked.Decrement(ref _eventStreamCount);
+            _eventStreams.Release(streamView);
             TryCloseEventStream(response);
+        }
+    }
+
+    private static EventStreamView ToEventStreamView(ViewLevel viewLevel)
+    {
+        switch (viewLevel)
+        {
+            case ViewLevel.Admin:
+                return EventStreamView.Admin;
+            case ViewLevel.Shared:
+                return EventStreamView.Shared;
+            default:
+                return EventStreamView.Public;
         }
     }
 

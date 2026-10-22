@@ -45,9 +45,11 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
         var sessionEvents = ServerSessionEventSource.Initialize(gameObject, _log);
         _sessionEvents = sessionEvents;
         string dataDirectory = Path.Combine(Paths.ConfigPath, "ValheimOne");
+        // Pins, heatmap, timelapse and activity belong to one world (0.13.26); the item catalog stays shared.
+        string worldDataDirectory = WorldDataDirectory.Resolve(dataDirectory, _log);
         var activityLogModule = new ActivityLogModule(
             settings.Features,
-            dataDirectory,
+            worldDataDirectory,
             sessionEvents,
             _log);
         _activityLogModule = activityLogModule;
@@ -57,7 +59,8 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
             settings.Features,
             activityLogModule,
             sessionEvents,
-            dataDirectory);
+            dataDirectory,
+            worldDataDirectory);
         _liveMapModule = liveMapModule;
         var networkModule = new NetworkModule(settings.Features, _log);
         _networkModule = networkModule;

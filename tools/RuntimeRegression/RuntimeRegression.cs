@@ -3,9 +3,11 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
+using System.Threading;
 using BepInEx;
 using BepInEx.Bootstrap;
 using HarmonyLib;
@@ -35,6 +37,13 @@ public sealed class RuntimeRegression : BaseUnityPlugin
     private int _assertions;
     private bool _ran;
     private string _root = "";
+    // The live event-stream check needs the running map, which starts on the main thread after these tests, so it
+    // runs on its own thread and the result file is written once it is done.
+    private readonly List<(bool Ok, string Name)> _liveResults = new();
+    private Thread? _liveCheck;
+    private volatile bool _liveDone;
+    private bool _resultWritten;
+    private float _liveDeadline;
 
     private void Awake()
     {
@@ -56,7 +65,13 @@ public sealed class RuntimeRegression : BaseUnityPlugin
 
     private void Update()
     {
-        if (_ran || ZNet.instance == null || !ZNet.instance.IsServer() ||
+        if (_ran)
+        {
+            PollLiveChecks();
+            return;
+        }
+
+        if (ZNet.instance == null || !ZNet.instance.IsServer() ||
             ZNetScene.instance == null || ObjectDB.instance == null ||
             ObjectDB.instance.GetItemPrefab("Wood") == null || WorldGenerator.instance == null) return;
         _ran = true;
@@ -77,14 +92,15 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestValheimOneZeroData();
             TestDropsChestLoot();
             TestNetworkSendLimit();
-            string result = $"RUNTIME REGRESSION PASS assertions={_assertions} game={(global::Version.GetVersionString())}";
-            Logger.LogInfo(result);
-            File.WriteAllText(Path.Combine(_root, "result.txt"), result + "\n");
+            TestWorldData();
+            TestEventStreamSlots();
+            _liveDeadline = Time.realtimeSinceStartup + 200f;
+            _liveCheck = new Thread(RunLiveEventStreamChecks) { IsBackground = true, Name = "vo-regression-events" };
+            _liveCheck.Start();
         }
         catch (Exception exception)
         {
-            Logger.LogError("RUNTIME REGRESSION FAIL " + exception);
-            File.WriteAllText(Path.Combine(_root, "result.txt"), "FAIL " + exception + "\n");
+            WriteFailure(exception);
         }
         finally
         {
@@ -106,6 +122,43 @@ public sealed class RuntimeRegression : BaseUnityPlugin
                 }
             }
             CapturedViews.Clear();
+        }
+    }
+
+    private void WriteFailure(Exception exception)
+    {
+        if (_resultWritten) return;
+        _resultWritten = true;
+        Logger.LogError("RUNTIME REGRESSION FAIL " + exception);
+        File.WriteAllText(Path.Combine(_root, "result.txt"), "FAIL " + exception + "\n");
+    }
+
+    private void PollLiveChecks()
+    {
+        if (_resultWritten || _liveCheck == null) return;
+        if (!_liveDone)
+        {
+            if (Time.realtimeSinceStartup > _liveDeadline)
+                WriteFailure(new TimeoutException("the live event-stream check did not finish"));
+            return;
+        }
+
+        try
+        {
+            lock (_liveResults)
+            {
+                Check(_liveResults.Count > 0, "the live event-stream check reported");
+                foreach ((bool ok, string name) in _liveResults) Check(ok, name);
+            }
+
+            _resultWritten = true;
+            string result = $"RUNTIME REGRESSION PASS assertions={_assertions} game={(global::Version.GetVersionString())}";
+            Logger.LogInfo(result);
+            File.WriteAllText(Path.Combine(_root, "result.txt"), result + "\n");
+        }
+        catch (Exception exception)
+        {
+            WriteFailure(exception);
         }
     }
 
@@ -1099,6 +1152,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         object? previous = Get(typeof(NetworkModule), "_active");
         var zdos = new List<ZDO>();
         var foreign = new Harmony("test.foreign.sendqueue");
+        var devcommands = new Harmony(NetworkModule.ServerDevcommandsGuid);
         try
         {
             Set(typeof(NetworkModule), "_active", module);
@@ -1169,6 +1223,31 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             foreign.UnpatchSelf();
             Set(module, "_resolved", false);
             Set(module, "_standDownReason", null);
+
+            // Server Devcommands' ghost-mode patches on SendZDOs only look on (a void prefix and postfix).
+            MethodInfo sendZdos = AccessTools.Method(typeof(ZDOMan), "SendZDOs");
+            devcommands.Patch(sendZdos,
+                prefix: new HarmonyMethod(typeof(RuntimeRegression), nameof(ObserverPrefix)),
+                postfix: new HarmonyMethod(typeof(RuntimeRegression), nameof(ObserverPostfix)));
+            Set(module, "_resolved", false);
+            Check(NetworkModule.IsLiftActive() && NetworkModule.StandDownReason == null,
+                "Server Devcommands' look-only prefix and postfix on SendZDOs leave the lift on");
+            int beside = SendOnce(center, 0, out bool sentBeside);
+            Check(sentBeside && beside > 12000, "beside Server Devcommands the package still reaches past 10 KB (" + beside + " bytes)");
+            devcommands.Patch(sendZdos, prefix: new HarmonyMethod(typeof(RuntimeRegression), nameof(SkippingPrefix)));
+            Set(module, "_resolved", false);
+            Check(!NetworkModule.IsLiftActive() && (NetworkModule.StandDownReason ?? "").Contains(NetworkModule.ServerDevcommandsGuid),
+                "a Server Devcommands prefix that could skip SendZDOs still makes the lift stand down");
+            devcommands.UnpatchSelf();
+            Set(module, "_resolved", false);
+            Set(module, "_standDownReason", null);
+            foreign.Patch(sendZdos, prefix: new HarmonyMethod(typeof(RuntimeRegression), nameof(ObserverPrefix)));
+            Set(module, "_resolved", false);
+            Check(!NetworkModule.IsLiftActive() && (NetworkModule.StandDownReason ?? "").Contains("test.foreign.sendqueue"),
+                "the look-only exception is Server Devcommands' alone: any other mod on SendZDOs still counts");
+            foreign.UnpatchSelf();
+            Set(module, "_resolved", false);
+            Set(module, "_standDownReason", null);
             Chainloader.PluginInfos["DIT.BetterNetworking10"] =
                 (PluginInfo)FormatterServices.GetUninitializedObject(typeof(PluginInfo));
             Set(module, "_resolved", false);
@@ -1190,12 +1269,221 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             Chainloader.PluginInfos.Remove(NetworkModule.BetterNetworkingGuid);
             Chainloader.PluginInfos.Remove("DIT.BetterNetworking10");
             foreign.UnpatchSelf();
+            devcommands.UnpatchSelf();
             settings.ClearOverlay();
             Set(typeof(NetworkModule), "_active", previous);
             Call(typeof(NetworkModule), "ApplySteamSendRates");
             foreach (ZDO zdo in zdos) ZDOMan.instance.DestroyZDO(zdo);
         }
     }
+
+    // Pins, heatmap, timelapse and activity belong to one world (0.13.26). The first world on the new version gets a
+    // copy of the old shared files, they stay where they were, and any later world starts empty.
+    private void TestWorldData()
+    {
+        string root = Path.Combine(_root, "world-data");
+        if (Directory.Exists(root)) Directory.Delete(root, true);
+        Directory.CreateDirectory(Path.Combine(root, "timelapse", "older"));
+        var legacy = new Dictionary<string, string>
+        {
+            ["webpins.json"] = "{\"pins\":[{\"label\":\"old base\"}]}",
+            ["heatmap.json"] = "{\"cells\":[1,2,3]}",
+            ["ghosts.json"] = "[]",
+            ["console-history.json"] = "[\"save\"]",
+            ["activity-2026-10-20.jsonl"] = "{\"type\":\"join\"}\n",
+            ["activity-2026-10-21.jsonl"] = "{\"type\":\"leave\"}\n",
+            [Path.Combine("timelapse", "1760000000000.vof")] = "frame-a",
+            [Path.Combine("timelapse", "older", "1750000000000.vof")] = "frame-b",
+            ["leaderboards.json"] = "{\"seed\":1}",
+        };
+        foreach (KeyValuePair<string, string> file in legacy) File.WriteAllText(Path.Combine(root, file.Key), file.Value);
+        Directory.CreateDirectory(Path.Combine(root, "worlds", "Saga_One.copying"));
+        File.WriteAllText(Path.Combine(root, "worlds", "Saga_One.copying", "partial.json"), "half");
+
+        string first = WorldDataDirectory.Resolve(root, "Saga One", new ModLogger(Logger));
+        Check(first == Path.Combine(root, "worlds", "Saga_One"), "the first world gets its own folder named like its map cache");
+        bool copiedAll = legacy.Where(f => f.Key != "leaderboards.json")
+            .All(f => File.Exists(Path.Combine(first, f.Key)) && File.ReadAllText(Path.Combine(first, f.Key)) == f.Value);
+        Check(copiedAll, "pins, heatmap, offline players, console history, activity and timelapse are copied into it");
+        Check(legacy.All(f => File.Exists(Path.Combine(root, f.Key)) && File.ReadAllText(Path.Combine(root, f.Key)) == f.Value),
+            "the old shared files stay where they were (copied, never moved)");
+        Check(!File.Exists(Path.Combine(first, "leaderboards.json")), "the seed-checked leaderboard stays shared");
+        Check(!Directory.Exists(Path.Combine(root, "worlds", "Saga_One.copying")) && !File.Exists(Path.Combine(first, "partial.json")),
+            "a half-finished copy from an earlier crash is thrown away, never taken as done");
+        string marker = File.ReadAllText(Path.Combine(root, "worlds", WorldDataDirectory.LegacyMarkerFile));
+        Check(marker.Contains("world=Saga_One") && marker.Contains("copied_files=8"), "the marker names the world that got the copy");
+
+        File.WriteAllText(Path.Combine(first, "webpins.json"), "{\"pins\":[]}");
+        string second = WorldDataDirectory.Resolve(root, "Other World", null);
+        Check(second == Path.Combine(root, "worlds", "Other_World") && Directory.GetFileSystemEntries(second).Length == 0,
+            "a world switched to later starts empty instead of showing the old world's pins");
+        string again = WorldDataDirectory.Resolve(root, "Saga One", null);
+        Check(again == first && File.ReadAllText(Path.Combine(first, "webpins.json")) == "{\"pins\":[]}",
+            "coming back to the first world keeps its own data and copies nothing again");
+
+        Check(WorldDataDirectory.ReadWorldName(new[] { "valheim_server", "-name", "x", "-world", "Midgard" }) == "Midgard" &&
+              WorldDataDirectory.ReadWorldName(new[] { "valheim_server", "-WORLD", "" }) == "Dedicated" &&
+              WorldDataDirectory.ReadWorldName(new string[0]) == "Dedicated",
+            "the world name comes from -world as the game reads it, else the game's own Dedicated");
+        Check(WorldDataDirectory.SanitizeWorldName("../..") == ".._.." && WorldDataDirectory.SanitizeWorldName("") == "world" &&
+              WorldDataDirectory.SanitizeWorldName("a/b\\c:d") == "a_b_c_d",
+            "a world name cannot leave the worlds folder");
+
+        // The running plugin on the regression world.
+        string world = WorldDataDirectory.SanitizeWorldName(WorldDataDirectory.ReadWorldName(Environment.GetCommandLineArgs()));
+        string expected = Path.Combine(Paths.ConfigPath, "ValheimOne", "worlds", world);
+        object plugin = Chainloader.PluginInfos[ValheimOnePlugin.PluginGuid].Instance;
+        object liveMap = Get(plugin, "_liveMapModule")!;
+        object activity = Get(plugin, "_activityLogModule")!;
+        Check((string)Get(liveMap, "_worldDataDirectory")! == expected, "the live map keeps pins, heatmap and timelapse in " + world + "'s folder");
+        Check((string)ReadMember(activity, "DataDirectory")! == expected, "the activity log writes into " + world + "'s folder");
+        Check((string)Get(liveMap, "_dataDirectory")! == Path.Combine(Paths.ConfigPath, "ValheimOne"), "the item catalog cache stays shared");
+    }
+
+    // Live event streams are counted per view (0.13.26): public and shared viewers can no longer take the owner's slots.
+    private void TestEventStreamSlots()
+    {
+        var slots = new EventStreamSlots();
+        int Fill(EventStreamView view) { int n = 0; while (n < 50 && slots.TryAcquire(view)) n++; return n; }
+        Check(Fill(EventStreamView.Public) == 2 && Fill(EventStreamView.Shared) == 3,
+            "public streams stop at 2 and shared at 3");
+        Check(Fill(EventStreamView.Admin) == 6, "the owner's admin view still gets all 6 of its own streams");
+        slots.Release(EventStreamView.Public);
+        Check(slots.TryAcquire(EventStreamView.Public) && !slots.TryAcquire(EventStreamView.Public),
+            "a closed public stream frees exactly one public slot");
+        for (int i = 0; i < 10; i++) slots.Release(EventStreamView.Shared);
+        Check(slots.Count(EventStreamView.Shared) == 0 && Fill(EventStreamView.Shared) == 3,
+            "extra releases never push a count below zero");
+    }
+
+    private void LiveResult(bool ok, string name)
+    {
+        lock (_liveResults) _liveResults.Add((ok, name));
+    }
+
+    private void RunLiveEventStreamChecks()
+    {
+        try
+        {
+            string root = Environment.GetEnvironmentVariable("CONSOLE_PROBE_URL") ?? "http://127.0.0.1:24583";
+            string token = Environment.GetEnvironmentVariable("CONSOLE_PROBE_TOKEN") ?? "";
+            DateTime deadline = DateTime.UtcNow.AddSeconds(180);
+            EventStreamSlots? slots = null;
+            while (DateTime.UtcNow < deadline)
+            {
+                slots = RunningEventStreamSlots();
+                if (slots != null && StatusAnswers(root, token)) break;
+                slots = null;
+                Thread.Sleep(200);
+            }
+
+            if (slots == null)
+            {
+                LiveResult(false, "the live map answered for the event-stream check");
+                return;
+            }
+
+            int publicTaken = FillSlots(slots, EventStreamView.Public);
+            int sharedTaken = FillSlots(slots, EventStreamView.Shared);
+            try
+            {
+                LiveResult(publicTaken == EventStreamSlots.PublicLimit && sharedTaken == EventStreamSlots.SharedLimit,
+                    "the running map's public and shared slots fill at 2 and 3");
+                int code = OpenEventStream(root, token, out string first);
+                LiveResult(code == 200 && first.StartsWith("retry:", StringComparison.Ordinal),
+                    "with every public and shared slot taken, the owner's map still gets its live stream (HTTP " + code + ")");
+            }
+            finally
+            {
+                for (int i = 0; i < publicTaken; i++) slots.Release(EventStreamView.Public);
+                for (int i = 0; i < sharedTaken; i++) slots.Release(EventStreamView.Shared);
+            }
+
+            int adminTaken = FillSlots(slots, EventStreamView.Admin);
+            try
+            {
+                int code = OpenEventStream(root, token, out _);
+                LiveResult(code == 409, "with every admin slot taken, one more admin stream is told to keep polling (HTTP " + code + ")");
+            }
+            finally
+            {
+                for (int i = 0; i < adminTaken; i++) slots.Release(EventStreamView.Admin);
+            }
+        }
+        catch (Exception exception)
+        {
+            LiveResult(false, "live event-stream check: " + exception.GetType().Name + ": " + exception.Message);
+        }
+        finally
+        {
+            _liveDone = true;
+        }
+    }
+
+    private static int FillSlots(EventStreamSlots slots, EventStreamView view)
+    {
+        int taken = 0;
+        while (taken < 50 && slots.TryAcquire(view)) taken++;
+        return taken;
+    }
+
+    // Plain reference reads only: this runs off the main thread.
+    private static EventStreamSlots? RunningEventStreamSlots()
+    {
+        Type behaviourType = typeof(ValheimOnePlugin).Assembly.GetType("ValheimOne.LiveMap.LiveMapBehaviour", true)!;
+        object? behaviour = AccessTools.Property(behaviourType, "Instance").GetValue(null, null);
+        if (behaviour is null) return null;
+        object? server = AccessTools.Field(behaviourType, "_httpServer").GetValue(behaviour);
+        return server is null ? null : AccessTools.Field(server.GetType(), "_eventStreams").GetValue(server) as EventStreamSlots;
+    }
+
+    private static bool StatusAnswers(string root, string token)
+    {
+        try
+        {
+            var request = (HttpWebRequest)WebRequest.Create(root + "/api/status");
+            request.Headers["X-LiveMap-Token"] = token;
+            request.Timeout = 2000;
+            request.KeepAlive = false;
+            using (request.GetResponse()) { }
+            return true;
+        }
+        catch (WebException)
+        {
+            return false;
+        }
+    }
+
+    private static int OpenEventStream(string root, string token, out string firstLine)
+    {
+        firstLine = "";
+        var request = (HttpWebRequest)WebRequest.Create(root + "/api/events");
+        request.Headers["X-LiveMap-Token"] = token;
+        request.Timeout = 10000;
+        request.ReadWriteTimeout = 10000;
+        request.KeepAlive = false;
+        try
+        {
+            var response = (HttpWebResponse)request.GetResponse();
+            int code = (int)response.StatusCode;
+            var reader = new StreamReader(response.GetResponseStream());
+            firstLine = reader.ReadLine() ?? "";
+            request.Abort();
+            return code;
+        }
+        catch (WebException exception) when (exception.Response is HttpWebResponse refused)
+        {
+            int code = (int)refused.StatusCode;
+            refused.Close();
+            return code;
+        }
+    }
+
+    private static void ObserverPrefix() { }
+
+    private static void ObserverPostfix() { }
+
+    private static bool SkippingPrefix() => true;
 
     private static void ForeignQueuePostfix(ref int __result) { }
 

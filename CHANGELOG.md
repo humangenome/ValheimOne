@@ -4,6 +4,12 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+### Fixed
+
+- Web pins, the activity heatmap, the timelapse and the activity log are kept per world. They used to share one folder for the whole server, so a server that switched to another world showed the old world's web pins at the same coordinates and mixed both worlds in its timelapse and heatmap. A dedicated server now keeps them in `BepInEx/config/ValheimOne/worlds/<world>/`, named the way the map cache already names its per-world folder. The first world started on this version gets a copy of the old files; the old files stay where they were, so an older ValheimOne still finds them, and `worlds/legacy-copied.txt` records which world got the copy. A world started later begins empty. The leaderboard (already checked against the world seed) and the item catalog stay shared. A player's own game keeps the single folder.
+- Live map event streams are counted per view: up to 6 for the Admin view, 3 for Shared and 2 for Public. One shared limit of 8 meant eight open public-map tabs could take every slot, and the owner's own map then fell back to asking for every part of the map every 2 seconds. A view over its limit gets the same "too many event streams" answer as before and keeps polling.
+- `[Network]` no longer stands down for Server Devcommands. Its ghost-mode patches on `ZDOMan.SendZDOs` are a void prefix and a postfix that only hide the local player while the world is sent, and on a dedicated server there is no local player, so they cannot change how much is sent. Any other shape of patch from it, and every other mod on the same methods, still makes the lift stand down.
+
 ## [0.13.25] - 2026-10-19
 
 ### Added
