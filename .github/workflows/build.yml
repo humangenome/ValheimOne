@@ -29,6 +29,7 @@ jobs:
         uses: ./.github/actions/valheim-toolchain
         with:
           bepinex-version: ${{ env.BEPINEX_VERSION }}
+          testserver: 'true'
 
       - name: Assert version consistency
         shell: bash
@@ -50,6 +51,28 @@ jobs:
           tools/ci/leak-gate.sh \
             src/ValheimOne/bin/Release/net472/ValheimOne.dll \
             tools/release/valheimone.cfg
+
+      # The same behaviour check the Release workflow runs (about 35 seconds): boots the dedicated
+      # server on the pinned SmokeWorld and compares the worldgen fingerprint, the patched methods
+      # and the registered modules with tools/golden-fingerprint.txt. After a Valheim update it
+      # fails until the drift is reviewed and re-blessed locally, as the Release run does.
+      - name: Contract test
+        shell: bash
+        run: |
+          set -euo pipefail
+          log="${RUNNER_TEMP}/contract.log"
+          set +e
+          tools/contract-test.sh 2>&1 | tee "${log}"
+          status=${PIPESTATUS[0]}
+          set -e
+          if (( status != 0 )); then
+            echo "::error::contract test exited ${status}"
+            exit "${status}"
+          fi
+          grep -q '^CONTRACT PASS$' "${log}" || {
+            echo "::error::contract test did not print CONTRACT PASS"
+            exit 1
+          }
 
       - name: Upload ValheimOne DLL
         uses: actions/upload-artifact@v4
