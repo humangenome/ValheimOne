@@ -4,6 +4,8 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.13.26] - 2026-10-23
+
 ### Fixed
 
 - Web pins, the activity heatmap, the timelapse and the activity log are kept per world. They used to share one folder for the whole server, so a server that switched to another world showed the old world's web pins at the same coordinates and mixed both worlds in its timelapse and heatmap. A dedicated server now keeps them in `BepInEx/config/ValheimOne/worlds/<world>/`, named the way the map cache already names its per-world folder. The first world started on this version gets a copy of the old files; the old files stay where they were, so an older ValheimOne still finds them, and `worlds/legacy-copied.txt` records which world got the copy. A world started later begins empty. The leaderboard (already checked against the world seed) and the item catalog stay shared. A player's own game keeps the single folder.
