@@ -14,6 +14,7 @@ internal sealed class LiveMapConfig
     private readonly ConfigEntryString _bindIp;
     private readonly ConfigEntryString _accessToken;
     private readonly ConfigEntryString _shareToken;
+    private readonly ConfigEntryString _relayKey;
     private readonly ConfigEntryBool _publicView;
     private readonly ConfigEntryBool _publicPins;
     private readonly ConfigEntryBool _sharedPinEditing;
@@ -45,6 +46,7 @@ internal sealed class LiveMapConfig
         ConfigEntryString bindIp,
         ConfigEntryString accessToken,
         ConfigEntryString shareToken,
+        ConfigEntryString relayKey,
         ConfigEntryBool publicView,
         ConfigEntryBool publicPins,
         ConfigEntryBool sharedPinEditing,
@@ -75,6 +77,7 @@ internal sealed class LiveMapConfig
         _bindIp = bindIp;
         _accessToken = accessToken;
         _shareToken = shareToken;
+        _relayKey = relayKey;
         _publicView = publicView;
         _publicPins = publicPins;
         _sharedPinEditing = sharedPinEditing;
@@ -113,6 +116,8 @@ internal sealed class LiveMapConfig
     public string AccessToken => _accessToken.Value;
 
     public string ShareToken => _shareToken.Value;
+
+    public string RelayKey => (_relayKey.Value ?? string.Empty).Trim();
 
     public bool PublicView => _publicView.Value;
 

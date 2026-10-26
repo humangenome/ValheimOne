@@ -75,6 +75,11 @@ public sealed class LiveMapModule : IFeatureModule
             "Optional token granting a shared spectator map view as ?token= or " +
             "X-LiveMap-Token: player names, configured Shared layers, and follow, but never console or admin " +
             "actions.");
+        ConfigEntryString relayKey = _feature.String(
+            "RelayKey",
+            string.Empty,
+            "Optional key a hosting relay sends as X-Relay-Key. When set, every map request without it is " +
+            "refused, except requests from this machine itself. Empty serves requests as before.");
         ConfigEntryBool publicView = _feature.Bool(
             "PublicView",
             true,
@@ -187,6 +192,7 @@ public sealed class LiveMapModule : IFeatureModule
             bindIp,
             accessToken,
             shareToken,
+            relayKey,
             publicView,
             publicPins,
             sharedPinEditing,

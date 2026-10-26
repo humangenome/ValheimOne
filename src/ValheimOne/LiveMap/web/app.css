@@ -1539,7 +1539,8 @@ code {
 }
 
 .layers-control.is-collapsed {
-    width: 92px;
+    width: auto;
+    min-width: 92px;
 }
 
 .layers-toggle,
@@ -1556,6 +1557,7 @@ code {
     height: 38px;
     min-height: 38px;
     justify-content: space-between;
+    gap: 6px;
     padding: 0 11px;
     border: 0;
     background: transparent;
@@ -1573,6 +1575,7 @@ code {
     display: inline-flex;
     align-items: center;
     margin-right: -0.06em;
+    white-space: nowrap;
     font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.06em;

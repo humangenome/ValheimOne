@@ -72,6 +72,8 @@ internal sealed class LiveMapHttpServer
     private readonly ModLogger _log;
     private string AccessToken => NormalizeToken(_config.AccessToken);
     private string ShareToken => NormalizeToken(_config.ShareToken);
+    private string RelayKey => NormalizeToken(_config.RelayKey);
+    internal const string RelayKeyHeader = "X-Relay-Key";
     private readonly object _fogPngLock = new object();
     private readonly object _exploredPctLock = new object();
     private readonly object _webPinWriteRateLock = new object();
@@ -226,6 +228,11 @@ internal sealed class LiveMapHttpServer
         };
         _listenerThread.Start();
         _log.Info($"[LiveMap] listening on {preferredPrefix}");
+        if (!string.IsNullOrEmpty(RelayKey))
+        {
+            // Never the value: only that one is set.
+            _log.Info("[LiveMap] relay key set: requests are served only to the hosting relay and to this machine");
+        }
     }
 
     public bool IsRunning => _listener?.IsListening == true;
@@ -335,6 +342,14 @@ internal sealed class LiveMapHttpServer
         try
         {
             HttpListenerRequest request = context.Request;
+            // The relay key comes before every route, token and public setting: when it is set,
+            // a request that is neither from this machine nor carrying the key gets nothing.
+            if (!RelayAllows(RelayKey, SafeRemoteAddress(request), request.Headers[RelayKeyHeader]))
+            {
+                WriteJson(response, HttpStatusCode.Forbidden, "{\"error\":\"forbidden\"}");
+                return;
+            }
+
             string path = request.Url?.AbsolutePath ?? "/";
             bool isConsolePath = IsConsolePath(path);
             ViewLevel viewLevel;
@@ -5531,6 +5546,41 @@ internal sealed class LiveMapHttpServer
         catch (ObjectDisposedException)
         {
             // The response has already been closed.
+        }
+    }
+
+    // True when the request may be served. An empty relay key serves everyone (as before 0.13.27).
+    // With a key: loopback callers (the host's own stop script) are served, every other caller must
+    // send the key in the X-Relay-Key header. The key is compared in constant time and never logged.
+    internal static bool RelayAllows(string relayKey, IPAddress? remote, string? supplied)
+    {
+        if (string.IsNullOrEmpty(relayKey))
+        {
+            return true;
+        }
+
+        if (remote != null)
+        {
+            IPAddress address = remote.IsIPv4MappedToIPv6 ? remote.MapToIPv4() : remote;
+            if (IPAddress.IsLoopback(address))
+            {
+                return true;
+            }
+        }
+
+        string given = NormalizeToken(supplied ?? string.Empty);
+        return given.Length > 0 && FixedTimeEquals(relayKey, given);
+    }
+
+    private static IPAddress? SafeRemoteAddress(HttpListenerRequest request)
+    {
+        try
+        {
+            return request.RemoteEndPoint?.Address;
+        }
+        catch (Exception)
+        {
+            return null;
         }
     }
 

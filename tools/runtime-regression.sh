@@ -18,6 +18,13 @@ export VALHEIMONE_BROWSER_HOLD_SECONDS="$browser_hold"
 console_result="$backup/console-result.txt"
 export CONSOLE_PROBE_TOKEN
 CONSOLE_PROBE_TOKEN=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
+# 0.13.27: every run sets a relay key, so every live check also proves the machine's own
+# (loopback) calls are served without it. VALHEIMONE_RELAY_KEY= (empty) runs without one.
+export VALHEIMONE_RELAY_KEY
+VALHEIMONE_RELAY_KEY=${VALHEIMONE_RELAY_KEY-$(python3 -c 'import secrets; print(secrets.token_hex(16))')}
+# VALHEIMONE_RELAY_PROBE=1 also binds every address and checks an outside-address call is refused
+# without the key and served with it.
+relay_probe=${VALHEIMONE_RELAY_PROBE:-0}
 mkdir -p "$plugins" "$config" "$output" "$backup/worlds/worlds_local"
 pid=
 cleanup() {
@@ -68,12 +75,14 @@ cfg['CookingStation'].update({'Enabled':'true','AutoFuel':'true','AutoFeedRaw':'
 cfg['ProductionSpeeds'].update({'Enabled':'true','SmelterProductionSeconds':'5','SmelterMaxQueue':'12','SmelterMaxFuel':'12'})
 cfg['LiveMap'].update({'Enabled':'true', 'ConsoleEnabled':'true', 'BindIp':'127.0.0.1',
     'Port':'24583', 'TextureSize':'512', 'AccessToken':os.environ['CONSOLE_PROBE_TOKEN'],
-    'PublicView':'false', 'StatusPublic':'false'})
+    'PublicView':'false', 'StatusPublic':'false', 'RelayKey':os.environ['VALHEIMONE_RELAY_KEY']})
 if int(os.environ['VALHEIMONE_BROWSER_HOLD_SECONDS']) > 0:
     cfg['LiveMap'].update({'PublicView':'true', 'FogMode':'trails', 'FogHideUnexplored':'true',
         'PublicWebPins':'true', 'SharedPinEditing':'true',
         'ShareToken':'browser-regression-shared',
         'BindIp':os.environ.get('VALHEIMONE_BROWSER_BIND', '127.0.0.1')})
+if os.environ.get('VALHEIMONE_RELAY_PROBE') == '1':
+    cfg['LiveMap'].update({'BindIp':''})
 with open(sys.argv[2], 'w') as out: cfg.write(out)
 PY
 cp "$repo/tools/fixtures/SmokeWorld.fwl" "$repo/tools/fixtures/SmokeWorld.db" "$backup/worlds/worlds_local/"
@@ -115,6 +124,10 @@ else
     echo 'HTTP console save probe did not complete.' >&2
     status=1
 fi
+if [[ $status == 0 && $relay_probe == 1 ]]; then
+    "$repo/tools/relay-probe.sh" "$output/relay-probe.txt" || status=1
+    cat "$output/relay-probe.txt"
+fi
 if [[ $status == 0 && $browser_hold -gt 0 ]]; then
     rm -f "$output/browser-done"
     echo 'Native browser fixture ready on port 24583.'
@@ -126,6 +139,10 @@ fi
 cleanup
 trap - EXIT
 cp "$server/BepInEx/LogOutput.log" "$output/BepInEx.log"
+if [[ -n $VALHEIMONE_RELAY_KEY ]] && grep -qF "$VALHEIMONE_RELAY_KEY" "$output/BepInEx.log" "$output/server.log"; then
+    echo 'The relay key appears in a log.' >&2
+    status=1
+fi
 if grep -qE 'Failed to patch|Feature patch application failed|RUNTIME REGRESSION FAIL|FieldAccessException|MissingFieldException|NullReferenceException' "$output/BepInEx.log" "$output/server.log"; then
     echo 'Runtime log contains an unhandled failure.' >&2
     grep -nE -A8 'Failed to patch|Feature patch application failed|RUNTIME REGRESSION FAIL|FieldAccessException|MissingFieldException|NullReferenceException' "$output/BepInEx.log" "$output/server.log" | head -n 100 >&2 || true

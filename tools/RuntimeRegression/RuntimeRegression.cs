@@ -94,6 +94,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestNetworkSendLimit();
             TestWorldData();
             TestEventStreamSlots();
+            TestRelayKey();
             _liveDeadline = Time.realtimeSinceStartup + 200f;
             _liveCheck = new Thread(RunLiveEventStreamChecks) { IsBackground = true, Name = "vo-regression-events" };
             _liveCheck.Start();
@@ -1356,6 +1357,28 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             "extra releases never push a count below zero");
     }
 
+    // 0.13.27: with [LiveMap] RelayKey set, only the hosting relay (the X-Relay-Key header) and the
+    // machine itself (loopback, the host's stop script) are served.
+    private void TestRelayKey()
+    {
+        const string key = "0123456789abcdef0123456789abcdef";
+        IPAddress outside = IPAddress.Parse("203.0.113.7");
+        Check(LiveMapHttpServer.RelayAllows("", outside, null), "an empty relay key serves every caller as before");
+        Check(!LiveMapHttpServer.RelayAllows(key, outside, null), "with a relay key, an outside caller without it is refused");
+        Check(!LiveMapHttpServer.RelayAllows(key, outside, ""), "an empty header is refused");
+        Check(!LiveMapHttpServer.RelayAllows(key, outside, key.Substring(0, 31)), "a key one character short is refused");
+        Check(!LiveMapHttpServer.RelayAllows(key, outside, key + "0"), "a key one character long is refused");
+        Check(!LiveMapHttpServer.RelayAllows(key, outside, key.ToUpperInvariant()), "the key is case sensitive");
+        Check(LiveMapHttpServer.RelayAllows(key, outside, key), "an outside caller with the key is served");
+        Check(LiveMapHttpServer.RelayAllows(key, outside, " " + key + " "), "surrounding spaces in the header are ignored");
+        Check(LiveMapHttpServer.RelayAllows(key, IPAddress.Loopback, null), "the machine itself (127.0.0.1) is served without the key");
+        Check(LiveMapHttpServer.RelayAllows(key, IPAddress.IPv6Loopback, null), "the machine itself (::1) is served without the key");
+        Check(LiveMapHttpServer.RelayAllows(key, IPAddress.Loopback.MapToIPv6(), null), "an IPv4-mapped loopback is served without the key");
+        Check(!LiveMapHttpServer.RelayAllows(key, outside.MapToIPv6(), null), "an IPv4-mapped outside caller is still refused");
+        Check(!LiveMapHttpServer.RelayAllows(key, null, null), "a caller with no known address must carry the key");
+        Check(LiveMapHttpServer.RelayKeyHeader == "X-Relay-Key", "the relay header name matches the panel's");
+    }
+
     private void LiveResult(bool ok, string name)
     {
         lock (_liveResults) _liveResults.Add((ok, name));
@@ -1381,6 +1404,12 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             {
                 LiveResult(false, "the live map answered for the event-stream check");
                 return;
+            }
+
+            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("VALHEIMONE_RELAY_KEY")))
+            {
+                // StatusAnswers above sends no relay key: reaching here proves a loopback caller is still served.
+                LiveResult(true, "with a relay key set, the machine's own call (loopback, no key) is still served");
             }
 
             int publicTaken = FillSlots(slots, EventStreamView.Public);
