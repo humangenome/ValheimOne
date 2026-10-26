@@ -75,7 +75,7 @@ The server needs [BepInExPack_Valheim](https://thunderstore.io/c/valheim/p/denik
 1. Stop the server. Copy `plugins/ValheimOne.dll` from this package to `BepInEx/plugins/ValheimOne.dll` in the server folder.
 2. Start the server once so it writes `BepInEx/config/valheimone.cfg`, then stop it. This package ships no config file, so an update never overwrites yours.
 3. In the `[LiveMap]` section set `Enabled = true`, choose a long unique `AccessToken`, and keep `PublicView = false` while you set up access. The live map is off by default.
-4. Start the server and wait for the world to load. The default map port is TCP `8790`. On a trusted network open `http://your-server-ip:8790/?token=YOUR_ADMIN_TOKEN`. Use an HTTPS reverse proxy for authenticated access over the Internet.
+4. Start the server and wait for the world to load. The default map port is TCP `8790`. On a trusted network open `http://your-server-ip:8790/?token=YOUR_ADMIN_TOKEN`. Use an HTTPS reverse proxy for authenticated access over the Internet. Behind a proxy, set `RelayKey` to a long random value and have the proxy send it in an `X-Relay-Key` header; the map then refuses every request without it, except from the server machine itself.
 5. Optional: `ConsoleEnabled = true` for browser commands, `EntityLayer = true` for ships, carts and portals, and a separate `ShareToken` or `PublicView = true` for sharing. Keep the admin token private.
 
 `EnforceMod = true` in `[Server]` kicks players without ValheimOne, including console players. Leave it `false` on a mixed or crossplay server.

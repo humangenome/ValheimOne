@@ -4,6 +4,8 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.13.27] - 2026-10-25
+
 ### Added
 
 - `[LiveMap] RelayKey`, empty by default. For hosts that serve the live map to their customers through their own web server instead of exposing the map port: when it is set, the map answers only requests that carry the same value in an `X-Relay-Key` header, plus requests from the server machine itself (loopback, so a local stop or status script keeps working). Every other request gets `403` before any page, file, token or public setting is looked at, so the map port gives nothing away even where a firewall rule is missing. The key is compared in constant time, read only from the header (never a query string), and never written to the log; the startup log says only that a relay key is set. Empty serves requests exactly as before.
