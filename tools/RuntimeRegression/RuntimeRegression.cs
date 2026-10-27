@@ -61,6 +61,42 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         _harmony.Patch(AccessTools.Method(typeof(PrivateArea), "CheckAccess",
             new[] { typeof(Vector3), typeof(float), typeof(bool), typeof(bool) }),
             prefix: new HarmonyMethod(typeof(RuntimeRegression), nameof(CheckWard)));
+        // VALHEIMONE_PLAYFAB_FAIL=N (crossplay runs only): the first N server logins fail with PlayFab's throttle error
+        // before any network call, the way a burst of restarts makes them fail. Its own Harmony instance, because the
+        // regression patches above are removed once the tests have run, before the retries are over.
+        if (int.TryParse(Environment.GetEnvironmentVariable("VALHEIMONE_PLAYFAB_FAIL"), out int fail) && fail > 0)
+        {
+            _playFabFailures = fail;
+            new Harmony("com.humangenome.valheimone.regression.playfab").Patch(
+                AccessTools.Method(typeof(PlayFabAuthWithCustomID), "Login"),
+                prefix: new HarmonyMethod(typeof(RuntimeRegression), nameof(ForcedThrottle)));
+            Logger.LogInfo("REGRESSION the first " + fail + " PlayFab server logins will fail with a throttle error");
+        }
+    }
+
+    private static int _playFabFailures;
+    private static int _playFabForced;
+
+    internal static object NewPlayFabError(string code, string message)
+    {
+        Type type = AccessTools.TypeByName("PlayFab.PlayFabError") ?? throw new InvalidOperationException("no PlayFabError type");
+        object error = Activator.CreateInstance(type);
+        FieldInfo codeField = AccessTools.Field(type, "Error");
+        codeField.SetValue(error, Enum.Parse(codeField.FieldType, code));
+        AccessTools.Field(type, "ErrorMessage").SetValue(error, message);
+        AccessTools.Field(type, "HttpCode")?.SetValue(error, 429);
+        return error;
+    }
+
+    private static bool ForcedThrottle()
+    {
+        if (_playFabForced >= _playFabFailures || PlayFabManager.instance == null) return true;
+        _playFabForced++;
+        Debug.Log("REGRESSION forcing PlayFab login failure " + _playFabForced + " of " + _playFabFailures);
+        AccessTools.Method(typeof(PlayFabManager), "OnLoginFailure").Invoke(PlayFabManager.instance,
+            new[] { NewPlayFabError("APIClientRequestRateLimitExceeded",
+                "The client has exceeded the maximum API request rate and is being throttled") });
+        return false;
     }
 
     private void Update()
@@ -95,6 +131,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestWorldData();
             TestEventStreamSlots();
             TestRelayKey();
+            TestPlayFabRetryPolicy();
             _liveDeadline = Time.realtimeSinceStartup + 200f;
             _liveCheck = new Thread(RunLiveEventStreamChecks) { IsBackground = true, Name = "vo-regression-events" };
             _liveCheck.Start();
@@ -1379,6 +1416,25 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         Check(LiveMapHttpServer.RelayKeyHeader == "X-Relay-Key", "the relay header name matches the panel's");
     }
 
+    // 0.13.28: a failed crossplay login on a dedicated server is retried after 5-20 s, at most 5 times since the last
+    // success; a banned account is not; then the game's own failure path runs.
+    private void TestPlayFabRetryPolicy()
+    {
+        Check(PlayFabLoginRetry.ShouldRetry("APIClientRequestRateLimitExceeded", 0), "a throttled login is retried");
+        Check(PlayFabLoginRetry.ShouldRetry(null, 0), "a failure with no error object is retried");
+        Check(PlayFabLoginRetry.ShouldRetry("ConnectionError", 4), "a network failure is retried, up to the 5th retry");
+        Check(!PlayFabLoginRetry.ShouldRetry("ConnectionError", 5), "after 5 retries the game's own failure path runs");
+        Check(!PlayFabLoginRetry.ShouldRetry("AccountBanned", 0), "a banned account is not retried");
+        float min = float.MaxValue, max = float.MinValue;
+        for (int i = 0; i < 400; i++) { float d = PlayFabLoginRetry.NextDelay(); min = Math.Min(min, d); max = Math.Max(max, d); }
+        Check(min >= 5f && max <= 20f && max - min > 5f, "retry waits are random between 5 and 20 s (" + min.ToString("0.0") + "-" + max.ToString("0.0") + ")");
+        object error = NewPlayFabError("APIClientRequestRateLimitExceeded", "The client has exceeded the maximum API request rate and is being throttled");
+        Check(PlayFabLoginRetry.ErrorCode(error) == "APIClientRequestRateLimitExceeded", "the error code is read from PlayFab's error object");
+        Check(PlayFabLoginRetry.ErrorMessage(error).StartsWith("The client has exceeded", StringComparison.Ordinal), "the error message is read for the log line");
+        Check(PlayFabLoginRetry.ErrorCode(null) == null && PlayFabLoginRetry.ErrorMessage(null) == "no error details", "no error object reads as no details");
+        Check(Harmony.GetPatchInfo(AccessTools.Method(typeof(PlayFabManager), "OnLoginFailure"))?.Prefixes.Count > 0, "the login failure handler is patched on the dedicated server");
+    }
+
     private void LiveResult(bool ok, string name)
     {
         lock (_liveResults) _liveResults.Add((ok, name));
@@ -1404,6 +1460,18 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             {
                 LiveResult(false, "the live map answered for the event-stream check");
                 return;
+            }
+
+            if (_playFabFailures > 0)
+            {
+                // the forced throttle: the server must stay up, retry N times, then log in for real
+                DateTime loginDeadline = DateTime.UtcNow.AddSeconds(150);
+                while (DateTime.UtcNow < loginDeadline && !(PlayFabManager.IsLoggedIn && PlayFabLoginRetry.TotalRetries >= Math.Min(_playFabFailures, PlayFabLoginRetry.MaxRetries)))
+                {
+                    Thread.Sleep(500);
+                }
+                LiveResult(_playFabFailures <= PlayFabLoginRetry.MaxRetries && PlayFabManager.IsLoggedIn && PlayFabLoginRetry.TotalRetries == _playFabFailures && PlayFabLoginRetry.RetriesSinceSuccess == 0,
+                    "after " + _playFabFailures + " throttled PlayFab logins the server retried " + PlayFabLoginRetry.TotalRetries + " times and logged in (logged in: " + PlayFabManager.IsLoggedIn + ")");
             }
 
             if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("VALHEIMONE_RELAY_KEY")))

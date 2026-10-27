@@ -87,6 +87,8 @@ public sealed class ServerHostModule : IFeatureModule
         // Compatibility rather than an optional override, so it goes in before any patch that
         // can fail on a future game build.
         CrossplayLobbyCompatibility.Apply(harmony);
+        // Also compatibility: a failed crossplay login is retried instead of quitting the server.
+        PlayFabLoginRetry.Apply(harmony, _log);
 
         var peerInfo = AccessTools.Method(typeof(ZNet), "RPC_PeerInfo")
             ?? throw new MissingMethodException(nameof(ZNet), "RPC_PeerInfo");

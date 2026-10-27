@@ -25,6 +25,11 @@ VALHEIMONE_RELAY_KEY=${VALHEIMONE_RELAY_KEY-$(python3 -c 'import secrets; print(
 # VALHEIMONE_RELAY_PROBE=1 also binds every address and checks an outside-address call is refused
 # without the key and served with it.
 relay_probe=${VALHEIMONE_RELAY_PROBE:-0}
+# VALHEIMONE_CROSSPLAY=1 starts the server with -crossplay (a real PlayFab login, needs the internet); with
+# VALHEIMONE_PLAYFAB_FAIL=N the first N logins fail with PlayFab's throttle error (0.13.28 retry checks).
+crossplay_arg=""
+[[ ${VALHEIMONE_CROSSPLAY:-0} == 1 ]] && crossplay_arg="-crossplay"
+export VALHEIMONE_PLAYFAB_FAIL=${VALHEIMONE_PLAYFAB_FAIL:-0}
 mkdir -p "$plugins" "$config" "$output" "$backup/worlds/worlds_local"
 pid=
 cleanup() {
@@ -96,7 +101,7 @@ CONSOLE_PROBE_URL=http://127.0.0.1:24583 CONSOLE_PROBE_RESULT="$console_result" 
     export LD_PRELOAD=libdoorstop_x64.so
     exec "$@"
 ' regression-doorstop "$server/valheim_server.x86_64" -name regression -port 24580 \
-    -world SmokeWorld -password regression1 -savedir "$backup/worlds" -nographics -batchmode -public 0 \
+    -world SmokeWorld -password regression1 -savedir "$backup/worlds" -nographics -batchmode -public 0 $crossplay_arg \
     > "$output/server.log" 2>&1 9>&- &
 pid=$!
 deadline=$((SECONDS + 240))

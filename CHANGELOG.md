@@ -4,6 +4,12 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.13.28] - 2026-10-27
+
+### Fixed
+
+- A crossplay dedicated server no longer shuts itself down when its PlayFab login fails once. The game's server code answers the first failed login, of any kind, by quitting (`ZPlayFabMatchmaking.OnServerLoginFinished` calls `Application.Quit()` on `LoginType.Failed`), and right after that `PlayFabManager.OnLoginFailure` reads the distribution platform a dedicated server does not have, so the game's own retry is never scheduled either (the `NullReferenceException` in the log). Logins fail this way when many servers start in the same minute and PlayFab throttles them ("The client has exceeded the maximum API request rate and is being throttled"), and after a short network cut. ValheimOne now retries the game's own login after a random 5 to 20 seconds, up to 5 times since the last successful login, with one log line per retry, for example: "PlayFab login failed (APIClientRequestRateLimitExceeded: ...); trying again in 12 s (retry 1 of 5) instead of stopping the server." A banned account is not retried. If the fifth retry fails too, the game's own failure path runs and the server stops as before, so a server whose login can never work is still restarted from outside. Nothing changes on Steam-only servers, in players' games, or for a login that works the first time.
+
 ## [0.13.27] - 2026-10-25
 
 ### Added
