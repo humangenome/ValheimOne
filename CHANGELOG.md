@@ -4,6 +4,12 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.13.29] - 2026-10-28
+
+### Changed
+
+- Verified against Valheim 1.0.21 (dedicated-server build 26266951); `SupportedGameVersion` is `1.0.21`, so the startup banner no longer warns on the current game. All 496 static references and 124 reflection targets resolve, the Harmony patch contract is unchanged at 32 modules and 80 patched methods, and the worldgen fingerprint is unchanged. Of the game methods 1.0.21 changed, three are ones ValheimOne patches or calls, and none needs a change: the cooking station's cooking update (it now also records who put each item in, which ValheimOne's cooking patch does not touch), its fuel read (now returns 0 for a station that is not loaded yet), and the console's command setup (one help text). Nothing else changes: a server on 0.13.29 and a player's game on 0.13.28, or the reverse, still connect, because ValheimOne compares only the 0.13 part of the version.
+
 ## [0.13.28] - 2026-10-27
 
 ### Fixed

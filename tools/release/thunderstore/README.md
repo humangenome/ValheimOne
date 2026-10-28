@@ -82,7 +82,7 @@ The server needs [BepInExPack_Valheim](https://thunderstore.io/c/valheim/p/denik
 
 ## Compatibility
 
-Tested on the Valheim 1.0.20 dedicated server with BepInExPack_Valheim 5.4.2351. After a Valheim patch, check the changelog before you update.
+Tested on the Valheim 1.0.21 dedicated server with BepInExPack_Valheim 5.4.2351. After a Valheim patch, check the changelog before you update.
 
 ## Remove it
 
