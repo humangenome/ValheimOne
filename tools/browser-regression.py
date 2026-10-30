@@ -119,7 +119,17 @@ with sync_playwright() as pw:
                 headers={'X-LiveMap-Token': 'browser-regression-shared'}, data={'command': 'banned'})
             assert denied.status == 401, 'Shared viewers must not execute admin commands'
             page.screenshot(path=str(out / 'admin-command-submission.png'))
-            results.append({'native_admin_command_submission': 'pass', 'native_shared_console_rejection': 'pass'})
+            # A command's output shows once: the server log's echo of it, which arrives seconds later, is dropped.
+            page.locator('#console-command').fill('vo stats')
+            page.locator('#console-command').press('Escape')
+            with page.expect_response(lambda r: '/api/console/exec' in r.url and r.request.method == 'POST'):
+                page.locator('#console-command').press('Enter')
+            page.wait_for_timeout(5000)
+            # Only what came after this command: the console also replays earlier commands from its history.
+            shown = page.locator('#console-log').inner_text().rsplit('> vo stats', 1)[-1].count('Server statistics:')
+            assert shown == 1, f'Command output must show once, shown {shown} times'
+            results.append({'native_admin_command_submission': 'pass', 'native_shared_console_rejection': 'pass',
+                'native_command_output_once': 'pass'})
             context.close()
 
             # Embedded under a host's own navigation (a hosting panel): the tab the host picks through

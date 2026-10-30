@@ -998,6 +998,8 @@
     var consoleHistoryPromise = null;
     var pendingConsoleLogPayloads = [];
     var consoleCursor = 0;
+    var COMMAND_ECHO_WINDOW_MS = 10000;
+    var recentCommandOutput = [];
     var consoleFollowLog = true;
     var consoleCommands = [];
     var consoleSuggestions = [];
@@ -3277,6 +3279,33 @@
         appendConsoleEntries(entries);
     }
 
+    // A command's output also reaches the server log, which this console shows as well. The copy
+    // that came back with the command stays; the log's echo of it, seconds later, is dropped.
+    function rememberCommandOutput(lines) {
+        var until = Date.now() + COMMAND_ECHO_WINDOW_MS;
+        lines.forEach(function (line) {
+            var text = line == null ? "" : String(line).trim();
+            if (text) {
+                recentCommandOutput.push({ text: text, until: until });
+            }
+        });
+    }
+
+    function isCommandOutputEcho(text) {
+        var now = Date.now();
+        recentCommandOutput = recentCommandOutput.filter(function (entry) {
+            return entry.until > now;
+        });
+        var trimmed = typeof text === "string" ? formatServerConsoleText(text).trim() : "";
+        for (var index = 0; index < recentCommandOutput.length; index++) {
+            if (recentCommandOutput[index].text === trimmed) {
+                recentCommandOutput.splice(index, 1);
+                return true;
+            }
+        }
+        return false;
+    }
+
     function handleConsoleLogPayload(payload, preserveNewerCursor) {
         if (!consoleHistoryLoaded) {
             pendingConsoleLogPayloads.push({
@@ -3297,7 +3326,8 @@
         var lines = payload && Array.isArray(payload.lines) ? payload.lines : [];
         appendConsoleEntries(lines.filter(function (line) {
             var sequence = line ? Number(line.seq) : NaN;
-            return !Number.isFinite(sequence) || sequence > minimumSequence;
+            return (!Number.isFinite(sequence) || sequence > minimumSequence) &&
+                !isCommandOutputEcho(line && line.text);
         }).map(function (line) {
             return {
                 kind: "server",
@@ -3833,6 +3863,7 @@
             }
 
             var output = Array.isArray(payload.output) ? payload.output : [];
+            rememberCommandOutput(output);
             appendConsoleEntries(output.map(function (line) {
                 return { kind: "output", text: line == null ? "" : String(line) };
             }));
