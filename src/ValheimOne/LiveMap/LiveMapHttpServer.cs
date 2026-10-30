@@ -74,6 +74,7 @@ internal sealed class LiveMapHttpServer
     private string ShareToken => NormalizeToken(_config.ShareToken);
     private string RelayKey => NormalizeToken(_config.RelayKey);
     internal const string RelayKeyHeader = "X-Relay-Key";
+    internal const float BindRetrySeconds = 30f;
     private readonly object _fogPngLock = new object();
     private readonly object _exploredPctLock = new object();
     private readonly object _webPinWriteRateLock = new object();
@@ -93,6 +94,8 @@ internal sealed class LiveMapHttpServer
     private double _exploredPctValue;
     private long _webPinWriteLastPruneTicks;
     private bool _accessTokenWarningLogged;
+    private bool _bindFailureLogged;
+    private float _nextBindRetry;
     private bool _consoleTokenWarningLogged;
     private readonly EventStreamSlots _eventStreams = new EventStreamSlots();
     private volatile bool _stopping;
@@ -203,22 +206,28 @@ internal sealed class LiveMapHttpServer
         {
             if (!string.IsNullOrEmpty(_bindIp))
             {
-                _log.Error($"[LiveMap] HTTP listener could not bind {preferredPrefix}: {failure}");
+                LogBindFailure(preferredPrefix, failure);
                 return;
             }
 
             string fallbackPrefix = $"http://127.0.0.1:{_port}/";
-            _log.Warning(
-                $"[LiveMap] HTTP listener could not bind {preferredPrefix} ({failure?.GetType().Name}); " +
-                $"falling back to {fallbackPrefix}.");
+            if (!_bindFailureLogged)
+            {
+                _log.Warning(
+                    $"[LiveMap] HTTP listener could not bind {preferredPrefix} ({failure?.GetType().Name}); " +
+                    $"falling back to {fallbackPrefix}.");
+            }
+
             if (!TryStartListener(fallbackPrefix, out listener, out failure))
             {
-                _log.Error($"[LiveMap] HTTP listener could not bind {fallbackPrefix}: {failure}");
+                LogBindFailure(fallbackPrefix, failure);
                 return;
             }
 
             preferredPrefix = fallbackPrefix;
         }
+
+        _bindFailureLogged = false;
 
         _listener = listener;
         _listenerThread = new Thread(Listen)
@@ -236,6 +245,44 @@ internal sealed class LiveMapHttpServer
     }
 
     public bool IsRunning => _listener?.IsListening == true;
+
+    // A port that was busy when the map started (a neighbour, or the old process still letting go)
+    // used to leave the map dead until the next server restart. Called every frame; tries the bind
+    // again every BindRetrySeconds until it holds, and logs only the first failure and the success.
+    public void RetryBindIfDue(float now)
+    {
+        if (_listener != null || _stopping)
+        {
+            return;
+        }
+
+        if (_nextBindRetry == 0f)
+        {
+            _nextBindRetry = now + BindRetrySeconds;
+            return;
+        }
+
+        if (now < _nextBindRetry)
+        {
+            return;
+        }
+
+        _nextBindRetry = now + BindRetrySeconds;
+        Start();
+    }
+
+    private void LogBindFailure(string prefix, Exception? failure)
+    {
+        if (_bindFailureLogged)
+        {
+            return;
+        }
+
+        _bindFailureLogged = true;
+        _log.Error(
+            $"[LiveMap] HTTP listener could not bind {prefix}: {failure}; " +
+            $"trying again every {BindRetrySeconds:0} seconds.");
+    }
 
     public void Stop()
     {

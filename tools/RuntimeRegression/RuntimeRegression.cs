@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
@@ -125,6 +126,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestFoodDegradation();
             TestRegionLabels();
             TestMapStartSettings();
+            TestMapBindRetry();
             TestValheimOneZeroData();
             TestDropsChestLoot();
             TestNetworkSendLimit();
@@ -927,6 +929,61 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             port.SetValue(behaviour, oldPort);
             bindIp.SetValue(behaviour, oldBindIp);
             textureSize.SetValue(behaviour, oldTexture);
+        }
+    }
+
+    // A port that is busy when the map starts no longer leaves the map dead until the next server restart: the bind
+    // is tried again every BindRetrySeconds. Uses a throwaway server object on its own port, so the fixture's map is
+    // untouched; the real listener and the real bind path run.
+    private void TestMapBindRetry()
+    {
+        Type behaviourType = typeof(ValheimOnePlugin).Assembly.GetType("ValheimOne.LiveMap.LiveMapBehaviour", true)!;
+        object? behaviour = AccessTools.Property(behaviourType, "Instance").GetValue(null, null);
+        Check(behaviour != null, "live map behaviour exists for the bind retry check");
+        var server = (LiveMapHttpServer)FormatterServices.GetUninitializedObject(typeof(LiveMapHttpServer));
+        void SetField(string name, object? value) =>
+            AccessTools.Field(typeof(LiveMapHttpServer), name).SetValue(server, value);
+        var holder = new TcpListener(IPAddress.Any, 0);
+        holder.Start();
+        int busyPort = ((IPEndPoint)holder.LocalEndpoint).Port;
+        SetField("_port", busyPort);
+        SetField("_bindIp", string.Empty);
+        SetField("_config", AccessTools.Field(behaviourType, "_config").GetValue(behaviour));
+        SetField("_log", AccessTools.Field(behaviourType, "_log").GetValue(behaviour));
+        try
+        {
+            server.Start();
+            Check(!server.IsRunning, "a busy port leaves the map listener down at start");
+            float retry = LiveMapHttpServer.BindRetrySeconds;
+            Check(retry >= 5f && retry <= 120f, "the bind retry interval is sensible");
+            server.RetryBindIfDue(100f);
+            Check(!server.IsRunning, "the first frame after a failed bind only arms the retry");
+            holder.Stop();
+            server.RetryBindIfDue(100f + retry - 1f);
+            Check(!server.IsRunning, "no bind is tried before the retry is due");
+            server.RetryBindIfDue(100f + retry + 1f);
+            Check(server.IsRunning, "the map listener binds once the port is free again");
+            using (var client = new TcpClient())
+            {
+                client.Connect(IPAddress.Loopback, busyPort);
+                Check(client.Connected, "the retried listener accepts connections on its port");
+            }
+
+            server.RetryBindIfDue(100f + (retry * 4f));
+            Check(server.IsRunning, "a running listener is left alone by the retry");
+        }
+        finally
+        {
+            try
+            {
+                holder.Stop();
+            }
+            catch (SocketException)
+            {
+                // Already stopped above.
+            }
+
+            server.Stop();
         }
     }
 

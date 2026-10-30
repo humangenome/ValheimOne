@@ -6,6 +6,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Fixed
 
+- The live map no longer stays down until the next server restart when its port is busy at the moment it starts (a neighbour on the same port, or the previous process still letting go of it). It tries the port again every 30 seconds until it gets it. The first failure and the eventual success are logged, not every attempt.
 - In a hosting panel that drives the map through `ValheimOneEmbed.setView`, the tab the panel picks now stays picked. The map kept its own remembered tab and put it back on every status it read, so a Codex chosen from the panel could flip back to the map.
 
 ## [0.13.29] - 2026-10-28
