@@ -121,6 +121,46 @@ with sync_playwright() as pw:
             page.screenshot(path=str(out / 'admin-command-submission.png'))
             results.append({'native_admin_command_submission': 'pass', 'native_shared_console_rejection': 'pass'})
             context.close()
+
+            # Embedded under a host's own navigation (a hosting panel): the tab the host picks through
+            # ValheimOneEmbed.setView stays picked through later statuses. The page around the real embed
+            # fragment and scripts is the only stand-in; polling, so statuses arrive on a steady beat.
+            context = browser.new_context(viewport={'width': 1280, 'height': 900},
+                extra_http_headers={'X-LiveMap-Token': admin_token})
+            context.add_init_script("window.EventSource = undefined;")
+            page = context.new_page()
+            errors = []
+            page.on('pageerror', lambda error: errors.append(str(error)))
+            fragment = page.request.get(base + '/api/embed').text()
+            host = ('<!doctype html><html><head><meta charset="utf-8">'
+                '<link rel="stylesheet" href="/assets/leaflet.css"><link rel="stylesheet" href="/assets/app.embed.css">'
+                '</head><body>' + fragment +
+                '<script>window.VALHEIMONE_EMBED={rootId:"valheimone-embed-root",apiBase:"/",externalNav:true};</script>'
+                '<script src="/assets/leaflet.js"></script><script src="/assets/icons.js"></script>'
+                '<script src="/assets/app.embed.js"></script></body></html>')
+            page.route(base + '/embed-host', lambda route: route.fulfill(status=200, content_type='text/html', body=host))
+            def wait_for_statuses(count):
+                for _ in range(count):
+                    with page.expect_response(lambda r: '/api/status' in r.url, timeout=30000):
+                        pass
+                    page.wait_for_timeout(200)
+            def codex_active():
+                return page.evaluate("document.getElementById('valheimone-embed-root').classList.contains('is-codex-active')")
+            page.goto(base + '/embed-host', wait_until='domcontentloaded')
+            page.wait_for_function('!!window.ValheimOneEmbed', timeout=60000)
+            wait_for_statuses(1)
+            assert not codex_active(), 'The embed boots on the map'
+            page.evaluate("window.ValheimOneEmbed.setView('codex')")
+            assert codex_active(), 'The host can pick the Codex'
+            wait_for_statuses(3)
+            assert codex_active(), 'The Codex the host picked survives later statuses'
+            page.evaluate("window.ValheimOneEmbed.setView('map')")
+            assert not codex_active(), 'The host can pick the map again'
+            wait_for_statuses(2)
+            assert not codex_active(), 'The map the host picked survives later statuses'
+            assert errors == [], errors
+            results.append({'native_embed_host_tab_holds': 'pass'})
+            context.close()
     finally:
         browser.close()
         (out / 'result.json').write_text(json.dumps(results, indent=2))

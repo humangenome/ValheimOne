@@ -4,6 +4,10 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+### Fixed
+
+- In a hosting panel that drives the map through `ValheimOneEmbed.setView`, the tab the panel picks now stays picked. The map kept its own remembered tab and put it back on every status it read, so a Codex chosen from the panel could flip back to the map.
+
 ## [0.13.29] - 2026-10-28
 
 ### Changed

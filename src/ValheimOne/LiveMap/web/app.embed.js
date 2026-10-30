@@ -17641,10 +17641,10 @@
                 if (destroyed) {
                     return;
                 }
-                setActiveTab(
-                    view === "codex" ? "codex" : (view === "console" ? "console" : "map"),
-                    false
-                );
+                // The host's choice is what every later status puts back
+                // (updateConsoleAvailability), so it has to be the requested tab.
+                requestedTab = view === "codex" ? "codex" : (view === "console" ? "console" : "map");
+                setActiveTab(requestedTab, false);
             }
         };
     }
