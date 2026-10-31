@@ -3,92 +3,69 @@
 </p>
 
 <p align="center">
-  <b>A live web map and browser admin console for Valheim dedicated servers.</b><br>
-  Share the map with your players, search every item and recipe, get Discord alerts and turn on optional gameplay rules for your world.<br>
-  The map and admin tools work with vanilla clients.
-</p>
-
-<p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-c9a959?style=for-the-badge"></a>
   <a href="https://github.com/BepInEx/BepInEx"><img alt="BepInEx 5.4.x" src="https://img.shields.io/badge/BepInEx-5.4.x-2f80ed?style=for-the-badge"></a>
   <a href="https://store.steampowered.com/app/892970/"><img alt="Valheim Dedicated Server" src="https://img.shields.io/badge/Valheim-Dedicated_Server-1b2838?style=for-the-badge&logo=steam&logoColor=white"></a>
   <a href="#features"><img alt="Map and console: vanilla clients" src="https://img.shields.io/badge/Map_and_Console-Vanilla_Clients-2ea043?style=for-the-badge"></a>
 </p>
 
-<p align="center">
-  <a href="#live-map"><b>Live Map</b></a> &nbsp;&bull;&nbsp;
-  <a href="#sharing"><b>Sharing</b></a> &nbsp;&bull;&nbsp;
-  <a href="#dungeons"><b>Dungeons</b></a> &nbsp;&bull;&nbsp;
-  <a href="#codex"><b>Codex</b></a> &nbsp;&bull;&nbsp;
-  <a href="#console"><b>Console</b></a> &nbsp;&bull;&nbsp;
-  <a href="#install"><b>Install</b></a>
-</p>
+# ValheimOne
+
+A Valheim dedicated server has no map, no browser console and no alerts of its own, and it stops at 10 players. ValheimOne adds them: a live web map you can share with your players, an admin console in your browser, an item and recipe search, Discord alerts, a higher player limit and optional gameplay settings. It is one BepInEx mod on the server. Your players can join with an unmodded game, on PC or console.
+
+_ValheimOne is a community project and is not affiliated with or endorsed by Iron Gate Studio._
+
+## Contents
+
+- [Features](#features)
+- [Install](#install)
+- [Settings](#settings)
+- [Commands](#commands)
+- [Verifying the binary](#verifying-the-binary)
+- [Getting help](#getting-help)
+- [Contributing](#contributing)
+- [License](#license)
+- [Credits](#credits)
 
 ---
 
-<a id="features"></a>
-
 ## Features
 
-<a id="live-map"></a>
+### 🗺️ Live map
 
-### 🗺️ Live World Map
-
-Your whole world in a browser, drawn from the server seed and updating in real time. Players, ships, carts, portals, tombstones, wards and beds move as they happen. Fog-of-war follows recorded player trails and exploration shared through cartography tables.
+The map draws the whole world from the server seed and updates in real time. Players, ships, carts, portals, tombstones, wards and beds all show on it. Fog of war follows where players have walked and what they shared through cartography tables.
 
 ![ValheimOne Live Map, admin view](docs/screenshots/live-map-20261016.png)
 
-Turn on the heatmap to see where everyone has been over the last day or week, open World Timelapse to scrub through explored fog, base growth and aggregate movement history, or view the Sagas leaderboard for playtime, deaths and distance travelled.
+Turn on the heatmap to see where everyone has been over the last day or week, open the timelapse to scrub through explored fog and base growth, or open the Sagas leaderboard for playtime, deaths and distance travelled.
 
-<a id="sharing"></a>
+### 🔗 Share the map with your players
 
-### 🔗 Share It With Your Players
-
-Three views, and you decide who gets which. **Admin** sees everything. **Shared** shows live players and the layers you allow, with no admin actions. **Public** is a read-only link with its own fog and layer settings. Fog can be a light tint or a solid cover that hides everything nobody has explored yet, including region names and markers, and Public viewers cannot switch the cover off. The settings are under [Fog and Shared map layers](#fog-and-shared-map-layers).
+There are three views. **Admin** sees everything. **Shared** shows live players and the layers you allow, with no admin actions. **Public** is a read-only link with its own fog and layer settings. Fog can be a light tint or a solid cover that hides everything nobody has explored yet, including region names and markers, and Public viewers cannot switch the cover off. The settings are under [Fog and Shared map layers](#fog-and-shared-map-layers).
 
 ![ValheimOne public map with explored fog](docs/screenshots/livemap-public-fog.png)
 
-<a id="dungeons"></a>
+### 🏛️ Dungeon maps
 
-### 🏛️ Look Inside Dungeons
-
-Click any dungeon entrance and get a top-down room schematic read straight from the game's own generated layout, with live players drawn inside it.
+Click any dungeon entrance for a top-down map of its rooms, read from the game's own generated layout, with live players drawn inside it.
 
 ![ValheimOne dungeon interior viewer](docs/screenshots/dungeon-interior.png)
 
-<a id="codex"></a>
+### 📖 Item and recipe search
 
-### 📖 Codex of Items
-
-Searchable, filterable items and recipes: weight, stack size, tiers, damage, armour, full recipes with station requirements, what drops it, and what it is used to make. Jump straight from an ingredient to everything that needs it.
+Search and filter every item and recipe: weight, stack size, tiers, damage, armour, full recipes with station requirements, what drops it and what it is used to make. Jump from an ingredient to everything that needs it.
 
 ![ValheimOne Codex of Items](docs/screenshots/valheimone-codex-20260909-r3.png)
 
-<a id="console"></a>
+### 💻 Server console in your browser
 
-### 💻 Admin Console In The Browser
-
-A live server log and a command box with history and autocomplete, running whitelisted commands through the game's own console. Kick, ban, save the world, or schedule a graceful shutdown that warns players on the way down.
+A live server log and a command box with history and autocomplete, running whitelisted commands through the game's own console. Kick, ban, save the world, or schedule a shutdown that warns players first.
 
 ![ValheimOne web admin console](docs/screenshots/valheimone-console-20260909-r3.png)
 
-### ⚙️ Optional Gameplay Modules
+<a id="less-lag"></a>
 
-Twenty-six opt-in modules covering carry weight, stamina, food, drops, gathering, build rules, portals, taming, raids, production speeds and more. Everything is off until you turn it on, and most values hot-reload without a restart.
-
-Modules marked **Synced** need ValheimOne on each participating PC; the server then sends those players its settings. Console players cannot install those client mods. The live map, browser console and alerts do not require a client plugin. See [docs/gameplay-modules.md](docs/gameplay-modules.md) for each module's scope and [Install on your PC](#install-on-your-pc) for the player steps.
-
-### 🔔 Discord Alerts
-
-Joins, leaves, deaths with the biome they died in, raids starting and ending, world saves and new days. Point it at a webhook and pick which events you care about.
-
-### 📡 Server Browser Support
-
-A standalone A2S query responder so server browsers, monitoring tools and hosting panels can see your server, including crossplay servers that do not answer A2S on their own. Richer JSON lives at `/api/status` and `/api/players`.
-
-See [docs/query.md](docs/query.md).
-
-### 📶 Less Lag When You Play Together
+### 📶 Less lag when you play together
 
 Valheim lets the server have at most 10 KB of world updates on the way to each player, and serves one player per frame. When several players play close together, each one also needs everything the others change, the 10 KB runs out, and updates arrive in bursts: players and creatures rubber-band until the group splits up. ValheimOne raises that limit to 32 KB on Steam and crossplay alike, and lets Steam send up to 1 MB/s per player instead of a fixed 150 KB/s. It runs on the server only, so players install nothing and vanilla and console players get it too.
 
@@ -101,13 +78,22 @@ Measured on a lab server with four test players, 150 seconds per run. Valheim se
 
 It is on by default. Set `Enabled = false` in `[Network]` to go back to Valheim's own limit. It turns itself off, with one line in the log, when Better Networking or another mod that changes the same limit is installed.
 
+### Also built in
+
+- **More than 10 players.** Set `MaxPlayers` in `[Server]`, up to 127. The real join limit moves with it, on Steam and crossplay, and players install nothing. On crossplay the new limit applies at the next start.
+- **Gameplay settings.** 26 optional modules for carry weight, stamina, food, drops, gathering, build rules, portals, taming, raids, production speeds and more. All are off until you turn them on, and most values apply without a restart. Modules marked Synced also need ValheimOne on each player's PC. [Every module and what it needs](docs/gameplay-modules.md).
+- **Discord alerts.** Joins, leaves, deaths with the biome they died in, raids starting and ending, world saves and new days. Point it at a webhook and pick the events you want.
+- **Shows up in server lists.** A query responder (A2S) lets server browsers, monitoring tools and hosting panels see the server, including crossplay servers that do not answer on their own. Richer JSON lives at `/api/status` and `/api/players` ([reference](docs/query.md)).
+
 ---
 
-<a id="install"></a>
-
-## Installation
+## Install
 
 The [Steam setup guide](https://steamcommunity.com/sharedfiles/filedetails/?id=3802119003) walks through installation, private map access, sharing and browser commands.
+
+### Rent a server
+
+[Valheim server hosting from Survival Servers](https://www.survivalservers.com/services/game_servers/valheim/?utm_source=github&utm_medium=readme&utm_campaign=valheim_one) comes with ValheimOne, with the map and console in the control panel.
 
 ### Install on your server
 
@@ -126,11 +112,9 @@ Valheim Dedicated Server/
     └── plugins/ValheimOne.dll
 ```
 
-> **Official Hosting:** ValheimOne is included with [Valheim server hosting from SurvivalServers](https://www.survivalservers.com/services/game_servers/valheim/?utm_source=github&utm_medium=readme&utm_campaign=valheim_one), with map and console controls in the control panel. You can also install the free mod on your own dedicated server using the steps above.
-
 <a id="install-on-your-pc"></a>
 
-### Install on your PC (players)
+### Install on players' PCs
 
 You can join a ValheimOne server with an unmodded game, on PC or console. The live map, the browser console, the alerts and the raid settings in World Events work with nothing installed on your side.
 
@@ -151,23 +135,30 @@ Valheim/
 ```
 
 - **Already running BepInEx:** use the plugin-only ZIP instead. BepInEx alone changes nothing; the mod is `BepInEx/plugins/ValheimOne.dll`.
-- **Mod manager profile:** if the manager's search does not list ValheimOne, use its Import local mod setting with the plugin-only ZIP and start the game from the manager. A profile and the game folder are separate installs.
+- **Mod manager profile:** install [ValheimOne from Thunderstore](https://thunderstore.io/c/valheim/p/HumanGenome/ValheimOne/) in r2modman or Thunderstore Mod Manager and start the game from the manager. If its search does not show it yet, use Import local mod with the plugin-only ZIP. A profile and the game folder are separate installs.
 - **Linux and Steam Deck:** set the Steam launch option `./start_game_bepinex.sh %command%`.
 - **Check it:** `BepInEx/LogOutput.log` shows `Sent VO_Hello to server` and `Server config applied` after you join. The server log shows `is modded: handshake ok` or `is vanilla: no VO_Hello received within 15s` for each player.
 - **Versions:** keep the server and every PC on the same minor version, 0.13.x with 0.13.x. After a Valheim patch, check the releases page before you play.
 - **Enforce Mod:** `EnforceMod = true` in `[Server]` kicks vanilla and console players. Leave it `false` on a mixed or crossplay server.
-- **Red error at launch:** 0.13.14 and older print `Failed to patch ... ZPlayFabMatchmaking::CreateLobby` on a player's PC. It is harmless, and 0.13.15 removes it.
 - **Remove it:** delete `BepInEx/plugins/ValheimOne.dll` and `BepInEx/config/valheimone.cfg`. To turn every mod off, rename `winhttp.dll`.
 
 Building from source is `./build.sh`; see [RELEASING.md](RELEASING.md) for packaging.
 
 ---
 
-## Configuration
+## Settings
 
-Everything lives in one file: `BepInEx/config/valheimone.cfg`. Every gameplay section is off by default, so a fresh install changes no gameplay until you opt in. The [send limit](#-less-lag-when-you-play-together) in `[Network]` is on by default.
+Everything lives in one file: `BepInEx/config/valheimone.cfg`. Start the server once to generate it, then turn on the sections you want. Saving the file applies most changes live, without a restart. Keep your file when you update.
 
-Start the server once to generate the file, then enable the sections you want:
+| Section | What it does | Out of the box |
+|---|---|---|
+| `[LiveMap]` | The map, console, sharing and fog | Off |
+| `[Network]` | The higher [send limit](#less-lag) | On |
+| `[Server]` | Player limit, Enforce Mod, settings sent to players | On, with Valheim's limit of 10 |
+| `[ActivityLog]` | The activity feed behind the map's Sagas panel, 30 days | On |
+| `[Discord]` | Discord alerts | Off |
+| `[Query]` | Server list query ([reference](docs/query.md)) | Off |
+| 26 gameplay sections | [Each module and what it needs](docs/gameplay-modules.md) | Off |
 
 ```ini
 [Player]
@@ -176,11 +167,6 @@ Enabled = true
 BaseMaximumWeight = 450
 MegingjordBuff = 200
 ```
-
-Saving the file applies most changes live, without a restart. Preserve your existing file when you update.
-
-- Full module list and what each one does: [docs/gameplay-modules.md](docs/gameplay-modules.md)
-- Query and status endpoints: [docs/query.md](docs/query.md)
 
 <a id="fog-and-shared-map-layers"></a>
 
@@ -200,33 +186,28 @@ Fog changes what the map draws. It does not restrict access to the underlying te
 
 ---
 
-## Verifying the binary
+## Commands
 
-A byte-for-byte reproduction requires a Git clone checked out at the exact release tag, the .NET SDK pinned in `global.json`, and a clean working tree. The compile is deterministic and embeds no commit SHA or build-host paths, so identical sources and toolchain produce an identical DLL.
+Type these in the browser console. `vo help` lists them all and `vo help <command>` explains one.
 
-```bash
-git clone https://github.com/HumanGenome/ValheimOne.git
-cd ValheimOne
-git checkout --detach v<version>
-curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --version 10.0.302 --install-dir "$HOME/.dotnet"
-export PATH="$HOME/.dotnet:$PATH" DOTNET_ROOT="$HOME/.dotnet"
-tools/verify-reproducible.sh --release v<version>
-```
-
-The verifier clean-builds the DLL and checks it against both the checked-in release provenance and the DLL inside the GitHub release asset.
-
-```text
-building HEAD commit: <40-hex commit>
-verified: clean build ValheimOne.dll <sha256>
-verified: published v<version> plugin zip ValheimOne.dll <sha256>
-REPRODUCIBLE <version>
-```
-
-The Thunderstore package is the same source built with `-p:ValheimOneHostingCredit=false`, which leaves the link in the map sidebar's footer out. At the release tag, `tools/package-thunderstore.sh` rebuilds that DLL and archive and checks both against `tools/release/thunderstore-provenance.tsv`.
+| Command | What it does |
+|---|---|
+| `vo players` | Connected players, session times and IDs |
+| `vo save` | Save the world and connected player profiles |
+| `vo shutdown 60 Restarting` | Shut down after a save and a warning, `vo shutdown cancel` to stop it |
+| `vo kick <player>`, `vo ban <player>`, `vo unban <id>` | Remove or ban a player by name or ID |
+| `vo item <name>` | Recipes, sources and drops for an item |
+| `vo doctor` | Plugin, module, settings and map health |
 
 ---
 
-## Getting Help
+## Verifying the binary
+
+Every release can be rebuilt byte for byte from its tag. The steps are in [docs/verifying.md](docs/verifying.md).
+
+---
+
+## Getting help
 
 Bugs and feature requests go to [GitHub Issues](https://github.com/HumanGenome/ValheimOne/issues). If you rent your server, hosting and control-panel questions belong with your provider.
 
@@ -236,8 +217,6 @@ Bugs and feature requests go to [GitHub Issues](https://github.com/HumanGenome/V
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-If ValheimOne helps your group, a GitHub star is appreciated.
-
 ---
 
 ## License
@@ -246,4 +225,6 @@ MIT. See [LICENSE](LICENSE).
 
 ---
 
-_ValheimOne is a community project and is not affiliated with or endorsed by Iron Gate Studio._
+## Credits
+
+[BepInEx](https://github.com/BepInEx/BepInEx) and [Harmony](https://github.com/pardeike/Harmony) load and patch the mod. The map draws with [Leaflet](https://leafletjs.com). The higher send limit takes its idea from [Better Networking](https://github.com/CW-Jesse/valheim-betternetworking) by CW_Jesse (MIT); ValheimOne's code is its own. Fonts: Metamorphous and Averia Serif Libre (SIL Open Font License).
