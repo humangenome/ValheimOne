@@ -31,6 +31,8 @@ Each module has a mode, explained at the bottom of this page. **Server-authorita
 - `WorldEvents` (`[Events]`): controls raid chance and interval, disables raids, and overrides guardian-power duration and cooldown. **Mode:** server-authoritative for the raid settings, which work for every player; synced for the guardian-power duration and cooldown, which each player's own game applies, so they only change for players with ValheimOne on their PC.
 - `Trader` (`[Trader]`): multiplies trader buy prices. **Mode:** synced.
 
+`[Network]`, the higher send limit, is not a gameplay module: it is on by default, runs on the server only and needs nothing on a player's PC. See [Less lag when you play together](../README.md#less-lag).
+
 **Client-only:** n/a; no current gameplay module uses this mode.
 
 For **Shared Exploration on Valheim 1.0**, update the server and all participating PCs to **0.13.6 or newer**. Enable both `MapSharing.Enabled` and `MapSharing.SharedExploration`; the server combines and saves the players' explored minimap areas.

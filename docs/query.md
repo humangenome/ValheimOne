@@ -35,6 +35,7 @@ curl http://<server-ip>:8790/api/status
 | `uptimeSeconds` | Seconds since the dedicated server process started. Available at every authorized view tier, including public status responses when `StatusPublic` permits them. |
 | `timeOfDay` | 0..1 fraction of the current day. |
 | `players` | Players visible at the caller's view level (public callers only see players sharing their position unless names/positions are public). |
+| `pluginVersion` | The ValheimOne version the server is running. |
 | `view` | `admin`, `shared`, or `public`: which view level answered the request. |
 | `console` | `true` only for admin-token requests when the web console is enabled. |
 | `map.state` / `map.progress` | World-render lifecycle for the map front-end. |
@@ -44,6 +45,7 @@ curl http://<server-ip>:8790/api/status
 
 - `[LiveMap] StatusPublic = true` (default): `/api/status` answers **without a token** even when the map itself is token-locked (`AccessToken` set, `PublicView = false`). Tokenless callers get the public view. This is intended for hosting-panel status polls. Set it to `false` to require map access for status too.
 - `/api/catalog` is always public because it contains static game data only. All remaining endpoints follow the normal map rules: `AccessToken` grants the admin view; `PublicView` controls whether tokenless visitors get the read-only public map.
+- `[LiveMap] RelayKey`, when set, comes before every rule above: a request that is not from the server machine itself and does not carry the same value in an `X-Relay-Key` header gets `403 {"error":"forbidden"}`, on every route. It is for hosts that serve the map through their own web server.
 
 ## GET /api/catalog
 
@@ -107,7 +109,7 @@ With a non-empty `AccessToken`, the same port serves admin actions; console-spec
 
 | Endpoint | Method | Purpose |
 |---|---|---|
-| `/api/events` | GET (SSE) | Server-Sent-Events stream. Map-view auth rules apply. Named events include `players`, change-detected `status`, new `chat` messages for admin/shared views, and incremental `log` batches for console-authorized admin tokens only. Sends `retry: 5000`; capped at 8 concurrent streams (`409` beyond). |
+| `/api/events` | GET (SSE) | Server-Sent-Events stream. Map-view auth rules apply. Named events include `players`, change-detected `status`, new `chat` messages for admin/shared views, and incremental `log` batches for console-authorized admin tokens only. Sends `retry: 5000`. Open streams are capped per view: 6 Admin, 3 Shared, 2 Public. A view over its cap gets `409` and the map keeps polling. |
 | `/api/chat` | GET | Admin/shared only; public returns `404`. Returns the current 32-message ring buffer oldest-first as `{"chats":[{"sequence":1,"x":0,"z":0,"playerName":"...","text":"...","shout":false,"unixMs":1720000000000}]}`. Player chat follows `MirrorChat`; server-originated shouts remain available when mirroring is off. |
 | `/api/heatmap` | GET `?window=24h|7d` | Admin/shared only; public returns `404`. Returns the aggregate activity grid used by the default-off Activity Heatmap layer. |
 | `/api/timelapse` | GET | Admin/shared only by default; public returns `404` unless `PublicTimelapse = true`. Returns the frame index, disk usage, capture interval, and active retention bounds. |
