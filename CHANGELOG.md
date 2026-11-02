@@ -4,6 +4,10 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+### Fixed
+
+- One synced setting a player's game cannot read no longer throws away the whole server config on that player's PC. Before, a single value that player's ValheimOne build could not parse (for example a setting a newer build accepts with decimals, on an older build that takes whole numbers) rejected every synced setting at once ("Server config overlay rejected; local settings remain active"), so the player ran on their own file for all of them. Now that one value is skipped, the player's own value for it stays, every other synced setting applies, and the player's log names the skipped setting and value once while the game runs, in the form "Skipped one synced value this build (v<version>) cannot read; the rest of the server config applies: [<Section>] / <Key>: '<value>' is not a valid <kind> on this build". The summary line counts the skips. A line that is not in the setting shape is skipped the same way and logged only by its line number. Players on an older 0.13 build than the server are common, and they still join as before.
+
 ## [0.13.29] - 2026-10-28
 
 ### Changed

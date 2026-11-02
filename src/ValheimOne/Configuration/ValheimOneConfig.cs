@@ -43,21 +43,43 @@ public sealed class ValheimOneConfig
         }
     }
 
-    public int ApplyOverlay(string serializedConfig)
+    public int ApplyOverlay(string serializedConfig) => ApplyOverlay(serializedConfig, null);
+
+    // A line this build cannot read (not in the "[Section] / Key=value" shape, or a value that is not valid for the
+    // key's kind here) is skipped and described in skipped; every other line still applies. Players on an older
+    // ValheimOne build than the server are normal (471 of 533 handshakes read on 2026-10-28), and one unreadable value
+    // used to throw away the whole server config on that player's PC. Sections and keys this build does not know were
+    // already skipped without a word, and still are.
+    public int ApplyOverlay(string serializedConfig, ICollection<string>? skipped)
     {
         var replacement = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
         int appliedValues = 0;
+        int lineNumber = 0;
 
         using var reader = new StringReader(serializedConfig);
         string? line;
         while ((line = reader.ReadLine()) != null)
         {
+            lineNumber++;
             if (line.Length == 0)
             {
                 continue;
             }
 
-            ParseLine(line, out string section, out string key, out string serializedValue);
+            string section;
+            string key;
+            string serializedValue;
+            try
+            {
+                ParseLine(line, out section, out key, out serializedValue);
+            }
+            catch (FormatException exception)
+            {
+                // the line itself is not logged: it could not be checked for a sensitive key
+                skipped?.Add($"line {lineNumber.ToString(CultureInfo.InvariantCulture)}: {exception.Message}");
+                continue;
+            }
+
             if (!Features.TryGetFeature(section, out FeatureDefinition? feature) || feature == null)
             {
                 continue;
@@ -79,7 +101,18 @@ public sealed class ValheimOneConfig
                 continue;
             }
 
-            replacement[OverlayKey(section, key)] = ParseValue(entry.Definition.Kind, serializedValue);
+            object value;
+            try
+            {
+                value = ParseValue(entry.Definition.Kind, serializedValue);
+            }
+            catch (FormatException)
+            {
+                skipped?.Add($"[{section}] / {key}: '{Shorten(serializedValue)}' is not a valid {entry.Definition.Kind} on this build");
+                continue;
+            }
+
+            replacement[OverlayKey(section, key)] = value;
             appliedValues++;
         }
 
@@ -180,4 +213,6 @@ public sealed class ValheimOneConfig
     }
 
     private static string OverlayKey(string section, string key) => section + "\0" + key;
+
+    private static string Shorten(string value) => value.Length <= 64 ? value : value.Substring(0, 64) + "...";
 }

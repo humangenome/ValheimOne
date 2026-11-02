@@ -132,6 +132,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestEventStreamSlots();
             TestRelayKey();
             TestPlayFabRetryPolicy();
+            TestOverlaySkipsUnreadableValue();
             _liveDeadline = Time.realtimeSinceStartup + 200f;
             _liveCheck = new Thread(RunLiveEventStreamChecks) { IsBackground = true, Name = "vo-regression-events" };
             _liveCheck.Start();
@@ -1418,6 +1419,70 @@ public sealed class RuntimeRegression : BaseUnityPlugin
 
     // 0.13.28: a failed crossplay login on a dedicated server is retried after 5-20 s, at most 5 times since the last
     // success; a banned account is not; then the game's own failure path runs.
+    // One synced value a player's build cannot read skips only itself (after 0.13.29). Players on an older build than the
+    // server are normal (471 of 533 handshakes read on 2026-10-28); one unreadable value used to reject the whole
+    // server config on that player's PC ("Server config overlay rejected"), so every other synced setting fell back
+    // to the player's own file. Server and player are two config files here, each with the keys its own build has.
+    private void TestOverlaySkipsUnreadableValue()
+    {
+        string serverPath = Path.Combine(_root, "overlay-skip-server.cfg");
+        File.WriteAllText(serverPath, "[OverlayProbe]\n\nEnabled = true\nRate = 12.5\nCount = 7\nLabel = north\nAddedLater = 3\n");
+        var server = new ValheimOneConfig(serverPath);
+        FeatureDefinition serverFeature = server.Features.Register("OverlayProbe", "OverlayProbe", FeatureClassification.Synced);
+        serverFeature.Float("Rate", 1f, "a newer build widened this key from whole numbers to decimals");
+        serverFeature.Int("Count", 1, "same kind on both builds");
+        serverFeature.String("Label", "none", "same kind on both builds");
+        serverFeature.Int("AddedLater", 0, "a key the older build does not have");
+        string serialized = ConfigSyncSerializer.Serialize(server.Features);
+        Check(serialized.Contains("[OverlayProbe] / Rate=12.5\n") && serialized.Contains("[OverlayProbe] / AddedLater=3\n"),
+            "overlay skip: the newer server serializes a decimal Rate and a key the older build lacks");
+
+        var player = new ValheimOneConfig(Path.Combine(_root, "overlay-skip-player.cfg"));
+        FeatureDefinition playerFeature = player.Features.Register("OverlayProbe", "OverlayProbe", FeatureClassification.Synced);
+        ConfigEntryInt rate = playerFeature.Int("Rate", 2, "the older build's whole-number Rate");
+        ConfigEntryInt count = playerFeature.Int("Count", 1, "same kind on both builds");
+        ConfigEntryString label = playerFeature.String("Label", "none", "same kind on both builds");
+        playerFeature.TryGetKey("Enabled", out IConfigEntry? enabledEntry);
+        var enabled = (ConfigEntryBool)enabledEntry!;
+
+        var skipped = new List<string>();
+        int applied = -1;
+        Exception? thrown = null;
+        try { applied = player.ApplyOverlay(serialized + "not a config line\n", skipped); }
+        catch (Exception exception) { thrown = exception; }
+        Check(thrown == null, "overlay skip: an unreadable value and a malformed line do not reject the server config" +
+            (thrown == null ? "" : " (" + thrown.Message + ")"));
+        Check(applied == 3 && enabled.Value && count.Value == 7 && label.Value == "north",
+            "overlay skip: the readable values apply (Enabled, Count 7, Label north; applied " + applied + ")");
+        Check(rate.Value == 2, "overlay skip: the unreadable Rate keeps the player's own value (" + rate.Value + ")");
+        Check(skipped.Count == 2 &&
+            skipped[0] == "[OverlayProbe] / Rate: '12.5' is not a valid Integer on this build" &&
+            skipped[1].StartsWith("line " + (serialized.Count(c => c == '\n') + 1) + ": ", StringComparison.Ordinal) &&
+            !skipped[1].Contains("not a config line"),
+            "overlay skip: the skips name the key and value, and a malformed line only by its number: " + string.Join(" | ", skipped.ToArray()));
+        Check(!skipped.Any(item => item.Contains("AddedLater")),
+            "overlay skip: a key the older build does not have is still passed over without a word");
+        Check(player.ApplyOverlay(serialized) == 3, "overlay skip: the one-argument ApplyOverlay skips the same way and does not throw");
+
+        var log = new OverlaySkipLog();
+        Check(log.TakeNew(skipped).Count == 2, "overlay skip log: first push logs both skips");
+        Check(log.TakeNew(skipped).Count == 0, "overlay skip log: the same skips at the next push are not logged again");
+        List<string> later = log.TakeNew(new[] { skipped[0], "[OverlayProbe] / Count: 'x' is not a valid Integer on this build" });
+        Check(later.Count == 1 && later[0].Contains("Count"), "overlay skip log: a new skip is logged once");
+        var flood = new OverlaySkipLog();
+        Check(flood.TakeNew(Enumerable.Range(0, 300).Select(i => "skip " + i)).Count == OverlaySkipLog.MaxRemembered &&
+            flood.TakeNew(new[] { "skip 299", "one more" }).Count == 0,
+            "overlay skip log: bounded at " + OverlaySkipLog.MaxRemembered + " lines, nothing logged past it");
+
+        string[] version = VersionInfo.PluginVersion.Split('.');
+        string olderPatch = version[0] + "." + version[1] + ".0";
+        string olderMinor = version[0] + "." + (int.Parse(version[1]) - 1) + ".99";
+        Check(VersionInfo.IsCompatible(olderPatch, VersionInfo.NetworkConfigSchema) &&
+            !VersionInfo.IsCompatible(olderMinor, VersionInfo.NetworkConfigSchema) &&
+            !VersionInfo.IsCompatible(olderPatch, VersionInfo.NetworkConfigSchema + 1),
+            "overlay skip: a player on an older patch (v" + olderPatch + ") still joins; another minor or schema does not");
+    }
+
     private void TestPlayFabRetryPolicy()
     {
         Check(PlayFabLoginRetry.ShouldRetry("APIClientRequestRateLimitExceeded", 0), "a throttled login is retried");
