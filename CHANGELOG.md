@@ -4,6 +4,10 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+### Fixed
+
+- A server running another plugin that also changes the game's 10-player limit no longer loses ValheimOne's handshake and the rest of its startup (issue #10). ValheimOne's `[Server] MaxPlayers` rewrite of the join check expected the game's own `10` there; when another plugin had already changed it, the rewrite threw ("[Server] cap transpiler expected exactly one 10 in ZNet.RPC_PeerInfo; found 0"), the rest of `[Server]` was never patched, every later patch of that method failed the same way (including ValheimOne's own handshake and the other plugin's later patches), and ValheimOne's startup stopped there. Now a capacity rewrite that cannot find its one constant leaves that check as it is, logs one warning saying `MaxPlayers` is not applied to it and why, and everything else carries on: the other plugin's limit stands, the other `[Server]` settings and the handshake are installed, and later patches of the method work. On a game build without another such plugin nothing changes. The contract test still fails if a game update moves one of these constants.
+
 ## [0.13.29] - 2026-10-28
 
 ### Changed

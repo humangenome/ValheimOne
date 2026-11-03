@@ -19,6 +19,15 @@ public sealed class ServerHostModule : IFeatureModule
 
     private static ServerHostModule? _active;
 
+    // Each capacity rewrite below replaces one vanilla constant. When one cannot find exactly one (another plugin already
+    // changed the same check, or a game update moved it), that rewrite leaves the method as it is and says so once; it
+    // never throws. A throwing transpiler fails the whole patch of that method, and Harmony runs it again whenever any
+    // plugin patches the method later, so those later patches failed too, and the rest of [Server] was never patched
+    // (issue #10: three "Failed to patch ZNet::RPC_PeerInfo" errors on a server with other plugins). The contract run
+    // keeps the strict behaviour, so a game update that moves a constant still fails it.
+    internal static bool StrictRewrites = ContractDiagnostics.IsEnabled;
+    private static readonly HashSet<string> RewriteMissesLogged = new HashSet<string>(StringComparer.Ordinal);
+
     private readonly ServerConfig _serverConfig;
     private readonly ModLogger _log;
 
@@ -215,7 +224,7 @@ public sealed class ServerHostModule : IFeatureModule
         string? storeMemberName = null)
     {
         var codes = new List<CodeInstruction>(instructions);
-        int replaced = 0;
+        var matches = new List<int>();
         for (int index = 0; index < codes.Count; index++)
         {
             CodeInstruction code = codes[index];
@@ -230,23 +239,52 @@ public sealed class ServerHostModule : IFeatureModule
                 matched = StoresMember(codes[index + 1], storeMemberName);
             }
 
-            if (!matched)
+            if (matched)
             {
-                continue;
+                matches.Add(index);
+            }
+        }
+
+        // nothing is changed until the one match is certain: the instructions are shared with the other transpilers
+        if (matches.Count != 1)
+        {
+            if (StrictRewrites)
+            {
+                throw new InvalidOperationException(
+                    $"[Server] cap transpiler expected exactly one {expectedValue} in {context}; found {matches.Count}.");
             }
 
-            code.opcode = OpCodes.Call;
-            code.operand = replacement;
-            replaced++;
+            NoteRewriteMiss(context, expectedValue, matches.Count);
+            return codes;
         }
 
-        if (replaced != 1)
-        {
-            throw new InvalidOperationException(
-                $"[Server] cap transpiler expected exactly one {expectedValue} in {context}; found {replaced}.");
-        }
-
+        CodeInstruction target = codes[matches[0]];
+        target.opcode = OpCodes.Call;
+        target.operand = replacement;
         return codes;
+    }
+
+    private static void NoteRewriteMiss(string context, int expectedValue, int found)
+    {
+        lock (RewriteMissesLogged)
+        {
+            if (!RewriteMissesLogged.Add(context))
+            {
+                return;
+            }
+        }
+
+        string setting = context switch
+        {
+            "ZNet.RPC_PeerInfo" => "MaxPlayers is not applied to joins",
+            "ZPlayFabMatchmaking.CreateLobby" => "MaxPlayers is not applied to the crossplay lobby size",
+            "ZPlayFabMatchmaking.CreateAndJoinNetwork" => "MaxPlayers is not applied to the crossplay network size",
+            _ => "MaxPlayers is not applied to the platform session size",
+        };
+        _active?._log.Warning(
+            $"[Server] {setting}: {context} does not have the one {expectedValue} ValheimOne replaces (found {found}), " +
+            "so it is left as it is. Another plugin may already change this check, or a game update moved it. " +
+            "The rest of [Server] stays active.");
     }
 
     private static bool LoadsConstant(CodeInstruction code, int value)
