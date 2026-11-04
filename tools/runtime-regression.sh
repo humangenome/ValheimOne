@@ -18,6 +18,9 @@ export VALHEIMONE_BROWSER_HOLD_SECONDS="$browser_hold"
 console_result="$backup/console-result.txt"
 export CONSOLE_PROBE_TOKEN
 CONSOLE_PROBE_TOKEN=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
+# A share token too, so the live checks can ask for the shared view (the seed stays admin only).
+export VALHEIMONE_SHARE_TOKEN
+VALHEIMONE_SHARE_TOKEN=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
 # 0.13.27: every run sets a relay key, so every live check also proves the machine's own
 # (loopback) calls are served without it. VALHEIMONE_RELAY_KEY= (empty) runs without one.
 export VALHEIMONE_RELAY_KEY
@@ -80,6 +83,7 @@ cfg['CookingStation'].update({'Enabled':'true','AutoFuel':'true','AutoFeedRaw':'
 cfg['ProductionSpeeds'].update({'Enabled':'true','SmelterProductionSeconds':'5','SmelterMaxQueue':'12','SmelterMaxFuel':'12'})
 cfg['LiveMap'].update({'Enabled':'true', 'ConsoleEnabled':'true', 'BindIp':'127.0.0.1',
     'Port':'24583', 'TextureSize':'512', 'AccessToken':os.environ['CONSOLE_PROBE_TOKEN'],
+    'ShareToken':os.environ['VALHEIMONE_SHARE_TOKEN'],
     'PublicView':'false', 'StatusPublic':'false', 'RelayKey':os.environ['VALHEIMONE_RELAY_KEY']})
 if int(os.environ['VALHEIMONE_BROWSER_HOLD_SECONDS']) > 0:
     cfg['LiveMap'].update({'PublicView':'true', 'FogMode':'trails', 'FogHideUnexplored':'true',

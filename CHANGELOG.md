@@ -4,6 +4,10 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+### Added
+
+- `/api/status` now gives the admin view the world seed: `seedName`, the text the world was created with, and `seed`, the game's number for it, so a hosting panel or a tool can link the world to a seed map. The shared link, the public map and the token-free status (`StatusPublic`) never get it, because a seed shows where every boss altar, dungeon and ore field is.
+
 ## [0.13.29] - 2026-10-28
 
 ### Changed

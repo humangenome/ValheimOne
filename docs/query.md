@@ -31,6 +31,7 @@ curl http://<server-ip>:8790/api/status
 |---|---|
 | `serverName` / `worldName` | World identity. |
 | `joinCode` | Current PlayFab crossplay join code. Admin view only; absent from shared/public responses and when no code is available. Treat this value as a server-access credential. |
+| `seed` / `seedName` | The world seed: `seedName` is the text the world was created with (what a seed-map site asks for) and `seed` is the game's numeric hash of it (the same values the map writes to its cache `meta.json`). Admin view only, like `joinCode`: absent from shared and public responses, including the token-free `StatusPublic` answer, because a seed shows where every boss altar, dungeon and ore field is. |
 | `day` | Current in-game day number. |
 | `uptimeSeconds` | Seconds since the dedicated server process started. Available at every authorized view tier, including public status responses when `StatusPublic` permits them. |
 | `timeOfDay` | 0..1 fraction of the current day. |
