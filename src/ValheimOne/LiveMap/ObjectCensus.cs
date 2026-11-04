@@ -27,6 +27,9 @@ internal sealed class ObjectCensus
 
     internal static double BudgetMilliseconds = ZdoWorldWalker.DefaultBudgetMilliseconds;
 
+    // Off only for measuring several censuses in a row (a lab build's switch file).
+    internal static bool CacheResults = true;
+
     // Objects that carry a player's name next to that player's id: beds and tombstones as owner
     // (owner + ownerName), wards as builder (creator + creatorName).
     private static readonly HashSet<int> OwnerNamePrefabs = new HashSet<int>
@@ -73,7 +76,7 @@ internal sealed class ObjectCensus
             return ObjectCensusRequestResult.Running;
         }
 
-        if (current.State == "ready" && nowUnixMs - current.FinishedUnixMs < CacheMilliseconds)
+        if (CacheResults && current.State == "ready" && nowUnixMs - current.FinishedUnixMs < CacheMilliseconds)
         {
             return ObjectCensusRequestResult.Cached;
         }

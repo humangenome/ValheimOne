@@ -18,6 +18,7 @@ namespace ValheimOne.LiveMap;
 //   ScanLog = on            # one log line per entity scan
 //   WalkBudgetMs = 2        # entity walk time per frame, 0.05..50
 //   CensusBudgetMs = 2      # object census time per frame, 0.05..50
+//   CensusCache = off       # every POST starts a new census instead of returning one under 5 minutes old
 internal static class LabSwitches
 {
     private const float PollSeconds = 5f;
@@ -80,6 +81,7 @@ internal static class LabSwitches
         bool scanLog = false;
         double walkBudget = ZdoWorldWalker.DefaultBudgetMilliseconds;
         double censusBudget = ZdoWorldWalker.DefaultBudgetMilliseconds;
+        bool censusCache = true;
         foreach (string raw in lines)
         {
             string line = raw;
@@ -115,6 +117,9 @@ internal static class LabSwitches
                 case "censusbudgetms":
                     censusBudget = ReadBudget(value, censusBudget, log);
                     break;
+                case "censuscache":
+                    censusCache = !(value == "off" || value == "false");
+                    break;
                 default:
                     log.Warning("[Lab] unknown switch '" + key + "' ignored");
                     break;
@@ -126,12 +131,14 @@ internal static class LabSwitches
         EntityTracker.LogScansSwitch = scanLog;
         EntityTracker.WalkBudgetMilliseconds = walkBudget;
         ObjectCensus.BudgetMilliseconds = censusBudget;
+        ObjectCensus.CacheResults = censusCache;
         log.Info(
             "[Lab] switches: EntityLayer=" + (entityLayer == null ? "config" : entityLayer.Value ? "on" : "off") +
             " EntityScan=" + (legacy ? "legacy" : "walk") +
             " ScanLog=" + (scanLog ? "on" : "off") +
             " WalkBudgetMs=" + walkBudget.ToString("0.##", CultureInfo.InvariantCulture) +
             " CensusBudgetMs=" + censusBudget.ToString("0.##", CultureInfo.InvariantCulture) +
+            " CensusCache=" + (censusCache ? "on" : "off") +
             (lines.Length == 0 ? " (no switch file: defaults)" : string.Empty));
     }
 
