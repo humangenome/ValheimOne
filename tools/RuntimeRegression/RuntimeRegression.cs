@@ -1643,7 +1643,8 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         HttpCall(root, shareToken, "GET", "/api/stats/objects", out int sharedCode);
         LiveResult(shareToken.Length > 0 && sharedCode == 404, "the shared link gets no census (HTTP " + sharedCode + ")");
         HttpCall(root, "", "POST", "/api/stats/objects", out int anonymousCode);
-        LiveResult(anonymousCode == 401, "no token, no census (HTTP " + anonymousCode + ")");
+        // 401 while the map is token-locked; with the public map on, a token-free call is the public view: 404
+        LiveResult(anonymousCode == 401 || anonymousCode == 404, "no token, no census (HTTP " + anonymousCode + ")");
     }
 
     private static object? RunningMapServer()
