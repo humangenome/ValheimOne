@@ -132,7 +132,10 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestEventStreamSlots();
             TestRelayKey();
             TestPlayFabRetryPolicy();
-            _liveDeadline = Time.realtimeSinceStartup + 200f;
+            TestWorldWalk();
+            TestEntityWalk();
+            TestObjectCensus();
+            _liveDeadline = Time.realtimeSinceStartup + 300f;
             _liveCheck = new Thread(RunLiveEventStreamChecks) { IsBackground = true, Name = "vo-regression-events" };
             _liveCheck.Start();
         }
@@ -1416,6 +1419,263 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         Check(LiveMapHttpServer.RelayKeyHeader == "X-Relay-Key", "the relay header name matches the panel's");
     }
 
+    // The entity layer and the object census read the world in one pass, a slice a frame, each slice
+    // stopped by the clock (ZdoWorldWalker), instead of the game's search once per prefab.
+    private void TestWorldWalk()
+    {
+        ZDOMan manager = ZDOMan.instance;
+        long Walk(double budget, out ZdoWorldWalker walker)
+        {
+            long seen = 0;
+            walker = new ZdoWorldWalker();
+            walker.Begin();
+            int guard = 0;
+            while (!walker.Step(manager, _ => seen++, budget) && ++guard < 2000000) { }
+            return seen;
+        }
+
+        Walk(50d, out _);
+        long all = Walk(50d, out ZdoWorldWalker whole);
+        int total = manager.NrOfObjects();
+        Check(all == total, "one walk reads every object in the world (" + all + " of " + total + ")");
+        Check(whole.SectorCount > 0 && whole.NonEmptySectors > 0 && whole.NonEmptySectors <= whole.SectorCount,
+            "the walk counts the sectors in use (" + whole.NonEmptySectors + " of " + whole.SectorCount + ")");
+        long sliced = Walk(0.05d, out ZdoWorldWalker small);
+        Check(sliced == all, "a walk cut into 0.05 ms slices reads the same objects (" + sliced + ")");
+        Check(small.Slices > 1, "a 0.05 ms budget spreads the walk over " + small.Slices + " slices");
+        Check(small.WorstSliceMilliseconds < 5d,
+            "no slice overruns a 0.05 ms budget by much (worst " + small.WorstSliceMilliseconds.ToString("0.000") + " ms)");
+
+        // A portal built now is filed in its sector and in the game's portal lists: read once.
+        ZDO portal = NewWorldObject(manager, "portal_wood", new Vector3(-2900f, 30f, 2700f));
+        try
+        {
+            bool listed = false;
+            foreach (object? list in GameAccess.GetPortalObjectLists(manager)?.Values ?? (IEnumerable)Array.Empty<object>())
+                listed |= list is List<ZDO> zdos && zdos.Contains(portal);
+            int visits = 0;
+            var walker = new ZdoWorldWalker();
+            walker.Begin();
+            int guard = 0;
+            while (!walker.Step(manager, z => { if (ReferenceEquals(z, portal)) visits++; }, 50d) && ++guard < 2000000) { }
+            Check(visits == 1, "a new portal is read once (" + visits + " visits; in the portal lists too: " + listed + ")");
+            Check(walker.ObjectsRead == manager.NrOfObjects(), "with a portal in both places the walk still reads every object once (" + walker.ObjectsRead + ")");
+        }
+        finally
+        {
+            manager.DestroyZDO(portal);
+        }
+    }
+
+    // A bare world object of a prefab, as a ZNetView would file it (the game sets the prefab after creating it).
+    private static ZDO NewWorldObject(ZDOMan manager, string prefab, Vector3 position)
+    {
+        int hash = prefab.GetStableHashCode();
+        ZDO zdo = manager.CreateNewZDO(position, hash);
+        zdo.SetPrefab(hash);
+        return zdo;
+    }
+
+    private (LiveMapConfig Config, ModLogger Log) RunningMapParts()
+    {
+        Type behaviourType = typeof(ValheimOnePlugin).Assembly.GetType("ValheimOne.LiveMap.LiveMapBehaviour", true)!;
+        object behaviour = AccessTools.Property(behaviourType, "Instance").GetValue(null, null)!;
+        return ((LiveMapConfig)AccessTools.Field(behaviourType, "_config").GetValue(behaviour)!,
+                (ModLogger)AccessTools.Field(behaviourType, "_log").GetValue(behaviour)!);
+    }
+
+    private void TestEntityWalk()
+    {
+        (LiveMapConfig config, ModLogger log) = RunningMapParts();
+        Check(config.EntityLayer, "the regression map runs with the entity layer on");
+        ZDOMan manager = ZDOMan.instance;
+        string[] names = { "Raft", "Karve", "VikingShip", "Cart", "portal_wood", "portal_stone", "Player_tombstone", "guard_stone", "bed", "piece_bed02" };
+        var made = new List<ZDO>();
+        try
+        {
+            for (int i = 0; i < names.Length; i++)
+            {
+                for (int copy = 0; copy < 2; copy++)
+                {
+                    made.Add(NewWorldObject(manager, names[i], new Vector3(-3000f + i * 70f, 30f, 2500f + copy * 900f)));
+                }
+            }
+
+            made[16].Set(ZDOVars.s_ownerName, "Regression Sleeper");
+            made[14].Set(ZDOVars.s_creatorName, "Regression Warden");
+
+            EntityMapSnapshot RunScan(bool legacy, out EntityScanReport? report)
+            {
+                var tracker = new EntityTracker(config, new PositionHistory(), log) { LegacyScanOverride = legacy };
+                tracker.NoteEntitiesRequested(true, true);
+                float now = Time.realtimeSinceStartup;
+                tracker.Tick(now);
+                int guard = 0;
+                while (tracker.IsScanning && ++guard < 2000000) tracker.Tick(now);
+                report = tracker.LastScanReport;
+                return tracker.Snapshot;
+            }
+
+            EntityMapSnapshot old = RunScan(true, out EntityScanReport? oldReport);
+            EntityMapSnapshot walk = RunScan(false, out EntityScanReport? walkReport);
+            static string Key(TrackedEntitySnapshot e) => e.Group + "/" + e.Prefab + "/" + e.Id;
+            var oldKeys = new HashSet<string>(old.Entities.Select(Key));
+            var walkKeys = new HashSet<string>(walk.Entities.Select(Key));
+            Check(walkKeys.SetEquals(oldKeys) && walkKeys.Count >= made.Count,
+                "the one-pass walk finds exactly what the per-prefab search finds (" + walkKeys.Count + " entities)");
+            var walkIds = new HashSet<string>(walk.Entities.Select(e => e.Id));
+            Check(made.All(z => walkIds.Contains(z.m_uid.UserID + ":" + z.m_uid.ID)),
+                "every planted ship, cart, portal, tombstone, ward and bed is found");
+            Check(walk.Groups.Select(g => g.Key + "=" + g.Count + (g.Truncated ? "+" : "")).SequenceEqual(
+                      old.Groups.Select(g => g.Key + "=" + g.Count + (g.Truncated ? "+" : ""))),
+                "the group counts match the old scan");
+            Check(walk.Entities.Any(e => e.Group == "bed" && e.Owner == "Regression Sleeper") &&
+                  walk.Entities.Any(e => e.Group == "ward" && e.Owner == "Regression Warden"),
+                "bed and ward owners come through the walk");
+            Check(oldReport != null && oldReport.Mode == "legacy" && oldReport.Passes == oldReport.Prefabs && oldReport.Prefabs >= 21,
+                "the old scan reads the world once per prefab (" + oldReport?.Describe() + ")");
+            Check(walkReport != null && walkReport.Mode == "walk" && walkReport.Passes == 1 &&
+                  walkReport.Prefabs == oldReport!.Prefabs && walkReport.ObjectsRead >= manager.NrOfObjects() &&
+                  walkReport.Entities == walk.Entities.Length,
+                "the walk reads it once for all " + walkReport?.Prefabs + " prefabs (" + walkReport?.Describe() + ")");
+            Check(walkReport!.WorstFrameMilliseconds < ZdoWorldWalker.DefaultBudgetMilliseconds + 3d,
+                "a walk slice stays near its " + ZdoWorldWalker.DefaultBudgetMilliseconds + " ms budget");
+        }
+        finally
+        {
+            foreach (ZDO zdo in made) manager.DestroyZDO(zdo);
+        }
+    }
+
+    private void TestObjectCensus()
+    {
+        (_, ModLogger log) = RunningMapParts();
+        ZDOMan manager = ZDOMan.instance;
+        const long builder = 424242424242L;
+        var made = new List<ZDO>();
+        try
+        {
+            for (int i = 0; i < 5; i++)
+            {
+                ZDO piece = NewWorldObject(manager, "woodwall", new Vector3(-2800f + i * 3f, 30f, 2600f));
+                piece.Set(ZDOVars.s_creator, builder);
+                made.Add(piece);
+            }
+
+            ZDO bed = NewWorldObject(manager, "bed", new Vector3(-2790f, 30f, 2600f));
+            bed.Set(ZDOVars.s_creator, builder);
+            bed.Set(ZDOVars.s_owner, builder);
+            bed.Set(ZDOVars.s_ownerName, "Regression Builder");
+            made.Add(bed);
+
+            var census = new ObjectCensus(log, () => false);
+            Check(census.Snapshot.State == "idle" && census.Snapshot.ToJson(false).Contains("\"state\":\"idle\""), "a new census is idle");
+            Check(census.Request() == ObjectCensusRequestResult.Started && census.Snapshot.Scanning, "a request starts a census");
+            Check(census.Request() == ObjectCensusRequestResult.Running, "a second request while it runs joins it");
+            int guard = 0;
+            while (census.Snapshot.State != "ready" && census.Snapshot.State != "failed" && ++guard < 2000000) census.Tick();
+            ObjectCensusSnapshot result = census.Snapshot;
+            Check(result.State == "ready", "the census finishes (" + result.State + " " + result.Error + ")");
+            Check(result.Objects == manager.NrOfObjects() && result.Objects == result.OwnedObjects + result.UnownedObjects &&
+                  result.ZdoCount == manager.NrOfObjects(),
+                "the census counts every object (" + result.Objects + ", " + result.OwnedObjects + " built by a player)");
+            Check(census.CountOf("woodwall") >= 5 && census.CountOf("bed") >= 1, "planted pieces are counted by kind");
+            bool sorted = true;
+            for (int i = 1; i < result.Kinds.Length; i++) sorted &= result.Kinds[i - 1].Count >= result.Kinds[i].Count;
+            Check(result.Kinds.Length == Math.Min(ObjectCensus.TopCount, result.KindsTotal) && sorted && result.Kinds[0].Prefab.Length > 0,
+                "the 20 most common kinds, largest first (top: " + result.Kinds[0].Prefab + " " + result.Kinds[0].Count + ")");
+            ObjectCensusOwner? top = result.Owners.FirstOrDefault(o => o.CreatorId == builder.ToString());
+            Check(top != null && top.Name == "Regression Builder" && top.Objects >= 6,
+                "the builder is named from the bed they own (" + top?.Name + ", " + top?.Objects + " objects)");
+            Check(result.Frames >= 1 && result.WorstFrameMilliseconds < ObjectCensus.BudgetMilliseconds + 3d && result.FinishedUnixMs >= result.StartedUnixMs,
+                "the census stays near its budget (" + result.Frames + " frames, worst " + result.WorstFrameMilliseconds.ToString("0.00") + " ms)");
+            string json = result.ToJson(false);
+            Check(json.Contains("\"state\":\"ready\"") && json.Contains("\"kinds\":[{\"prefab\":") &&
+                  json.Contains("\"creatorId\":\"424242424242\",\"name\":\"Regression Builder\"") && !json.Contains("\"cached\""),
+                "the census answer uses the agreed names");
+            Check(census.Request() == ObjectCensusRequestResult.Cached && census.Snapshot.ToJson(true).Contains("\"cached\":true"),
+                "a request within five minutes gets the last result back");
+            var busy = new ObjectCensus(log, () => true);
+            Check(busy.Request() == ObjectCensusRequestResult.Busy && busy.Snapshot.State == "idle",
+                "while the bases survey walks the world, a census waits");
+        }
+        finally
+        {
+            foreach (ZDO zdo in made) manager.DestroyZDO(zdo);
+        }
+    }
+
+    // The census on the running map, over HTTP: admin only, the console not needed.
+    private void CheckLiveCensus(string root, string token)
+    {
+        // Right after a start the map's own bases survey (asked for by the timelapse) walks the world
+        // too, and a census waits for it with 409 busy.
+        string started = "";
+        int startCode = 0;
+        int busyAnswers = 0;
+        DateTime startUntil = DateTime.UtcNow.AddSeconds(120);
+        while (DateTime.UtcNow < startUntil)
+        {
+            started = HttpCall(root, token, "POST", "/api/stats/objects", out startCode);
+            if (startCode != 409) break;
+            busyAnswers++;
+            Thread.Sleep(1000);
+        }
+
+        LiveResult((startCode == 202 || startCode == 200) && started.Contains("\"budgetMs\":"),
+            "the admin token starts an object census on the running map (HTTP " + startCode + ", " + busyAnswers +
+            " busy answers while the bases survey ran)");
+        string result = "";
+        DateTime until = DateTime.UtcNow.AddSeconds(90);
+        while (DateTime.UtcNow < until)
+        {
+            result = HttpCall(root, token, "GET", "/api/stats/objects", out _);
+            if (result.Contains("\"state\":\"ready\"") || result.Contains("\"state\":\"failed\"")) break;
+            Thread.Sleep(500);
+        }
+
+        LiveResult(result.Contains("\"state\":\"ready\"") && !result.Contains("\"objects\":0,"),
+            "the running map's census finishes and counts the world");
+        string again = HttpCall(root, token, "POST", "/api/stats/objects", out int againCode);
+        LiveResult(againCode == 200 && again.Contains("\"cached\":true"), "asking again at once returns the same census (HTTP " + againCode + ")");
+        object? server = RunningMapServer();
+        string shareToken = server == null ? "" : AccessTools.Property(server.GetType(), "ShareToken").GetValue(server, null) as string ?? "";
+        HttpCall(root, shareToken, "GET", "/api/stats/objects", out int sharedCode);
+        LiveResult(shareToken.Length > 0 && sharedCode == 404, "the shared link gets no census (HTTP " + sharedCode + ")");
+        HttpCall(root, "", "POST", "/api/stats/objects", out int anonymousCode);
+        LiveResult(anonymousCode == 401, "no token, no census (HTTP " + anonymousCode + ")");
+    }
+
+    private static object? RunningMapServer()
+    {
+        Type behaviourType = typeof(ValheimOnePlugin).Assembly.GetType("ValheimOne.LiveMap.LiveMapBehaviour", true)!;
+        object? behaviour = AccessTools.Property(behaviourType, "Instance").GetValue(null, null);
+        return behaviour is null ? null : AccessTools.Field(behaviourType, "_httpServer").GetValue(behaviour);
+    }
+
+    private static string HttpCall(string root, string token, string method, string path, out int code)
+    {
+        var request = (HttpWebRequest)WebRequest.Create(root + path);
+        request.Method = method;
+        if (token.Length > 0) request.Headers["X-LiveMap-Token"] = token;
+        request.Timeout = 5000;
+        request.KeepAlive = false;
+        if (method == "POST") request.ContentLength = 0;
+        try
+        {
+            using var response = (HttpWebResponse)request.GetResponse();
+            code = (int)response.StatusCode;
+            using var reader = new StreamReader(response.GetResponseStream());
+            return reader.ReadToEnd();
+        }
+        catch (WebException exception) when (exception.Response is HttpWebResponse refused)
+        {
+            code = (int)refused.StatusCode;
+            refused.Close();
+            return "";
+        }
+    }
+
     // 0.13.28: a failed crossplay login on a dedicated server is retried after 5-20 s, at most 5 times since the last
     // success; a banned account is not; then the game's own failure path runs.
     private void TestPlayFabRetryPolicy()
@@ -1479,6 +1739,8 @@ public sealed class RuntimeRegression : BaseUnityPlugin
                 // StatusAnswers above sends no relay key: reaching here proves a loopback caller is still served.
                 LiveResult(true, "with a relay key set, the machine's own call (loopback, no key) is still served");
             }
+
+            CheckLiveCensus(root, token);
 
             int publicTaken = FillSlots(slots, EventStreamView.Public);
             int sharedTaken = FillSlots(slots, EventStreamView.Shared);

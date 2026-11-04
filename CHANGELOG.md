@@ -4,6 +4,14 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+### Added
+
+- `/api/stats/objects`, an object census for the admin view: which object kinds fill the world (the 20 most common) and which players built the most (the 20 top builders, named where a bed, tombstone, ward or online character names them). `POST` starts it, `GET` reads it; it reads the world a slice per frame, at most 2 ms of each frame, so even a world of millions of objects never pauses for it. Details in `docs/query.md`.
+
+### Changed
+
+- The entity layer (ships, carts, portals, tombstones, wards, beds and creatures) now reads the world once per refresh for every kind together, at most 2 ms of each frame. It used to search the whole world once per kind, 21 times when ships and creatures were both shown, with no time limit per frame, so on a large world it used a lot of the server's time while a map was open. What the layer shows is unchanged.
+
 ## [0.13.29] - 2026-10-28
 
 ### Changed

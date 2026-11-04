@@ -102,6 +102,7 @@ With a non-empty `AccessToken`, the same port serves admin actions; console-spec
 | `/api/admin/save` | POST | Trigger a world + profile save. Returns `alreadySaving` when a save was in flight. |
 | `/api/admin/shutdown` | POST `{"seconds":60,"message":"Maintenance"}` or `{"action":"cancel"}` | Schedule a save-first server shutdown (5–3600 seconds) or cancel one. Returns the pending deadline and message. `{"cancel":true}` is also accepted. |
 | `/api/stats` | GET | Uptime, player/peer counts, ZDO count, Mono heap, frame avg/max ms, world day/time, and pending-shutdown state. |
+| `/api/stats/objects` | POST, then GET | Object census: `POST` starts one (`202`), or returns the running one, or the last result while it is under 5 minutes old (`200`, `"cached":true`); `409 {"error":"busy"}` while the map's bases survey is reading the world. `GET` returns the current state: `state` (`idle`, `scanning`, `ready`, `failed`), `scanProgress`, `scanEtaSeconds`, `durationMs`, `frames`, `busyMs`, `worstFrameMs`, `budgetMs`, `objects`, `zdoCount`, `kindsTotal`, `kinds` (the 20 most common prefabs, `{prefab,count}`), `ownedObjects`, `unownedObjects` and `owners` (the 20 players who built the most, `{creatorId,name,objects}`; `creatorId` is the in-game player ID as a string, `name` is empty when no bed, tombstone, ward or online character names it). The census reads the world a slice per frame, at most 2 ms of each frame, so a world of millions of objects takes more frames, not longer ones; counts are taken over a few seconds and can be off by objects that move or appear meanwhile. Admin view only (shared and public `404`); `ConsoleEnabled` is not required. |
 
 ## Streaming and map-data endpoints
 
@@ -115,7 +116,7 @@ With a non-empty `AccessToken`, the same port serves admin actions; console-spec
 | `/api/leaderboard` | GET | Admin/shared only; public returns `404`. Returns per-wipe playtime, deaths, and distance traveled for up to 50 display names; no platform identifiers are exposed. |
 | `/api/dungeons` | GET | Admin/shared only; public returns `404`. Returns discovered dungeon entrances with generation and interior state, room counts, and live-player counts. |
 | `/api/dungeons/{id}` | GET | Admin/shared only; public returns `404`. Returns one dungeon's generated room layout and live players inside for the View Interior schematic; unknown IDs return `404`. |
-| `/api/entities` | GET | Admin view + `EntityLayer = true` only. Ship/cart/portal positions from ZDO scans (5 s refresh, 500-entity cap) plus the active raid `event` object. |
+| `/api/entities` | GET | Admin and shared views + `EntityLayer = true` only (public `404`). Ships, carts, portals, tombstones, wards, beds and creatures (refreshed every 30 s, creatures every 10 s, while a map asks for them; per-kind caps from 150 to 500 with a `truncated` flag) plus the active raid `event` object. The scan reads the world once for every tracked kind together, at most 2 ms of each frame. |
 
 Admins also get an `"event"` raid object (`{name,x,z,radius,elapsed,duration}` or `null`) on `/api/status` regardless of `EntityLayer`.
 

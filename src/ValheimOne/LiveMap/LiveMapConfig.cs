@@ -140,7 +140,11 @@ internal sealed class LiveMapConfig
 
     public bool PublicShowPlayerNames => _publicShowPlayerNames.Value;
 
+#if VALHEIMONE_LAB
+    public bool EntityLayer => LabSwitches.EntityLayer ?? _entityLayer.Value;
+#else
     public bool EntityLayer => _entityLayer.Value;
+#endif
 
     public bool ResourceLayers => _resourceLayers.Value;
 
