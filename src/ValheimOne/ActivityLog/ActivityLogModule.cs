@@ -18,6 +18,7 @@ public sealed class ActivityLogModule : IFeatureModule
     private readonly ActivityLogConfig _config;
     private readonly ActivityLogWorker _worker;
     private readonly ServerSessionEventSource _sessionEvents;
+    private readonly ModLogger _log;
     private ActivityLogBehaviour? _behaviour;
     private bool _shutdown;
 
@@ -29,6 +30,7 @@ public sealed class ActivityLogModule : IFeatureModule
     {
         _registry = registry;
         _sessionEvents = sessionEvents;
+        _log = log;
         _feature = registry.Register(
             Name,
             Section,
@@ -87,7 +89,7 @@ public sealed class ActivityLogModule : IFeatureModule
 
     public void ApplyPatches(Harmony harmony)
     {
-        _ = harmony;
+        BossDefeatPatch.ApplyPatches(harmony, _log);
         _worker.Start();
         var host = new GameObject("ValheimOne.ActivityLog")
         {
@@ -123,6 +125,10 @@ public sealed class ActivityLogModule : IFeatureModule
     internal bool ActivityFeedEnabled => IsEnabled && !_shutdown;
 
     internal long LatestActivityCursor => _worker.LatestActivityCursor;
+
+    // The feed's ids start again at every server start (today's file is read back and numbered from
+    // 1); a reader keeps its cursor only while this stays the same.
+    internal long BootUnixMs => ProcessInfo.BootUnixMs;
 
     internal long CopyActivityAfter(
         long cursor,
@@ -263,19 +269,68 @@ public sealed class ActivityLogModule : IFeatureModule
         RecordName("player.death", name);
     }
 
-    internal void RecordRaidStarted(string name)
+    internal void RecordRaidStarted(string name, string eventName)
     {
-        RecordName("raid.start", name);
+        RecordRaid("raid.start", name, eventName);
     }
 
-    internal void RecordRaidEnded(string name)
+    internal void RecordRaidEnded(string name, string eventName)
     {
-        RecordName("raid.end", name);
+        RecordRaid("raid.end", name, eventName);
     }
 
-    internal void RecordWorldSave()
+    // At the end of a save that worked, with the time from the game's save start.
+    internal void RecordWorldSave(long durationMs)
     {
-        RecordEmpty("world.save");
+        if (!IsEnabled || _shutdown)
+        {
+            return;
+        }
+
+        Enqueue(
+            "world.save",
+            "{\"durationMs\":" + Math.Max(0L, durationMs).ToString(CultureInfo.InvariantCulture) + "}");
+    }
+
+    internal void RecordWorldSaveFailed(string stage, string message)
+    {
+        if (!IsEnabled || _shutdown)
+        {
+            return;
+        }
+
+        string safeStage = string.Equals(stage, "exception", StringComparison.Ordinal) ? "exception" : "write";
+        Enqueue(
+            "world.save_failed",
+            "{\"stage\":" + JsonWriter.Quote(safeStage) +
+            ",\"message\":" + JsonWriter.Quote(Truncate(SanitizeSensitiveText(message), 160)) + "}");
+    }
+
+    internal void RecordBossDefeated(string name, string key, bool firstTime)
+    {
+        if (!IsEnabled || _shutdown)
+        {
+            return;
+        }
+
+        Enqueue(
+            "boss.defeated",
+            "{\"name\":" + JsonWriter.Quote(SanitizeSensitiveText(name)) +
+            ",\"key\":" + JsonWriter.Quote(key) +
+            ",\"firstTime\":" + (firstTime ? "true" : "false") + "}");
+    }
+
+    private void RecordRaid(string type, string name, string eventName)
+    {
+        if (!IsEnabled || _shutdown)
+        {
+            return;
+        }
+
+        Enqueue(
+            type,
+            "{\"name\":" + JsonWriter.Quote(SanitizeSensitiveText(name)) +
+            ",\"event\":" + JsonWriter.Quote(eventName ?? string.Empty) + "}");
     }
 
     internal void RecordDayChanged(int day)

@@ -4,6 +4,17 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+### Added
+
+- `/api/stats/history`: the server's numbers once a minute for the last 24 hours (frame time, frames over 100 ms, objects, memory, players), kept across restarts, with each run's start and how it ended: `clean` when ValheimOne saw the server quit, `none` when it ended without that, such as a crash or a killed process. Admin token only. Details in `docs/query.md`.
+- `/api/stats` gives `workingSetBytes`, the memory the whole server process holds (the existing `monoHeapBytes` is only part of it), and answers the access token with the web console off too.
+- Activity feed: `boss.defeated` on every boss kill (`firstTime` true the first time a boss falls in this world), `world.save_failed` with the game's own reason when a save fails, the game's event name on `raid.start` and `raid.end`, and `bootUnixMs` on `/api/activity` so a reader knows when the feed's ids started again.
+- `/api/status` gives the admin view `lastSaveFailedUnixMs`.
+
+### Changed
+
+- `world.save` in the activity feed, the Discord save notice and `lastSavedUnixMs` now come at the end of a save that worked, with `durationMs`. Until now they came when a save started, so a save that failed still read as saved.
+
 ## [0.13.29] - 2026-10-28
 
 ### Changed

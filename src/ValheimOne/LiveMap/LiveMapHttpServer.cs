@@ -237,6 +237,9 @@ internal sealed class LiveMapHttpServer
 
     public bool IsRunning => _listener?.IsListening == true;
 
+    // The per-minute numbers behind /api/stats/history (admin token; the console need not be on).
+    internal StatsHistory? StatsHistory { get; set; }
+
     public void Stop()
     {
         _stopping = true;
@@ -361,12 +364,8 @@ internal sealed class LiveMapHttpServer
                     return;
                 }
 
-                bool isTowPath = string.Equals(path, "/api/admin/tow", StringComparison.Ordinal);
-                bool isChatPath = string.Equals(path, "/api/admin/chat", StringComparison.Ordinal);
                 if (_consoleBridge == null ||
-                    (!isChatPath &&
-                     !isTowPath &&
-                     (!_config.ConsoleEnabled || _logRingBuffer == null)))
+                    !ConsoleGateAllows(path, _config.ConsoleEnabled, _logRingBuffer != null))
                 {
                     WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
                     return;
@@ -568,6 +567,10 @@ internal sealed class LiveMapHttpServer
             {
                 ServeStats(response);
             }
+            else if (isGet && path == "/api/stats/history")
+            {
+                ServeStatsHistory(request, response);
+            }
             else
             {
                 WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
@@ -671,7 +674,21 @@ internal sealed class LiveMapHttpServer
     {
         return path.StartsWith("/api/console/", StringComparison.Ordinal) ||
                path.StartsWith("/api/admin/", StringComparison.Ordinal) ||
-               path == "/api/stats";
+               path == "/api/stats" ||
+               path == "/api/stats/history";
+    }
+
+    // Every console path needs the access token. Most also need the web console on; chat, ship tow
+    // and the server numbers (/api/stats and its history) do not.
+    internal static bool ConsoleGateAllows(string path, bool consoleEnabled, bool consoleLogRunning)
+    {
+        if (path == "/api/admin/tow" || path == "/api/admin/chat" ||
+            path == "/api/stats" || path == "/api/stats/history")
+        {
+            return true;
+        }
+
+        return consoleEnabled && consoleLogRunning;
     }
 
     private static void ReadAuditIdentity(
@@ -1042,6 +1059,12 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"snapshotAgeMs\":").Append(snapshotAgeMs.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"lastSavedUnixMs\":").Append(
             lastSavedUnixMs.ToString(CultureInfo.InvariantCulture));
+        long lastSaveFailedUnixMs = WorldSavePatch.LastSaveFailedUnixMs;
+        if (viewLevel == ViewLevel.Admin)
+        {
+            json.Append(",\"lastSaveFailedUnixMs\":").Append(
+                lastSaveFailedUnixMs.ToString(CultureInfo.InvariantCulture));
+        }
         if (snapshotStale)
         {
             json.Append(",\"stale\":true");
@@ -1080,6 +1103,7 @@ internal sealed class LiveMapHttpServer
         if (viewLevel == ViewLevel.Admin)
         {
             key.Append('|').Append(snapshot.JoinCode);
+            key.Append('|').Append(lastSaveFailedUnixMs.ToString(CultureInfo.InvariantCulture));
         }
 
         if (hasSharedMapAccess)
@@ -1502,6 +1526,7 @@ internal sealed class LiveMapHttpServer
 
         var json = new StringBuilder(48 + (entries.Count * 128));
         json.Append("{\"enabled\":").Append(enabled ? "true" : "false");
+        json.Append(",\"bootUnixMs\":").Append(_activityLog.BootUnixMs.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"cursor\":");
         json.Append(latestCursor.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"events\":[");
@@ -2062,6 +2087,7 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"peers\":").Append(stats.Peers.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"zdoCount\":").Append(stats.ZdoCount.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"monoHeapBytes\":").Append(stats.MonoHeapBytes.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"workingSetBytes\":").Append(stats.WorkingSetBytes.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"frameAvgMs\":").Append(JsonWriter.Number(stats.FrameAvgMs));
         json.Append(",\"frameMaxMs\":").Append(JsonWriter.Number(stats.FrameMaxMs));
         json.Append(",\"snapshotUnixMs\":").Append(stats.SnapshotUnixMs.ToString(CultureInfo.InvariantCulture));
@@ -2090,6 +2116,37 @@ internal sealed class LiveMapHttpServer
         json.Append('}');
         json.Append('}');
         WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    // GET /api/stats/history?since=<unixMs>: the last 24 hours a minute at a time, across restarts.
+    private void ServeStatsHistory(HttpListenerRequest request, HttpListenerResponse response)
+    {
+        StatsHistory? history = StatsHistory;
+        if (history == null)
+        {
+            WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
+        long since = Math.Max(0L, ParseLong(request.QueryString["since"], 0L));
+        byte[] body = Encoding.UTF8.GetBytes(
+            history.BuildJson(since, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+        response.Headers[HttpResponseHeader.Vary] = "Accept-Encoding";
+        if (AcceptsGzip(request))
+        {
+            using (var compressed = new MemoryStream())
+            {
+                using (var gzip = new System.IO.Compression.GZipStream(compressed, System.IO.Compression.CompressionMode.Compress, true))
+                {
+                    gzip.Write(body, 0, body.Length);
+                }
+
+                response.Headers[HttpResponseHeader.ContentEncoding] = "gzip";
+                body = compressed.ToArray();
+            }
+        }
+
+        WriteBytes(response, HttpStatusCode.OK, "application/json; charset=utf-8", body, "no-store");
     }
 
     private static void AppendShutdownJson(

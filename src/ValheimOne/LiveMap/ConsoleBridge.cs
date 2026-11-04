@@ -667,7 +667,8 @@ internal sealed class ConsoleBridge
             GC.GetTotalMemory(false),
             (float)(frameAverageSeconds * 1000d),
             frameMaxSeconds * 1000f,
-            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            ProcessInfo.WorkingSetBytes());
     }
 
     private void RefreshKnownCommands()
@@ -1032,6 +1033,7 @@ internal sealed class StatsSnapshot
         0L,
         0f,
         0f,
+        0L,
         0L);
 
     public StatsSnapshot(
@@ -1042,7 +1044,8 @@ internal sealed class StatsSnapshot
         long monoHeapBytes,
         float frameAvgMs,
         float frameMaxMs,
-        long snapshotUnixMs)
+        long snapshotUnixMs,
+        long workingSetBytes)
     {
         UptimeSeconds = uptimeSeconds;
         Players = players;
@@ -1052,6 +1055,7 @@ internal sealed class StatsSnapshot
         FrameAvgMs = frameAvgMs;
         FrameMaxMs = frameMaxMs;
         SnapshotUnixMs = snapshotUnixMs;
+        WorkingSetBytes = workingSetBytes;
     }
 
     public double UptimeSeconds { get; }
@@ -1069,6 +1073,10 @@ internal sealed class StatsSnapshot
     public float FrameMaxMs { get; }
 
     public long SnapshotUnixMs { get; }
+
+    // The whole process (Process.WorkingSet64, read at most once a minute); MonoHeapBytes is only
+    // the managed heap.
+    public long WorkingSetBytes { get; }
 }
 
 internal sealed class ConsoleCommandInfo
