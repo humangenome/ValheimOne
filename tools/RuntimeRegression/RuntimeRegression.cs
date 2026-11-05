@@ -1704,36 +1704,74 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         }
     }
 
-    // Which save answers a wait: only one that started at or after the request. A save already
-    // running when the request came in ends first and does not count.
+    // Which save answers a wait: only one that started after the request. A save already running
+    // when the request came in ends first and does not count, even when the game raised the start
+    // of the asked-for save before that running save ended.
     private void TestSaveWaitProof()
     {
-        WorldSavePatch.OnWorldSaveStarted();
-        Thread.Sleep(20);
-        long requested = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        Thread.Sleep(20);
-        WorldSavePatch.EndSavePostfix(true);
-        WorldSavePatch.Pump();
-        string early = LiveMapHttpServer.WaitForSave(ConsoleSaveResult.Success(true), requested, 1, out string earlyOutcome);
-        Check(earlyOutcome == "save not finished" && early.StartsWith("{\"ok\":false,\"saved\":false,\"error\":\"save not finished\"", StringComparison.Ordinal),
-            "a save that started before the request does not answer it (" + early + ")");
-        WorldSavePatch.OnWorldSaveStarted();
-        WorldSavePatch.EndSavePostfix(true);
-        WorldSavePatch.Pump();
-        string ours = LiveMapHttpServer.WaitForSave(ConsoleSaveResult.Success(true), requested, 1, out string oursOutcome);
-        Check(oursOutcome == "saved" && ours.StartsWith("{\"ok\":true,\"saved\":true,\"alreadySaving\":true,", StringComparison.Ordinal),
-            "the save that started after it does (" + ours + ")");
-        Thread.Sleep(20);
-        long again = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        WorldSavePatch.OnWorldSaveStarted();
-        WorldSavePatch.OnLogMessage("World save (5/5) FAILED. Total time [3ms]", "", LogType.Error);
-        WorldSavePatch.EndSavePostfix(false);
-        WorldSavePatch.Pump();
-        string failed = LiveMapHttpServer.WaitForSave(ConsoleSaveResult.Success(false), again, 1, out string failedOutcome);
-        Check(failedOutcome == "save failed: write" && failed.Contains("\"error\":\"save failed\",\"stage\":\"write\",\"message\":\"World save (5/5) FAILED. Total time [3ms]\""),
-            "a failed save answers with its stage and the game's line (" + failed + ")");
-        string refused = LiveMapHttpServer.WaitForSave(ConsoleSaveResult.Failure("world not loaded"), again, 1, out _);
-        Check(refused == "{\"ok\":false,\"saved\":false,\"error\":\"world not loaded\"}", "a save that could not start says why");
+        Func<bool> running = WorldSavePatch.SaveThreadRunning;
+        try
+        {
+            Check(WorldSavePatch.CanSeeSaveThread, "the game's save thread can be seen");
+            WorldSavePatch.SaveThreadRunning = () => false;
+            WorldSavePatch.OnWorldSaveStarted();
+            long requested = WorldSavePatch.StartSequence;
+            Thread.Sleep(20);
+            WorldSavePatch.EndSavePostfix(true);
+            WorldSavePatch.Pump();
+            string early = LiveMapHttpServer.WaitForSave(ConsoleSaveResult.Success(true), requested, 1, out string earlyOutcome);
+            Check(earlyOutcome == "save not finished" && early.StartsWith("{\"ok\":false,\"saved\":false,\"error\":\"save not finished\"", StringComparison.Ordinal),
+                "a save that started before the request does not answer it (" + early + ")");
+            WorldSavePatch.OnWorldSaveStarted();
+            WorldSavePatch.EndSavePostfix(true);
+            WorldSavePatch.Pump();
+            string ours = LiveMapHttpServer.WaitForSave(ConsoleSaveResult.Success(true), requested, 1, out string oursOutcome);
+            Check(oursOutcome == "saved" && ours.StartsWith("{\"ok\":true,\"saved\":true,\"alreadySaving\":true,", StringComparison.Ordinal),
+                "the save that started after it does (" + ours + ")");
+
+            // The game raises the start of the asked-for save, then waits for the running save to end.
+            WorldSavePatch.OnWorldSaveStarted();
+            Thread.Sleep(30);
+            long runningAtRequest = WorldSavePatch.StartSequence;
+            WorldSavePatch.SaveThreadRunning = () => true;
+            WorldSavePatch.OnWorldSaveStarted();
+            WorldSavePatch.EndSavePostfix(true);
+            WorldSavePatch.Pump();
+            string queued = LiveMapHttpServer.WaitForSave(ConsoleSaveResult.Success(true), runningAtRequest, 0, out string queuedOutcome);
+            Check(queuedOutcome == "save not finished",
+                "the end of the save that was running does not answer for the save asked for during it (" + queued + ")");
+            Check(WorldSavePatch.LastSavedStartSequence == runningAtRequest && WorldSavePatch.LastSaveDurationMs >= 25,
+                "that end is paired with its own start (" + WorldSavePatch.LastSaveDurationMs + " ms)");
+            WorldSavePatch.SaveThreadRunning = () => false;
+            WorldSavePatch.EndSavePostfix(true);
+            WorldSavePatch.Pump();
+            string after = LiveMapHttpServer.WaitForSave(ConsoleSaveResult.Success(true), runningAtRequest, 1, out string afterOutcome);
+            Check(afterOutcome == "saved" && WorldSavePatch.LastSavedStartSequence == runningAtRequest + 1 && WorldSavePatch.LastSaveDurationMs < 25,
+                "the asked-for save answers when it ends, timed from its own start (" + after + ")");
+
+            // A start that never got a save thread leaves no end; the next start replaces it.
+            WorldSavePatch.OnWorldSaveStarted();
+            WorldSavePatch.OnWorldSaveStarted();
+            long replacing = WorldSavePatch.StartSequence;
+            WorldSavePatch.EndSavePostfix(true);
+            WorldSavePatch.Pump();
+            Check(WorldSavePatch.LastSavedStartSequence == replacing, "a start whose save never began is replaced by the next one");
+
+            WorldSavePatch.OnWorldSaveStarted();
+            long again = WorldSavePatch.StartSequence - 1L;
+            WorldSavePatch.OnLogMessage("World save (5/5) FAILED. Total time [3ms]", "", LogType.Error);
+            WorldSavePatch.EndSavePostfix(false);
+            WorldSavePatch.Pump();
+            string failed = LiveMapHttpServer.WaitForSave(ConsoleSaveResult.Success(false), again, 1, out string failedOutcome);
+            Check(failedOutcome == "save failed: write" && failed.Contains("\"error\":\"save failed\",\"stage\":\"write\",\"message\":\"World save (5/5) FAILED. Total time [3ms]\""),
+                "a failed save answers with its stage and the game's line (" + failed + ")");
+            string refused = LiveMapHttpServer.WaitForSave(ConsoleSaveResult.Failure("world not loaded"), again, 1, out _);
+            Check(refused == "{\"ok\":false,\"saved\":false,\"error\":\"world not loaded\"}", "a save that could not start says why");
+        }
+        finally
+        {
+            WorldSavePatch.SaveThreadRunning = running;
+        }
     }
 
     // The save a host makes before every stop goes to the game's world save directly. With the game's
@@ -1755,23 +1793,49 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             object viaConsole = AccessTools.Method(bridge.GetType(), "ExecuteCommandOnMainThread").Invoke(bridge, new object[] { "save" })!;
             Check((string?)ReadMember(viaConsole, "Error") == "console unavailable", "with the Console gone, the console save fails (as on the broken server)");
             long requested = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            long startsBefore = WorldSavePatch.StartSequence;
             DateTime newestBefore = NewestWrite(folder);
             ConsoleSaveResult result = ConsoleBridge.SaveOnMainThread(RunningLog());
             Check(result.Ok, "the direct save starts with the Console gone (" + result.Error + ")");
-            DateTime until = DateTime.UtcNow.AddSeconds(60);
-            while (DateTime.UtcNow < until && WorldSavePatch.LastSavedStartedUnixMs < requested && WorldSavePatch.LastSaveFailedStartedUnixMs < requested)
-            {
-                Thread.Sleep(100);
-                WorldSavePatch.Pump();
-            }
-
-            Check(WorldSavePatch.LastSavedStartedUnixMs >= requested && WorldSavePatch.LastSavedUnixMs >= WorldSavePatch.LastSavedStartedUnixMs,
+            WaitForSaveEnd(startsBefore + 1L);
+            Check(WorldSavePatch.LastSavedStartSequence > startsBefore && WorldSavePatch.LastSavedUnixMs >= requested,
                 "the direct save finished: lastSavedUnixMs moved on (" + (WorldSavePatch.LastSavedUnixMs - requested) + " ms after the request)");
             Check(NewestWrite(folder) > newestBefore, "the world folder was written (" + Path.GetFileName(folder) + ")");
+
+            // Two saves asked for back to back: the game waits for the first before it starts the second.
+            ZNet network = ZNet.instance!;
+            network.Save(sync: false, saveOtherPlayerProfiles: false, waitForNextFrame: false);
+            long betweenSaves = WorldSavePatch.StartSequence;
+            ConsoleSaveResult second = ConsoleBridge.SaveOnMainThread(RunningLog());
+            Check(second.Ok && WorldSavePatch.StartSequence == betweenSaves + 1L, "a save asked for while one runs is started after it");
+            WaitForSaveEnd(betweenSaves + 1L);
+            Check(WorldSavePatch.LastSavedStartSequence == betweenSaves + 1L, "and it is the asked-for save that answers, not the one before it");
+
+            // The game declines a save it cannot make (here: a world that failed to load).
+            ZNet.m_loadError = true;
+            try
+            {
+                ConsoleSaveResult skipped = ConsoleBridge.SaveOnMainThread(RunningLog());
+                Check(!skipped.Ok && skipped.Error == "the game skipped the save", "a save the game declines is reported at once (" + skipped.Error + ")");
+            }
+            finally
+            {
+                ZNet.m_loadError = false;
+            }
         }
         finally
         {
             consoleField.SetValue(null, console);
+        }
+    }
+
+    private static void WaitForSaveEnd(long sequence)
+    {
+        DateTime until = DateTime.UtcNow.AddSeconds(60);
+        while (DateTime.UtcNow < until && WorldSavePatch.LastSavedStartSequence < sequence && WorldSavePatch.LastSaveFailedStartSequence < sequence)
+        {
+            Thread.Sleep(100);
+            WorldSavePatch.Pump();
         }
     }
 

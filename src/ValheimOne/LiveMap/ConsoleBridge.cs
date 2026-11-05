@@ -446,9 +446,10 @@ internal sealed class ConsoleBridge
     }
 
     // The game's own world save, called directly: never through the game's Console object (a broken
-    // mod can leave the Console without commands or missing altogether) and without the console
-    // command's once-a-minute limit, so a save asked for right before a stop always runs. The disk
-    // check the game makes first stays; if that check itself throws, the save still goes ahead.
+    // mod can leave the Console without commands or missing altogether), so a save asked for right
+    // before a stop still runs. The disk check the game makes first stays; if that check itself
+    // throws, the save still goes ahead. The game starts the save at once or declines it ("Skipping
+    // world save", "World save blocked"); a declined save is reported as such instead of waited for.
     internal static ConsoleSaveResult SaveOnMainThread(ModLogger? log)
     {
         ZNet? network = ZNet.instance;
@@ -480,7 +481,13 @@ internal sealed class ConsoleBridge
             }
 
             bool alreadySaving = network.IsSaving();
+            long startsBefore = WorldSavePatch.StartSequence;
             network.Save(sync: false, saveOtherPlayerProfiles: true, waitForNextFrame: false);
+            if (WorldSavePatch.Applied && WorldSavePatch.StartSequence == startsBefore)
+            {
+                return ConsoleSaveResult.Failure("the game skipped the save");
+            }
+
             return ConsoleSaveResult.Success(alreadySaving);
         }
         catch (Exception exception)
