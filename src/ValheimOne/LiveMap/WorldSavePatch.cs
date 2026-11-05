@@ -24,11 +24,20 @@ internal static class WorldSavePatch
     private static long _lastSavedUnixMs;
     private static long _lastSaveFailedUnixMs;
     private static long _lastSaveDurationMs;
-    private static long _saveStartedTimestamp;
-    private static long _saveStartedUnixMs;
-    private static long _pendingStartedUnixMs;
+    // Each save start gets the next number. The game runs saves one at a time: a save asked for
+    // while another runs waits (ZNet.SaveWorld joins the running save thread) and starts after it,
+    // so a start seen while a save is still running is queued and becomes the current one only
+    // when that save ends. Each end is paired with its own save's start, never with a later one.
+    private static readonly object StartLock = new object();
+    private static long _startSequence;
+    private static SaveStart _current;
+    private static SaveStart _queued;
+    private static bool _inFlight;
+    private static SaveStart _pendingStart;
     private static long _lastSavedStartedUnixMs;
     private static long _lastSaveFailedStartedUnixMs;
+    private static long _lastSavedStartSequence;
+    private static long _lastSaveFailedStartSequence;
     private static volatile WorldSaveFailure? _lastFailure;
     private static int _pendingOutcome;
     private static long _pendingTimestamp;
@@ -49,12 +58,26 @@ internal static class WorldSavePatch
     // From the game's save start to its end, for the last save that worked.
     public static long LastSaveDurationMs => Interlocked.Read(ref _lastSaveDurationMs);
 
-    // When the last save that worked, and the last one that failed, started: a caller that asked for a
-    // save at T knows its own save ended once one of these is T or later (a save already running at T
-    // started earlier, and the game runs the asked-for save after it).
+    // When the last save that worked, and the last one that failed, started.
     public static long LastSavedStartedUnixMs => Interlocked.Read(ref _lastSavedStartedUnixMs);
 
     public static long LastSaveFailedStartedUnixMs => Interlocked.Read(ref _lastSaveFailedStartedUnixMs);
+
+    // The number of the newest save start. A caller that read N before asking for a save knows its
+    // own save has ended once the last save that worked (or failed) has a start number above N: a
+    // save already running at the request has N or less, and the game runs the asked-for save after it.
+    public static long StartSequence => Interlocked.Read(ref _startSequence);
+
+    public static long LastSavedStartSequence => Interlocked.Read(ref _lastSavedStartSequence);
+
+    public static long LastSaveFailedStartSequence => Interlocked.Read(ref _lastSaveFailedStartSequence);
+
+    // Whether the game's save thread is still running. Replaceable for tests.
+    internal static Func<bool> SaveThreadRunning = GameSaveThreadRunning;
+
+    public static bool Applied => _applied;
+
+    internal static bool CanSeeSaveThread => SaveThreadField != null;
 
     public static WorldSaveFailure? LastFailure => _lastFailure;
 
@@ -79,14 +102,35 @@ internal static class WorldSavePatch
         _applied = true;
     }
 
-    // Main thread: the game is about to start a save (ZNet.SaveWorld).
+    // Main thread: the game is about to start a save (ZNet.SaveWorld). The game raises this before it
+    // waits for a save that is still running, so that save has not ended yet.
     internal static void OnWorldSaveStarted()
     {
-        Interlocked.Exchange(ref _saveStartedTimestamp, Stopwatch.GetTimestamp());
-        Interlocked.Exchange(ref _saveStartedUnixMs, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-        lock (MessageLock)
+        bool current;
+        lock (StartLock)
         {
-            _saveMessage = string.Empty;
+            var start = new SaveStart(++_startSequence, Stopwatch.GetTimestamp(), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            // A start whose save never got going (the game threw before its save thread began) leaves
+            // no end behind: with no save thread running, the new start replaces it.
+            current = !_inFlight || !IsSaveThreadRunning();
+            if (current)
+            {
+                _current = start;
+                _queued = default;
+                _inFlight = true;
+            }
+            else
+            {
+                _queued = start;
+            }
+        }
+
+        if (current)
+        {
+            lock (MessageLock)
+            {
+                _saveMessage = string.Empty;
+            }
         }
     }
 
@@ -95,9 +139,27 @@ internal static class WorldSavePatch
     {
         try
         {
+            SaveStart ended;
+            lock (StartLock)
+            {
+                ended = _inFlight ? _current : default;
+                if (_queued.Sequence > 0L)
+                {
+                    // The queued save really starts now, once this one has ended.
+                    _current = new SaveStart(_queued.Sequence, Stopwatch.GetTimestamp(), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    _queued = default;
+                    _inFlight = true;
+                }
+                else
+                {
+                    _inFlight = false;
+                }
+
+                _pendingStart = ended;
+            }
+
             Interlocked.Exchange(ref _pendingTimestamp, Stopwatch.GetTimestamp());
             Interlocked.Exchange(ref _pendingUnixMs, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-            Interlocked.Exchange(ref _pendingStartedUnixMs, Interlocked.Read(ref _saveStartedUnixMs));
             Interlocked.Exchange(ref _pendingOutcome, __1 ? 1 : 2);
         }
         catch
@@ -150,6 +212,12 @@ internal static class WorldSavePatch
 
         long endedTimestamp = Interlocked.Read(ref _pendingTimestamp);
         long endedUnixMs = Interlocked.Read(ref _pendingUnixMs);
+        SaveStart start;
+        lock (StartLock)
+        {
+            start = _pendingStart;
+        }
+
         string message;
         lock (MessageLock)
         {
@@ -167,15 +235,21 @@ internal static class WorldSavePatch
             return;
         }
 
+        lock (MessageLock)
+        {
+            _saveMessage = string.Empty;
+        }
+
         if (outcome == 1)
         {
-            long started = Interlocked.Read(ref _saveStartedTimestamp);
+            long started = start.Timestamp;
             long duration = started > 0L && endedTimestamp >= started
                 ? (long)((endedTimestamp - started) * 1000d / Stopwatch.Frequency)
                 : 0L;
             Interlocked.Exchange(ref _lastSaveDurationMs, duration);
-            Interlocked.Exchange(ref _lastSavedStartedUnixMs, Interlocked.Read(ref _pendingStartedUnixMs));
+            Interlocked.Exchange(ref _lastSavedStartedUnixMs, start.UnixMs);
             Interlocked.Exchange(ref _lastSavedUnixMs, endedUnixMs);
+            Interlocked.Exchange(ref _lastSavedStartSequence, start.Sequence);
             Raise(WorldSaved, "world saved");
             return;
         }
@@ -185,8 +259,9 @@ internal static class WorldSavePatch
             message,
             endedUnixMs);
         _lastFailure = failure;
-        Interlocked.Exchange(ref _lastSaveFailedStartedUnixMs, Interlocked.Read(ref _pendingStartedUnixMs));
+        Interlocked.Exchange(ref _lastSaveFailedStartedUnixMs, start.UnixMs);
         Interlocked.Exchange(ref _lastSaveFailedUnixMs, endedUnixMs);
+        Interlocked.Exchange(ref _lastSaveFailedStartSequence, start.Sequence);
         Action<WorldSaveFailure>? callbacks = WorldSaveFailed;
         if (callbacks != null)
         {
@@ -234,6 +309,67 @@ internal static class WorldSavePatch
         {
             // Never allow diagnostics to escape.
         }
+    }
+
+    private static bool IsSaveThreadRunning()
+    {
+        try
+        {
+            return SaveThreadRunning();
+        }
+        catch
+        {
+            // Unknown: treat the earlier save as still running. A save then waits for a later end
+            // rather than being credited with an earlier save's end.
+            return true;
+        }
+    }
+
+    private static readonly AccessTools.FieldRef<ZNet, Thread?>? SaveThreadField = FindSaveThreadField();
+
+    private static AccessTools.FieldRef<ZNet, Thread?>? FindSaveThreadField()
+    {
+        try
+        {
+            return AccessTools.FieldRefAccess<ZNet, Thread?>("m_saveThread");
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool GameSaveThreadRunning()
+    {
+        ZNet? network = ZNet.instance;
+        if (network == null)
+        {
+            return false;
+        }
+
+        if (SaveThreadField == null)
+        {
+            return true;
+        }
+
+        Thread? thread = SaveThreadField(network);
+        return thread != null && thread.IsAlive;
+    }
+
+    private readonly struct SaveStart
+    {
+        public SaveStart(long sequence, long timestamp, long unixMs)
+        {
+            Sequence = sequence;
+            Timestamp = timestamp;
+            UnixMs = unixMs;
+        }
+
+        public long Sequence { get; }
+
+        public long Timestamp { get; }
+
+        public long UnixMs { get; }
     }
 
     // The game's line without its stack trace, one line, at most 160 characters.

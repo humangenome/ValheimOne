@@ -1922,11 +1922,11 @@ internal sealed class LiveMapHttpServer
     {
         ReadAuditIdentity(request, out string operatorName, out string source);
         int waitSeconds = (int)Math.Max(0L, Math.Min(MaximumSaveWaitSeconds, ParseLong(request.QueryString["wait"], 0L)));
-        long requestedUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        long startsBefore = WorldSavePatch.StartSequence;
         ConsoleSaveResult result = _consoleBridge!.Save();
         if (waitSeconds > 0)
         {
-            string waited = WaitForSave(result, requestedUnixMs, waitSeconds, out string outcome);
+            string waited = WaitForSave(result, startsBefore, waitSeconds, out string outcome);
             _activityLog.RecordAdminAction(operatorName, "save", null, outcome == "saved" ? "ok" : "error", outcome, source);
             WriteJson(response, HttpStatusCode.OK, waited);
             return;
@@ -1949,9 +1949,9 @@ internal sealed class LiveMapHttpServer
 
     private const int MaximumSaveWaitSeconds = 120;
 
-    // Waits for the save that answers a request made at requestedUnixMs: one that started at or after
-    // it. A save already running then ends first and does not count.
-    internal static string WaitForSave(ConsoleSaveResult result, long requestedUnixMs, int waitSeconds, out string outcome)
+    // Waits for the save that answers a request made when the newest save start was startsBefore: one
+    // that started after it. A save already running then ends first and does not count.
+    internal static string WaitForSave(ConsoleSaveResult result, long startsBefore, int waitSeconds, out string outcome)
     {
         if (!result.Ok)
         {
@@ -1962,7 +1962,7 @@ internal sealed class LiveMapHttpServer
         DateTime until = DateTime.UtcNow.AddSeconds(waitSeconds);
         while (true)
         {
-            if (WorldSavePatch.LastSavedStartedUnixMs >= requestedUnixMs)
+            if (WorldSavePatch.LastSavedStartSequence > startsBefore)
             {
                 outcome = "saved";
                 return "{\"ok\":true,\"saved\":true,\"alreadySaving\":" + (result.AlreadySaving ? "true" : "false") +
@@ -1970,8 +1970,9 @@ internal sealed class LiveMapHttpServer
                        ",\"durationMs\":" + WorldSavePatch.LastSaveDurationMs.ToString(CultureInfo.InvariantCulture) + "}";
             }
 
-            WorldSaveFailure? failure = WorldSavePatch.LastFailure;
-            if (WorldSavePatch.LastSaveFailedStartedUnixMs >= requestedUnixMs && failure != null)
+            // The failure is stored before its start number, so read the number first.
+            WorldSaveFailure? failure = WorldSavePatch.LastSaveFailedStartSequence > startsBefore ? WorldSavePatch.LastFailure : null;
+            if (failure != null)
             {
                 outcome = "save failed: " + failure.Stage;
                 return "{\"ok\":false,\"saved\":false,\"error\":\"save failed\",\"stage\":" + JsonWriter.Quote(failure.Stage) +
