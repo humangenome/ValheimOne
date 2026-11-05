@@ -138,6 +138,8 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestWorldSaveEvents();
             TestBossDefeated();
             TestRaidEventName();
+            TestSaveWaitProof();
+            TestDirectSaveWithoutConsole();
             _liveDeadline = Time.realtimeSinceStartup + 330f;
             _liveCheck = new Thread(RunLiveEventStreamChecks) { IsBackground = true, Name = "vo-regression-events" };
             _liveCheck.Start();
@@ -1702,6 +1704,134 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         }
     }
 
+    // Which save answers a wait: only one that started at or after the request. A save already
+    // running when the request came in ends first and does not count.
+    private void TestSaveWaitProof()
+    {
+        WorldSavePatch.OnWorldSaveStarted();
+        Thread.Sleep(20);
+        long requested = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        Thread.Sleep(20);
+        WorldSavePatch.EndSavePostfix(true);
+        WorldSavePatch.Pump();
+        string early = LiveMapHttpServer.WaitForSave(ConsoleSaveResult.Success(true), requested, 1, out string earlyOutcome);
+        Check(earlyOutcome == "save not finished" && early.StartsWith("{\"ok\":false,\"saved\":false,\"error\":\"save not finished\"", StringComparison.Ordinal),
+            "a save that started before the request does not answer it (" + early + ")");
+        WorldSavePatch.OnWorldSaveStarted();
+        WorldSavePatch.EndSavePostfix(true);
+        WorldSavePatch.Pump();
+        string ours = LiveMapHttpServer.WaitForSave(ConsoleSaveResult.Success(true), requested, 1, out string oursOutcome);
+        Check(oursOutcome == "saved" && ours.StartsWith("{\"ok\":true,\"saved\":true,\"alreadySaving\":true,", StringComparison.Ordinal),
+            "the save that started after it does (" + ours + ")");
+        Thread.Sleep(20);
+        long again = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        WorldSavePatch.OnWorldSaveStarted();
+        WorldSavePatch.OnLogMessage("World save (5/5) FAILED. Total time [3ms]", "", LogType.Error);
+        WorldSavePatch.EndSavePostfix(false);
+        WorldSavePatch.Pump();
+        string failed = LiveMapHttpServer.WaitForSave(ConsoleSaveResult.Success(false), again, 1, out string failedOutcome);
+        Check(failedOutcome == "save failed: write" && failed.Contains("\"error\":\"save failed\",\"stage\":\"write\",\"message\":\"World save (5/5) FAILED. Total time [3ms]\""),
+            "a failed save answers with its stage and the game's line (" + failed + ")");
+        string refused = LiveMapHttpServer.WaitForSave(ConsoleSaveResult.Failure("world not loaded"), again, 1, out _);
+        Check(refused == "{\"ok\":false,\"saved\":false,\"error\":\"world not loaded\"}", "a save that could not start says why");
+    }
+
+    // The save a host makes before every stop goes to the game's world save directly. With the game's
+    // Console gone (a mod built for an older game build can break Console.Awake), the console command
+    // path fails and the direct save still writes the world.
+    private void TestDirectSaveWithoutConsole()
+    {
+        Check(LiveMapHttpServer.ConsoleGateAllows("/api/admin/save", false, false), "the save is served with the web console off");
+        FieldInfo consoleField = AccessTools.Field(typeof(global::Console), "m_instance");
+        object? console = consoleField.GetValue(null);
+        Type behaviourType = typeof(ValheimOnePlugin).Assembly.GetType("ValheimOne.LiveMap.LiveMapBehaviour", true)!;
+        object behaviour = AccessTools.Property(behaviourType, "Instance").GetValue(null, null)!;
+        object bridge = AccessTools.Field(behaviourType, "_consoleBridge").GetValue(behaviour)!;
+        World world = ZNet.World!;
+        string folder = SaveSystem.GetWorldsSaveRootPath(world.m_fileSource) + "/" + world.m_worldName;
+        consoleField.SetValue(null, null);
+        try
+        {
+            object viaConsole = AccessTools.Method(bridge.GetType(), "ExecuteCommandOnMainThread").Invoke(bridge, new object[] { "save" })!;
+            Check((string?)ReadMember(viaConsole, "Error") == "console unavailable", "with the Console gone, the console save fails (as on the broken server)");
+            long requested = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            DateTime newestBefore = NewestWrite(folder);
+            ConsoleSaveResult result = ConsoleBridge.SaveOnMainThread(RunningLog());
+            Check(result.Ok, "the direct save starts with the Console gone (" + result.Error + ")");
+            DateTime until = DateTime.UtcNow.AddSeconds(60);
+            while (DateTime.UtcNow < until && WorldSavePatch.LastSavedStartedUnixMs < requested && WorldSavePatch.LastSaveFailedStartedUnixMs < requested)
+            {
+                Thread.Sleep(100);
+                WorldSavePatch.Pump();
+            }
+
+            Check(WorldSavePatch.LastSavedStartedUnixMs >= requested && WorldSavePatch.LastSavedUnixMs >= WorldSavePatch.LastSavedStartedUnixMs,
+                "the direct save finished: lastSavedUnixMs moved on (" + (WorldSavePatch.LastSavedUnixMs - requested) + " ms after the request)");
+            Check(NewestWrite(folder) > newestBefore, "the world folder was written (" + Path.GetFileName(folder) + ")");
+        }
+        finally
+        {
+            consoleField.SetValue(null, console);
+        }
+    }
+
+    private static DateTime NewestWrite(string folder)
+    {
+        DateTime newest = DateTime.MinValue;
+        if (!Directory.Exists(folder)) return newest;
+        foreach (string file in Directory.GetFiles(folder))
+        {
+            DateTime written = File.GetLastWriteTimeUtc(file);
+            if (written > newest) newest = written;
+        }
+
+        return newest;
+    }
+
+    // The save over HTTP as the host calls it before a stop: ?wait answers when this save has ended.
+    private void CheckLiveSave(string root, string token)
+    {
+        World? world = ZNet.World;
+        string folder = world == null ? "" : SaveSystem.GetWorldsSaveRootPath(world.m_fileSource) + "/" + world.m_worldName;
+        DateTime before = NewestWrite(folder);
+        long requested = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        string waited = PostAdmin(root, token, "/api/admin/save?wait=90", out int waitedCode);
+        var saved = System.Text.RegularExpressions.Regex.Match(waited, "\"savedUnixMs\":([0-9]+)");
+        LiveResult(waitedCode == 200 && waited.StartsWith("{\"ok\":true,\"saved\":true,", StringComparison.Ordinal) && saved.Success &&
+                   long.Parse(saved.Groups[1].Value) >= requested && waited.Contains("\"durationMs\":"),
+            "the save with wait answers when the save has ended (" + waited + ")");
+        LiveResult(NewestWrite(folder) > before, "and the world folder was written by then");
+        string quick = PostAdmin(root, token, "/api/admin/save", out int quickCode);
+        LiveResult(quickCode == 200 && quick.StartsWith("{\"ok\":true,\"alreadySaving\":", StringComparison.Ordinal) && !quick.Contains("\"saved\""),
+            "without wait the save answers at once in the old shape (" + quick + ")");
+        PostAdmin(root, "", "/api/admin/save?wait=5", out int anonymous);
+        LiveResult(anonymous == 401, "no token, no save (HTTP " + anonymous + ")");
+    }
+
+    private static string PostAdmin(string root, string token, string path, out int code)
+    {
+        var request = (HttpWebRequest)WebRequest.Create(root + path);
+        request.Method = "POST";
+        request.ContentLength = 0;
+        if (token.Length > 0) request.Headers["X-LiveMap-Token"] = token;
+        request.Timeout = 120000;
+        request.ReadWriteTimeout = 120000;
+        request.KeepAlive = false;
+        try
+        {
+            using var response = (HttpWebResponse)request.GetResponse();
+            code = (int)response.StatusCode;
+            using var reader = new StreamReader(response.GetResponseStream());
+            return reader.ReadToEnd();
+        }
+        catch (WebException exception) when (exception.Response is HttpWebResponse refused)
+        {
+            code = (int)refused.StatusCode;
+            refused.Close();
+            return "";
+        }
+    }
+
     // 0.13.28: a failed crossplay login on a dedicated server is retried after 5-20 s, at most 5 times since the last
     // success; a banned account is not; then the game's own failure path runs.
     private void TestPlayFabRetryPolicy()
@@ -1767,6 +1897,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             }
 
             CheckLiveDoctor(root, token);
+            CheckLiveSave(root, token);
 
             int publicTaken = FillSlots(slots, EventStreamView.Public);
             int sharedTaken = FillSlots(slots, EventStreamView.Shared);

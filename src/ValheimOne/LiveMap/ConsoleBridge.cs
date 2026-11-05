@@ -445,6 +445,10 @@ internal sealed class ConsoleBridge
         }
     }
 
+    // The game's own world save, called directly: never through the game's Console object (a broken
+    // mod can leave the Console without commands or missing altogether) and without the console
+    // command's once-a-minute limit, so a save asked for right before a stop always runs. The disk
+    // check the game makes first stays; if that check itself throws, the save still goes ahead.
     internal static ConsoleSaveResult SaveOnMainThread(ModLogger? log)
     {
         ZNet? network = ZNet.instance;
@@ -453,10 +457,30 @@ internal sealed class ConsoleBridge
             return ConsoleSaveResult.Failure("server unavailable");
         }
 
+        if (ZNet.World == null)
+        {
+            return ConsoleSaveResult.Failure("world not loaded");
+        }
+
         try
         {
+            bool enoughDisk = true;
+            try
+            {
+                enoughDisk = network.EnoughDiskSpaceAvailable(out _);
+            }
+            catch (Exception exception)
+            {
+                LogException(log, "disk space check failed; saving anyway", exception);
+            }
+
+            if (!enoughDisk)
+            {
+                return ConsoleSaveResult.Failure("not enough disk space to save");
+            }
+
             bool alreadySaving = network.IsSaving();
-            network.SaveWorldAndPlayerProfiles();
+            network.Save(sync: false, saveOtherPlayerProfiles: true, waitForNextFrame: false);
             return ConsoleSaveResult.Success(alreadySaving);
         }
         catch (Exception exception)

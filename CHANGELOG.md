@@ -13,6 +13,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Changed
 
+- `/api/admin/save` runs the game's world save directly instead of the save behind the console's `save` command: it no longer depends on the in-game console (a mod built for an older game version can leave it broken, and every console command then fails), it no longer needs `ConsoleEnabled`, and it is not refused for coming within a minute of the last save. `?wait=<seconds>` makes it answer when this save has ended, saved or not, so a host can save before a stop without reading the log.
 - `world.save` in the activity feed, the Discord save notice and `lastSavedUnixMs` now come at the end of a save that worked, with `durationMs`. Until now they came when a save started, so a save that failed still read as saved.
 
 ## [0.13.29] - 2026-10-28

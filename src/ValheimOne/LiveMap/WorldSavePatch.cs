@@ -25,6 +25,11 @@ internal static class WorldSavePatch
     private static long _lastSaveFailedUnixMs;
     private static long _lastSaveDurationMs;
     private static long _saveStartedTimestamp;
+    private static long _saveStartedUnixMs;
+    private static long _pendingStartedUnixMs;
+    private static long _lastSavedStartedUnixMs;
+    private static long _lastSaveFailedStartedUnixMs;
+    private static volatile WorldSaveFailure? _lastFailure;
     private static int _pendingOutcome;
     private static long _pendingTimestamp;
     private static long _pendingUnixMs;
@@ -43,6 +48,15 @@ internal static class WorldSavePatch
 
     // From the game's save start to its end, for the last save that worked.
     public static long LastSaveDurationMs => Interlocked.Read(ref _lastSaveDurationMs);
+
+    // When the last save that worked, and the last one that failed, started: a caller that asked for a
+    // save at T knows its own save ended once one of these is T or later (a save already running at T
+    // started earlier, and the game runs the asked-for save after it).
+    public static long LastSavedStartedUnixMs => Interlocked.Read(ref _lastSavedStartedUnixMs);
+
+    public static long LastSaveFailedStartedUnixMs => Interlocked.Read(ref _lastSaveFailedStartedUnixMs);
+
+    public static WorldSaveFailure? LastFailure => _lastFailure;
 
     public static void ApplyPatches(Harmony harmony, ModLogger log)
     {
@@ -69,6 +83,7 @@ internal static class WorldSavePatch
     internal static void OnWorldSaveStarted()
     {
         Interlocked.Exchange(ref _saveStartedTimestamp, Stopwatch.GetTimestamp());
+        Interlocked.Exchange(ref _saveStartedUnixMs, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         lock (MessageLock)
         {
             _saveMessage = string.Empty;
@@ -82,6 +97,7 @@ internal static class WorldSavePatch
         {
             Interlocked.Exchange(ref _pendingTimestamp, Stopwatch.GetTimestamp());
             Interlocked.Exchange(ref _pendingUnixMs, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            Interlocked.Exchange(ref _pendingStartedUnixMs, Interlocked.Read(ref _saveStartedUnixMs));
             Interlocked.Exchange(ref _pendingOutcome, __1 ? 1 : 2);
         }
         catch
@@ -158,16 +174,19 @@ internal static class WorldSavePatch
                 ? (long)((endedTimestamp - started) * 1000d / Stopwatch.Frequency)
                 : 0L;
             Interlocked.Exchange(ref _lastSaveDurationMs, duration);
+            Interlocked.Exchange(ref _lastSavedStartedUnixMs, Interlocked.Read(ref _pendingStartedUnixMs));
             Interlocked.Exchange(ref _lastSavedUnixMs, endedUnixMs);
             Raise(WorldSaved, "world saved");
             return;
         }
 
-        Interlocked.Exchange(ref _lastSaveFailedUnixMs, endedUnixMs);
         var failure = new WorldSaveFailure(
             message.StartsWith("Error saving world!", StringComparison.Ordinal) ? "exception" : "write",
             message,
             endedUnixMs);
+        _lastFailure = failure;
+        Interlocked.Exchange(ref _lastSaveFailedStartedUnixMs, Interlocked.Read(ref _pendingStartedUnixMs));
+        Interlocked.Exchange(ref _lastSaveFailedUnixMs, endedUnixMs);
         Action<WorldSaveFailure>? callbacks = WorldSaveFailed;
         if (callbacks != null)
         {

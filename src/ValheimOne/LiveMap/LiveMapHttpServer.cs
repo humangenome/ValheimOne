@@ -678,11 +678,12 @@ internal sealed class LiveMapHttpServer
                path == "/api/stats/history";
     }
 
-    // Every console path needs the access token. Most also need the web console on; chat, ship tow
-    // and the server numbers (/api/stats and its history) do not.
+    // Every console path needs the access token. Most also need the web console on; chat, ship tow,
+    // the world save (a host saves before every stop) and the server numbers (/api/stats and its
+    // history) do not.
     internal static bool ConsoleGateAllows(string path, bool consoleEnabled, bool consoleLogRunning)
     {
-        if (path == "/api/admin/tow" || path == "/api/admin/chat" ||
+        if (path == "/api/admin/tow" || path == "/api/admin/chat" || path == "/api/admin/save" ||
             path == "/api/stats" || path == "/api/stats/history")
         {
             return true;
@@ -1907,10 +1908,23 @@ internal sealed class LiveMapHttpServer
         WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
 
+    // POST /api/admin/save: the game's own world save, never through the game's Console. With
+    // ?wait=<seconds> (1..120) the answer comes when this save has ended: "saved":true with its end
+    // time and duration, or "saved":false with the reason. Without wait it answers at once, as before.
     private void ServeSave(HttpListenerRequest request, HttpListenerResponse response)
     {
         ReadAuditIdentity(request, out string operatorName, out string source);
+        int waitSeconds = (int)Math.Max(0L, Math.Min(MaximumSaveWaitSeconds, ParseLong(request.QueryString["wait"], 0L)));
+        long requestedUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         ConsoleSaveResult result = _consoleBridge!.Save();
+        if (waitSeconds > 0)
+        {
+            string waited = WaitForSave(result, requestedUnixMs, waitSeconds, out string outcome);
+            _activityLog.RecordAdminAction(operatorName, "save", null, outcome == "saved" ? "ok" : "error", outcome, source);
+            WriteJson(response, HttpStatusCode.OK, waited);
+            return;
+        }
+
         _activityLog.RecordAdminAction(
             operatorName,
             "save",
@@ -1924,6 +1938,50 @@ internal sealed class LiveMapHttpServer
             ? "{\"ok\":true,\"alreadySaving\":" + (result.AlreadySaving ? "true" : "false") + "}"
             : "{\"ok\":false,\"error\":" + JsonWriter.Quote(result.Error) + "}";
         WriteJson(response, HttpStatusCode.OK, json);
+    }
+
+    private const int MaximumSaveWaitSeconds = 120;
+
+    // Waits for the save that answers a request made at requestedUnixMs: one that started at or after
+    // it. A save already running then ends first and does not count.
+    internal static string WaitForSave(ConsoleSaveResult result, long requestedUnixMs, int waitSeconds, out string outcome)
+    {
+        if (!result.Ok)
+        {
+            outcome = result.Error;
+            return "{\"ok\":false,\"saved\":false,\"error\":" + JsonWriter.Quote(result.Error) + "}";
+        }
+
+        DateTime until = DateTime.UtcNow.AddSeconds(waitSeconds);
+        while (true)
+        {
+            if (WorldSavePatch.LastSavedStartedUnixMs >= requestedUnixMs)
+            {
+                outcome = "saved";
+                return "{\"ok\":true,\"saved\":true,\"alreadySaving\":" + (result.AlreadySaving ? "true" : "false") +
+                       ",\"savedUnixMs\":" + WorldSavePatch.LastSavedUnixMs.ToString(CultureInfo.InvariantCulture) +
+                       ",\"durationMs\":" + WorldSavePatch.LastSaveDurationMs.ToString(CultureInfo.InvariantCulture) + "}";
+            }
+
+            WorldSaveFailure? failure = WorldSavePatch.LastFailure;
+            if (WorldSavePatch.LastSaveFailedStartedUnixMs >= requestedUnixMs && failure != null)
+            {
+                outcome = "save failed: " + failure.Stage;
+                return "{\"ok\":false,\"saved\":false,\"error\":\"save failed\",\"stage\":" + JsonWriter.Quote(failure.Stage) +
+                       ",\"message\":" + JsonWriter.Quote(failure.Message) +
+                       ",\"failedUnixMs\":" + failure.UnixMs.ToString(CultureInfo.InvariantCulture) + "}";
+            }
+
+            if (DateTime.UtcNow >= until)
+            {
+                outcome = "save not finished";
+                return "{\"ok\":false,\"saved\":false,\"error\":\"save not finished\",\"waitedMs\":" +
+                       (waitSeconds * 1000).ToString(CultureInfo.InvariantCulture) +
+                       ",\"alreadySaving\":" + (result.AlreadySaving ? "true" : "false") + "}";
+            }
+
+            Thread.Sleep(100);
+        }
     }
 
     private void ServeTow(HttpListenerRequest request, HttpListenerResponse response)
