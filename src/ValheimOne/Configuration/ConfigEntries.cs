@@ -52,6 +52,9 @@ public sealed class ConfigEntryString : IConfigEntry
     public string Value => _settings.GetEffectiveValue(_entry, Definition);
 
     public string GetSerializedValue() => Value;
+
+    // The local file's value (BepInEx writes the file when it changes): for one-shot settings.
+    internal void SetLocalValue(string value) => _entry.Value = value;
 }
 
 public sealed class ConfigEntryInt : IConfigEntry

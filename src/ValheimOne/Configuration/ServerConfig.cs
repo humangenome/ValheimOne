@@ -30,6 +30,12 @@ public sealed class ServerConfig
             "Gameplay-effective player cap for the dedicated server. Zero keeps Valheim's default cap of 10. " +
             "Values above 10 raise the real join limit (clamped 1..127). The direct join gate hot-reloads; " +
             "on crossplay the PlayFab lobby capacity is applied once at boot.");
+        NewWorldSeed = _feature.String(
+            "NewWorldSeed",
+            string.Empty,
+            "One-shot seed for a new world (1 to 10 letters or digits). When the world named on the command line " +
+            "does not exist yet, the dedicated server creates it with this seed instead of a random one. Either way " +
+            "the setting is cleared after the start and the log says what happened; an existing world is never changed.");
         NoPasswordRequired = _feature.Bool(
             "NoPasswordRequired",
             defaultValue: false,
@@ -40,6 +46,8 @@ public sealed class ServerConfig
     public bool Enabled => _feature.Enabled.Value;
 
     public ConfigEntryBool EnforceMod { get; }
+
+    public ConfigEntryString NewWorldSeed { get; }
 
     public ConfigEntryBool SyncConfig { get; }
 

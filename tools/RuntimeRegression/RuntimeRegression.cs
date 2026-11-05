@@ -138,6 +138,8 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestWorldSaveEvents();
             TestBossDefeated();
             TestRaidEventName();
+            TestWorldSaveSummary();
+            TestNewWorldSeed();
             _liveDeadline = Time.realtimeSinceStartup + 330f;
             _liveCheck = new Thread(RunLiveEventStreamChecks) { IsBackground = true, Name = "vo-regression-events" };
             _liveCheck.Start();
@@ -1702,6 +1704,152 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         }
     }
 
+    // <world>.valheimone.json: valid JSON for any player name, written whole, never after a failed save.
+    private void TestWorldSaveSummary()
+    {
+        string[] names = { "a\"b", "c\\d", "e\nf", "g\u0001h", "Ragnar \U0001FA93", "\uD800x", "p\u2028q", "</script>" };
+        string json = WorldSaveSummary.BuildJson("World \"One\"", "AbCdEfGhIj", 42, new[] { "defeated_eikthyr" }, names, 1234567890123L, "0.13.29", "1.0.21");
+        Check(json == "{\"worldName\":\"World \\\"One\\\"\",\"seedName\":\"AbCdEfGhIj\",\"day\":42,\"bossesDefeated\":[\"defeated_eikthyr\"]," +
+                      "\"playersSinceLastSave\":[\"a\\\"b\",\"c\\\\d\",\"e\\nf\",\"g\\u0001h\",\"Ragnar \U0001FA93\",\"�x\",\"p\\u2028q\",\"</script>\"]," +
+                      "\"savedUnixMs\":1234567890123,\"pluginVersion\":\"0.13.29\",\"gameVersion\":\"1.0.21\"}",
+            "the summary escapes quotes, backslashes, control characters and U+2028, keeps real characters and replaces half pairs");
+        string probe = Path.Combine(_root, "summary-names.json");
+        File.WriteAllText(probe, json, new System.Text.UTF8Encoding(false));
+
+        string dir = Path.Combine(_root, "summary-test");
+        Directory.CreateDirectory(dir);
+        string path = WorldSaveSummary.SummaryPath(dir, "Test World");
+        Check(Path.GetFileName(path) == "Test World.valheimone.json", "the summary sits beside the world as <world>.valheimone.json");
+        WorldSaveSummary.WriteAtomically(path, "{\"first\":1}");
+        WorldSaveSummary.WriteAtomically(path, "{\"second\":2}");
+        Check(File.ReadAllText(path) == "{\"second\":2}" && !File.Exists(path + ".tmp"),
+            "a new summary replaces the old one whole and leaves no temporary file");
+
+        World? world = ZNet.World;
+        Check(world != null, "the running world is readable for the summary checks");
+        string live = WorldSaveSummary.SummaryPath(SaveSystem.GetWorldsSaveRootPath(world!.m_fileSource), world.m_worldName);
+        ZoneSystem zones = ZoneSystem.instance;
+        MethodInfo rpc = AccessTools.Method(typeof(ZoneSystem), "RPC_SetGlobalKey", new[] { typeof(long), typeof(string) });
+        MethodInfo remove = AccessTools.Method(typeof(ZoneSystem), "GlobalKeyRemove", new[] { typeof(string), typeof(bool) });
+        bool had = zones.GetGlobalKeyExact("defeated_bonemass");
+        try
+        {
+            rpc.Invoke(zones, new object[] { 0L, "defeated_bonemass" });
+            DateTime before = File.Exists(live) ? File.GetLastWriteTimeUtc(live) : DateTime.MinValue;
+            WorldSavePatch.OnWorldSaveStarted();
+            WorldSavePatch.EndSavePostfix(true);
+            WorldSavePatch.Pump();
+            string written = WaitForFileChange(live, before, 5000);
+            Check(written.Contains("\"worldName\":\"" + world.m_name + "\"") && written.Contains("\"seedName\":\"" + world.m_seedName + "\"") &&
+                  written.Contains("\"bossesDefeated\":[") && written.Contains("\"defeated_bonemass\"") &&
+                  written.Contains("\"playersSinceLastSave\":[]") && written.Contains("\"savedUnixMs\":" + WorldSavePatch.LastSavedUnixMs + ",") &&
+                  written.Contains("\"pluginVersion\":\"" + ValheimOnePlugin.PluginVersion + "\"") && written.Contains("\"gameVersion\":\"1."),
+                "a save that worked writes the summary beside the world (" + written + ")");
+            DateTime afterGood = File.GetLastWriteTimeUtc(live);
+            WorldSavePatch.OnWorldSaveStarted();
+            WorldSavePatch.OnLogMessage("Error saving world! regression check", "", LogType.Error);
+            WorldSavePatch.EndSavePostfix(false);
+            WorldSavePatch.Pump();
+            Thread.Sleep(1500);
+            Check(File.GetLastWriteTimeUtc(live) == afterGood && File.ReadAllText(live) == written && !File.Exists(live + ".tmp"),
+                "a failed save writes nothing new");
+        }
+        finally
+        {
+            if (!had) remove.Invoke(zones, new object[] { "defeated_bonemass", true });
+        }
+    }
+
+    private static string WaitForFileChange(string path, DateTime before, int milliseconds)
+    {
+        DateTime until = DateTime.UtcNow.AddMilliseconds(milliseconds);
+        while (DateTime.UtcNow < until)
+        {
+            if (File.Exists(path) && File.GetLastWriteTimeUtc(path) > before) return File.ReadAllText(path);
+            Thread.Sleep(50);
+        }
+
+        return File.Exists(path) ? File.ReadAllText(path) : "";
+    }
+
+    // [Server] NewWorldSeed: only a world that does not exist yet takes it, once; then it is cleared.
+    private void TestNewWorldSeed()
+    {
+        Check(NewWorldSeed.IsValid("AbCdEfGh12") && NewWorldSeed.IsValid("x") && !NewWorldSeed.IsValid("") &&
+              !NewWorldSeed.IsValid("ElevenChars") && !NewWorldSeed.IsValid("has space") && !NewWorldSeed.IsValid("emoji\U0001FA93"),
+            "a seed is 1 to 10 letters or digits");
+        object host = AccessTools.Field(typeof(ServerHostModule), "_active").GetValue(null)!;
+        var server = (ServerConfig)AccessTools.Field(typeof(ServerHostModule), "_serverConfig").GetValue(host)!;
+        ConfigEntryString setting = server.NewWorldSeed;
+        ModLogger log = RunningLog();
+        Check(Harmony.GetPatchInfo(AccessTools.Method(typeof(World), nameof(World.GenerateSeed)))?.Prefixes.Count > 0,
+            "the game's new-world seed is patched on the dedicated server");
+        Func<string, bool> realExists = NewWorldSeed.WorldExists;
+        try
+        {
+            setting.SetLocalValue("Seed42");
+            NewWorldSeed.ResetForTest(setting, log, "NoSuchWorld");
+            NewWorldSeed.WorldExists = _ => false;
+            string first = World.GenerateSeed();
+            string second = World.GenerateSeed();
+            Check(first == "Seed42" && second != "Seed42" && second.Length == 10, "a new world takes the seed once; anything after gets a random one");
+
+            NewWorldSeed.ResetForTest(setting, log, "SmokeWorld");
+            NewWorldSeed.WorldExists = _ => true;
+            Check(World.GenerateSeed() != "Seed42", "a world that exists (one being replaced after a load error) never takes the seed");
+
+            setting.SetLocalValue("bad seed!");
+            NewWorldSeed.ResetForTest(setting, log, "NoSuchWorld");
+            NewWorldSeed.WorldExists = _ => false;
+            Check(World.GenerateSeed() != "bad seed!", "a seed that is not letters and digits is not used");
+
+            setting.SetLocalValue("Seed42");
+            NewWorldSeed.ResetForTest(setting, log, ZNet.World!.m_name);
+            NewWorldSeed.Settle();
+            Check(setting.Value == "", "with the world already there the setting is ignored and cleared");
+
+            string current = ZNet.World!.m_seedName;
+            setting.SetLocalValue(current);
+            NewWorldSeed.ResetForTest(setting, log, "NoSuchWorld");
+            NewWorldSeed.WorldExists = _ => false;
+            Check(World.GenerateSeed() == current, "the seed is handed over");
+            NewWorldSeed.Settle();
+            Check(setting.Value == "", "after the new world is made with it the setting is cleared");
+        }
+        finally
+        {
+            NewWorldSeed.WorldExists = realExists;
+            setting.SetLocalValue(string.Empty);
+        }
+    }
+
+    // The summary on the running map after a real save, read from disk off the main thread.
+    private void CheckLiveSummary()
+    {
+        World? world = ZNet.World;
+        if (world == null)
+        {
+            LiveResult(false, "the running world is readable for the live summary check");
+            return;
+        }
+
+        string path = WorldSaveSummary.SummaryPath(SaveSystem.GetWorldsSaveRootPath(world.m_fileSource), world.m_worldName);
+        long since = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - 600000L;
+        string text = "";
+        DateTime until = DateTime.UtcNow.AddSeconds(150);
+        while (DateTime.UtcNow < until)
+        {
+            text = File.Exists(path) ? File.ReadAllText(path) : "";
+            var match = System.Text.RegularExpressions.Regex.Match(text, "\"savedUnixMs\":([0-9]+)");
+            if (match.Success && long.Parse(match.Groups[1].Value) == WorldSavePatch.LastSavedUnixMs && WorldSavePatch.LastSavedUnixMs > since) break;
+            Thread.Sleep(2000);
+        }
+
+        LiveResult(text.StartsWith("{\"worldName\":\"" + world.m_name + "\",\"seedName\":\"" + world.m_seedName + "\",\"day\":", StringComparison.Ordinal) &&
+                   text.Contains("\"savedUnixMs\":" + WorldSavePatch.LastSavedUnixMs + ","),
+            "a real save of the running world leaves its summary beside the world (" + Path.GetFileName(path) + ")");
+    }
+
     // 0.13.28: a failed crossplay login on a dedicated server is retried after 5-20 s, at most 5 times since the last
     // success; a banned account is not; then the game's own failure path runs.
     private void TestPlayFabRetryPolicy()
@@ -1767,6 +1915,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             }
 
             CheckLiveDoctor(root, token);
+            CheckLiveSummary();
 
             int publicTaken = FillSlots(slots, EventStreamView.Public);
             int sharedTaken = FillSlots(slots, EventStreamView.Shared);
