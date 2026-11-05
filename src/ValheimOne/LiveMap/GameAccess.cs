@@ -19,6 +19,22 @@ internal static class GameAccess
     private static readonly Lazy<FieldInfo?> ObjectsBySectorField = new(
         () => AccessTools.Field(typeof(ZDOMan), "m_objectsBySector"));
 
+    // Valheim 1.0 keeps a loaded world's portals in their own lists, outside the sector table, until
+    // their zone loads; a walk over every object reads both.
+    private static readonly Lazy<FieldInfo?> PortalObjectsField = new(
+        () => AccessTools.Field(typeof(ZDOMan), "m_portalObjects"));
+
+    public static List<ZDO>[]? GetZdoSectors(ZDOMan manager)
+    {
+        return ObjectsBySectorField.Value?.GetValue(manager) as List<ZDO>[];
+    }
+
+    // Null when this game build has no separate portal lists.
+    public static IDictionary? GetPortalObjectLists(ZDOMan manager)
+    {
+        return PortalObjectsField.Value?.GetValue(manager) as IDictionary;
+    }
+
     public static World? GetWorld()
     {
         return WorldField.Value.GetValue(null) as World;

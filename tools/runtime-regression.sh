@@ -18,6 +18,9 @@ export VALHEIMONE_BROWSER_HOLD_SECONDS="$browser_hold"
 console_result="$backup/console-result.txt"
 export CONSOLE_PROBE_TOKEN
 CONSOLE_PROBE_TOKEN=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
+# A share token too, so the live checks can ask for the shared view (the seed stays admin only).
+export VALHEIMONE_SHARE_TOKEN
+VALHEIMONE_SHARE_TOKEN=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
 # 0.13.27: every run sets a relay key, so every live check also proves the machine's own
 # (loopback) calls are served without it. VALHEIMONE_RELAY_KEY= (empty) runs without one.
 export VALHEIMONE_RELAY_KEY
@@ -80,7 +83,10 @@ cfg['CookingStation'].update({'Enabled':'true','AutoFuel':'true','AutoFeedRaw':'
 cfg['ProductionSpeeds'].update({'Enabled':'true','SmelterProductionSeconds':'5','SmelterMaxQueue':'12','SmelterMaxFuel':'12'})
 cfg['LiveMap'].update({'Enabled':'true', 'ConsoleEnabled':'true', 'BindIp':'127.0.0.1',
     'Port':'24583', 'TextureSize':'512', 'AccessToken':os.environ['CONSOLE_PROBE_TOKEN'],
+    'ShareToken':os.environ['VALHEIMONE_SHARE_TOKEN'],
     'PublicView':'false', 'StatusPublic':'false', 'RelayKey':os.environ['VALHEIMONE_RELAY_KEY']})
+# the entity tests compare the one-pass walk with the old per-prefab search on this map's settings
+cfg['LiveMap']['EntityLayer']='true'
 if int(os.environ['VALHEIMONE_BROWSER_HOLD_SECONDS']) > 0:
     cfg['LiveMap'].update({'PublicView':'true', 'FogMode':'trails', 'FogHideUnexplored':'true',
         'PublicWebPins':'true', 'SharedPinEditing':'true',
@@ -104,8 +110,9 @@ CONSOLE_PROBE_URL=http://127.0.0.1:24583 CONSOLE_PROBE_RESULT="$console_result" 
     -world SmokeWorld -password regression1 -savedir "$backup/worlds" -nographics -batchmode -public 0 $crossplay_arg \
     > "$output/server.log" 2>&1 9>&- &
 pid=$!
-# the live checks wait for the history's first minute and for a real save's end
-deadline=$((SECONDS + 360))
+# the live checks wait for the history's first minute, a real save's end and an object census (which waits
+# for the map's own bases survey after a start)
+deadline=$((SECONDS + 480))
 while (( SECONDS < deadline )); do
     if [[ -f "$config/runtime-regression/result.txt" && -f "$console_result" ]]; then break; fi
     if [[ -f "$server/BepInEx/LogOutput.log" ]] &&

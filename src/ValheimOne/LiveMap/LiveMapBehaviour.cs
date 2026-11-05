@@ -33,6 +33,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private ResourcePoiTracker? _resourcePoiTracker;
     private DungeonRegistry? _dungeonRegistry;
     private PlayerBaseTracker? _playerBaseTracker;
+    private ObjectCensus? _objectCensus;
     private LiveMapHttpServer? _httpServer;
     private LogRingBuffer? _logRingBuffer;
     private ConsoleBridge? _consoleBridge;
@@ -158,6 +159,9 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             return;
         }
 
+#if VALHEIMONE_LAB
+        LabSwitches.Poll(_log);
+#endif
         VoCommands.PumpSessionTimes();
         _consoleBridge?.Pump();
         _statsHistory?.Tick(Time.deltaTime, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), _readGauges);
@@ -228,6 +232,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _resourcePoiTracker?.Tick(now);
         _dungeonRegistry?.Tick(now);
         _playerBaseTracker?.Tick();
+        _objectCensus?.Tick();
         if (_timelapseRecorder != null && now >= _nextTimelapseCheckTime)
         {
             _nextTimelapseCheckTime = now + 60f;
@@ -445,6 +450,9 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             _activityLog!,
             log);
         _httpServer.StatsHistory = _statsHistory;
+        var objectCensus = new ObjectCensus(log, () => playerBaseTracker.Snapshot.Scanning);
+        _objectCensus = objectCensus;
+        _httpServer.ObjectCensus = objectCensus;
         _httpServer.Start();
 
         float now = Time.realtimeSinceStartup;
@@ -913,6 +921,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         _leaderboardStore = null;
         _playerBaseTracker?.Stop();
         _playerBaseTracker = null;
+        _objectCensus?.Stop();
+        _objectCensus = null;
         _fogTracker?.Stop();
         _fogTracker = null;
         _renderer?.Stop();

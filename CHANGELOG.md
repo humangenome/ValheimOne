@@ -10,11 +10,13 @@ All notable changes to ValheimOne will be documented in this file. This project 
 - `/api/stats` gives `workingSetBytes`, the memory the whole server process holds (the existing `monoHeapBytes` is only part of it), and answers the access token with the web console off too.
 - Activity feed: `boss.defeated` on every boss kill (`firstTime` true the first time a boss falls in this world), `world.save_failed` with the game's own reason when a save fails, the game's event name on `raid.start` and `raid.end`, and `bootUnixMs` on `/api/activity` so a reader knows when the feed's ids started again.
 - `/api/status` gives the admin view `lastSaveFailedUnixMs`.
+- `/api/stats/objects`, an object census for the admin view: which object kinds fill the world (the 20 most common) and which players built the most (the 20 top builders, named where a bed, tombstone, ward or online character names them). `POST` starts it, `GET` reads it; it reads the world a slice per frame, at most 2 ms of each frame, so even a world of millions of objects never pauses for it. Details in `docs/query.md`.
 
 ### Changed
 
 - `/api/admin/save` runs the game's world save directly instead of the save behind the console's `save` command: it no longer depends on the in-game console (a mod built for an older game version can leave it broken, and every console command then fails), it no longer needs `ConsoleEnabled`, and it is not refused for coming within a minute of the last save. `?wait=<seconds>` makes it answer when this save has ended, saved or not, so a host can save before a stop without reading the log.
 - `world.save` in the activity feed, the Discord save notice and `lastSavedUnixMs` now come at the end of a save that worked, with `durationMs`. Until now they came when a save started, so a save that failed still read as saved.
+- The entity layer (ships, carts, portals, tombstones, wards, beds and creatures) now reads the world once per refresh for every kind together, at most 2 ms of each frame. It used to search the whole world once per kind, 21 times when ships and creatures were both shown, with no time limit per frame, so on a large world it used a lot of the server's time while a map was open. What the layer shows is unchanged.
 
 ## [0.13.29] - 2026-10-28
 
