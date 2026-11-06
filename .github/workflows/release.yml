@@ -147,6 +147,9 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          # The leak gate's named terms come from a repository secret, and only on a tag push: a manual run never gets
+          # them, so a manual run that would create a release is refused below (--require-named).
+          VALHEIMONE_LEAK_PATTERN: ${{ github.event_name == 'push' && secrets.VALHEIMONE_LEAK_PATTERN || '' }}
         run: |
           set -euo pipefail
 
@@ -193,8 +196,13 @@ jobs:
             }
           done
 
-          # Nothing internal may survive the compile into a public binary.
-          tools/ci/leak-gate.sh "${RUNNER_TEMP}/shipped.dll" "${RUNNER_TEMP}/shipped.cfg"
+          # Nothing internal may survive the compile into a public binary. A run that creates a release must have
+          # the named terms; a dry run checks the generic shapes only.
+          if [[ ${DRY_RUN} == true ]]; then
+            tools/ci/leak-gate.sh "${RUNNER_TEMP}/shipped.dll" "${RUNNER_TEMP}/shipped.cfg"
+          else
+            tools/ci/leak-gate.sh --require-named "${RUNNER_TEMP}/shipped.dll" "${RUNNER_TEMP}/shipped.cfg"
+          fi
 
           echo "ARTIFACTS OK"
           cat "${sums}"
