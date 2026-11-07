@@ -65,17 +65,19 @@ public sealed class LiveMapModule : IFeatureModule
             "BindIp",
             string.Empty,
             "IP address to bind. Empty listens on all interfaces with a localhost fallback.");
-        ConfigEntryString accessToken = _feature.String(
+        // The three map keys are secrets: never sent to players' games with the synced settings and never
+        // printed by a config reload.
+        ConfigEntryString accessToken = _feature.SensitiveString(
             "AccessToken",
             string.Empty,
             "Optional token granting the admin map view as ?token= or X-LiveMap-Token.");
-        ConfigEntryString shareToken = _feature.String(
+        ConfigEntryString shareToken = _feature.SensitiveString(
             "ShareToken",
             string.Empty,
             "Optional token granting a shared spectator map view as ?token= or " +
             "X-LiveMap-Token: player names, configured Shared layers, and follow, but never console or admin " +
             "actions.");
-        ConfigEntryString relayKey = _feature.String(
+        ConfigEntryString relayKey = _feature.SensitiveString(
             "RelayKey",
             string.Empty,
             "Optional key a hosting relay sends as X-Relay-Key. When set, every map request without it is " +

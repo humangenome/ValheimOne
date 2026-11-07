@@ -131,6 +131,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestWorldData();
             TestEventStreamSlots();
             TestRelayKey();
+            TestSyncedSecrets();
             TestPlayFabRetryPolicy();
             _liveDeadline = Time.realtimeSinceStartup + 200f;
             _liveCheck = new Thread(RunLiveEventStreamChecks) { IsBackground = true, Name = "vo-regression-events" };
@@ -1414,6 +1415,35 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         Check(!LiveMapHttpServer.RelayAllows(key, outside.MapToIPv6(), null), "an IPv4-mapped outside caller is still refused");
         Check(!LiveMapHttpServer.RelayAllows(key, null, null), "a caller with no known address must carry the key");
         Check(LiveMapHttpServer.RelayKeyHeader == "X-Relay-Key", "the relay header name matches the panel's");
+    }
+
+    // The map's AccessToken, ShareToken and RelayKey stay on the server: the settings a server pushes to its
+    // players' ValheimOne at join, and the config reload log, never carry them. Uses the running plugin's own
+    // settings, which this run fills with a real token and relay key.
+    private void TestSyncedSecrets()
+    {
+        object plugin = Chainloader.PluginInfos[ValheimOnePlugin.PluginGuid].Instance;
+        var settings = (ValheimOneConfig)AccessTools.Field(typeof(ValheimOnePlugin), "_settings").GetValue(plugin)!;
+        string synced = ConfigSyncSerializer.Serialize(settings.Features);
+        Check(synced.Contains("[LiveMap] / PublicView="), "the settings sent to players still carry the map's other settings");
+        Check(settings.Features.TryGetFeature("LiveMap", out FeatureDefinition? map) && map != null, "the live map settings are registered");
+        foreach (string key in new[] { "AccessToken", "ShareToken", "RelayKey" })
+        {
+            Check(map != null && map.TryGetKey(key, out IConfigEntry? entry) && entry != null && entry.Definition.IsSensitive,
+                "[LiveMap] " + key + " is marked secret");
+            Check(synced.IndexOf("[LiveMap] / " + key + "=", StringComparison.Ordinal) < 0,
+                "[LiveMap] " + key + " is not in the settings sent to players");
+        }
+
+        string token = Environment.GetEnvironmentVariable("CONSOLE_PROBE_TOKEN") ?? "";
+        string relay = Environment.GetEnvironmentVariable("VALHEIMONE_RELAY_KEY") ?? "";
+        Check(token.Length > 0 && synced.IndexOf(token, StringComparison.Ordinal) < 0,
+            "this run's admin token value is not in the settings sent to players");
+        if (relay.Length > 0)
+        {
+            Check(synced.IndexOf(relay, StringComparison.Ordinal) < 0,
+                "this run's relay key value is not in the settings sent to players");
+        }
     }
 
     // 0.13.28: a failed crossplay login on a dedicated server is retried after 5-20 s, at most 5 times since the last
