@@ -4,6 +4,8 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.13.30] - 2026-11-07
+
 ### Security
 
 - The live map's `AccessToken`, `ShareToken` and `RelayKey` stay on the server. They were included in the settings a server sends to its players' ValheimOne when they join (`[Server] SyncConfig`), and a config reload printed their old and new values in the server log. They are now treated like the Discord webhook address: never sent to players and never printed, only "value changed". Players' games never use these keys, so nothing changes for them. If you run the live map with tokens and your players use ValheimOne, set new `AccessToken`, `ShareToken` and `RelayKey` values after updating.
