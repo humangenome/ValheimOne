@@ -1444,6 +1444,19 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             Check(synced.IndexOf(relay, StringComparison.Ordinal) < 0,
                 "this run's relay key value is not in the settings sent to players");
         }
+
+        // A live change of a map key goes through the hot reload, whose log line must not carry the value:
+        // the runner checks afterwards that this value is in no log and that the reload line was written.
+        string reloadShareToken = Environment.GetEnvironmentVariable("VALHEIMONE_RELOAD_SHARE_TOKEN") ?? "";
+        if (reloadShareToken.Length > 0)
+        {
+            string configPath = Path.Combine(Paths.ConfigPath, "valheimone.cfg");
+            string text = File.ReadAllText(configPath);
+            var shareLine = new System.Text.RegularExpressions.Regex(@"^ShareToken *=.*$",
+                System.Text.RegularExpressions.RegexOptions.Multiline);
+            Check(shareLine.Matches(text).Count == 1, "the config file has one ShareToken line to change live");
+            File.WriteAllText(configPath, shareLine.Replace(text, "ShareToken = " + reloadShareToken));
+        }
     }
 
     // 0.13.28: a failed crossplay login on a dedicated server is retried after 5-20 s, at most 5 times since the last

@@ -22,6 +22,10 @@ CONSOLE_PROBE_TOKEN=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
 # (loopback) calls are served without it. VALHEIMONE_RELAY_KEY= (empty) runs without one.
 export VALHEIMONE_RELAY_KEY
 VALHEIMONE_RELAY_KEY=${VALHEIMONE_RELAY_KEY-$(python3 -c 'import secrets; print(secrets.token_hex(16))')}
+# The map keys stay out of every log: the run changes ShareToken live to this value (not with a browser hold,
+# which uses its own ShareToken), and afterwards neither it, the admin token nor the relay key may appear in a log.
+export VALHEIMONE_RELOAD_SHARE_TOKEN=""
+[[ ${VALHEIMONE_BROWSER_HOLD_SECONDS:-0} == 0 ]] && VALHEIMONE_RELOAD_SHARE_TOKEN=$(python3 -c 'import secrets; print(secrets.token_hex(16))')
 # VALHEIMONE_RELAY_PROBE=1 also binds every address and checks an outside-address call is refused
 # without the key and served with it.
 relay_probe=${VALHEIMONE_RELAY_PROBE:-0}
@@ -146,6 +150,16 @@ trap - EXIT
 cp "$server/BepInEx/LogOutput.log" "$output/BepInEx.log"
 if [[ -n $VALHEIMONE_RELAY_KEY ]] && grep -qF "$VALHEIMONE_RELAY_KEY" "$output/BepInEx.log" "$output/server.log"; then
     echo 'The relay key appears in a log.' >&2
+    status=1
+fi
+for secret in "$CONSOLE_PROBE_TOKEN" "$VALHEIMONE_RELOAD_SHARE_TOKEN"; do
+    if [[ -n $secret ]] && grep -qF "$secret" "$output/BepInEx.log" "$output/server.log"; then
+        echo 'A live map token appears in a log.' >&2
+        status=1
+    fi
+done
+if [[ -n $VALHEIMONE_RELOAD_SHARE_TOKEN ]] && ! grep -qF 'Config hot-reload: [LiveMap] ShareToken: value changed' "$output/BepInEx.log"; then
+    echo 'The live ShareToken change was not reloaded, so the reload log was not checked.' >&2
     status=1
 fi
 if grep -qE 'Failed to patch|Feature patch application failed|RUNTIME REGRESSION FAIL|FieldAccessException|MissingFieldException|NullReferenceException' "$output/BepInEx.log" "$output/server.log"; then
