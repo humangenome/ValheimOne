@@ -4,7 +4,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
-## [0.13.30] - 2026-11-07
+## [0.13.30] - 2026-11-08
 
 ### Security
 
