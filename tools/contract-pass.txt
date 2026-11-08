@@ -1,4 +1,4 @@
-version=0.13.29
+version=0.13.30
 golden-sha256=14a96520050672796fe4d1bf6ae528a1e3d7c54c6c724b480cbdc6ca2e6e3d2d
-commit=6cdf1c2
-recorded=2026-10-28T14:23:58Z
+commit=35e066c
+recorded=2026-11-08T23:47:47Z
