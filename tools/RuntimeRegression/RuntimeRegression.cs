@@ -138,6 +138,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestPlayFabRetryPolicy();
             TestServerCapRewrite();
             TestOverlaySkipsUnreadableValue();
+            TestStatusSeed();
             _liveDeadline = Time.realtimeSinceStartup + 200f;
             _liveCheck = new Thread(RunLiveEventStreamChecks) { IsBackground = true, Name = "vo-regression-events" };
             _liveCheck.Start();
@@ -1662,6 +1663,31 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             "overlay skip: a player on an older patch (v" + olderPatch + ") still joins; another minor or schema does not");
     }
 
+    // The world seed is on the admin status only: it shows where every boss altar, dungeon and ore field is. The live
+    // checks below prove the running map's admin, shared and public answers; this pins the writer itself.
+    private string _expectedSeedFragment = "";
+
+    private void TestStatusSeed()
+    {
+        var admin = new System.Text.StringBuilder();
+        LiveMapHttpServer.AppendSeedJson(admin, true, -123456789, "Ab\"c\\d");
+        Check(admin.ToString() == ",\"seed\":-123456789,\"seedName\":\"Ab\\\"c\\\\d\"",
+            "the admin status carries the numeric seed and the seed text, escaped (" + admin + ")");
+        var other = new System.Text.StringBuilder();
+        LiveMapHttpServer.AppendSeedJson(other, false, 42, "AnySeed");
+        Check(other.Length == 0, "a shared or public status gets no seed at all");
+        var empty = new System.Text.StringBuilder();
+        LiveMapHttpServer.AppendSeedJson(empty, true, 7, null);
+        Check(empty.ToString() == ",\"seed\":7,\"seedName\":\"\"", "a world without seed text still answers with an empty seedName");
+        World? world = GameAccess.GetWorld();
+        Check(world != null, "the running world is readable for the seed checks");
+        var expected = new System.Text.StringBuilder();
+        LiveMapHttpServer.AppendSeedJson(expected, true, world!.m_seed, world.m_seedName);
+        _expectedSeedFragment = expected.ToString().Substring(1);
+        Check(world.m_seedName == null || world.m_seed == world.m_seedName.GetStableHashCode(),
+            "the numeric seed is the game's hash of the seed text (" + _expectedSeedFragment + ")");
+    }
+
     // 0.13.28: a failed crossplay login on a dedicated server is retried after 5-20 s, at most 5 times since the last
     // success; a banned account is not; then the game's own failure path runs.
     private void TestPlayFabRetryPolicy()
@@ -1726,6 +1752,8 @@ public sealed class RuntimeRegression : BaseUnityPlugin
                 LiveResult(true, "with a relay key set, the machine's own call (loopback, no key) is still served");
             }
 
+            CheckLiveSeed(root, token);
+
             int publicTaken = FillSlots(slots, EventStreamView.Public);
             int sharedTaken = FillSlots(slots, EventStreamView.Shared);
             try
@@ -1778,6 +1806,85 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         if (behaviour is null) return null;
         object? server = AccessTools.Field(behaviourType, "_httpServer").GetValue(behaviour);
         return server is null ? null : AccessTools.Field(server.GetType(), "_eventStreams").GetValue(server) as EventStreamSlots;
+    }
+
+    // The seed on the running map: the admin token's /api/status carries it; the shared link's answer and the public
+    // answer (which is also what a token-free /api/status gets when StatusPublic allows it) never do. The regression map
+    // is token-locked, so its public answer is asked of the running server directly.
+    private void CheckLiveSeed(string root, string token)
+    {
+        string admin = ReadStatus(root, token, out int adminCode);
+        LiveResult(adminCode == 200 && _expectedSeedFragment.Length > 0 && admin.Contains(_expectedSeedFragment) &&
+                   admin.Contains("\"view\":\"admin\""),
+            "the running map's admin status carries this world's seed (HTTP " + adminCode + ")");
+
+        object? server = RunningHttpServer();
+        if (server == null)
+        {
+            LiveResult(false, "the running map server is readable for the seed checks");
+            return;
+        }
+
+        string shareToken = AccessTools.Property(server.GetType(), "ShareToken").GetValue(server, null) as string ?? "";
+        if (shareToken.Length == 0)
+        {
+            LiveResult(false, "the regression map has a share token for the shared-view seed check");
+        }
+        else
+        {
+            string shared = ReadStatus(root, shareToken, out int sharedCode);
+            LiveResult(sharedCode == 200 && shared.Contains("\"view\":\"shared\"") && !HasSeed(shared),
+                "the shared link's status has no seed (HTTP " + sharedCode + ")");
+        }
+
+        string publicStatus = BuildRunningStatus(server, "Public");
+        LiveResult(publicStatus.Contains("\"view\":\"public\"") && !HasSeed(publicStatus),
+            "the public status, also the token-free one, has no seed");
+        string sharedStatus = BuildRunningStatus(server, "Shared");
+        LiveResult(sharedStatus.Contains("\"view\":\"shared\"") && !HasSeed(sharedStatus),
+            "the running server builds no seed into a shared status");
+    }
+
+    private static bool HasSeed(string json) =>
+        json.IndexOf("\"seed\":", StringComparison.Ordinal) >= 0 ||
+        json.IndexOf("\"seedName\":", StringComparison.Ordinal) >= 0;
+
+    // Plain reference reads only: this runs off the main thread, like the map's own request threads.
+    private static object? RunningHttpServer()
+    {
+        Type behaviourType = typeof(ValheimOnePlugin).Assembly.GetType("ValheimOne.LiveMap.LiveMapBehaviour", true)!;
+        object? behaviour = AccessTools.Property(behaviourType, "Instance").GetValue(null, null);
+        return behaviour is null ? null : AccessTools.Field(behaviourType, "_httpServer").GetValue(behaviour);
+    }
+
+    private static string BuildRunningStatus(object server, string view)
+    {
+        Type type = server.GetType();
+        object level = Enum.Parse(AccessTools.Inner(type, "ViewLevel"), view);
+        var getSnapshot = (Func<LiveMapSnapshot>)AccessTools.Field(type, "_getSnapshot").GetValue(server);
+        object?[] args = { getSnapshot(), level, null };
+        return (string)AccessTools.Method(type, "BuildStatusJson").Invoke(server, args);
+    }
+
+    private static string ReadStatus(string root, string token, out int code)
+    {
+        var request = (HttpWebRequest)WebRequest.Create(root + "/api/status");
+        request.Headers["X-LiveMap-Token"] = token;
+        request.Timeout = 5000;
+        request.KeepAlive = false;
+        try
+        {
+            using var response = (HttpWebResponse)request.GetResponse();
+            code = (int)response.StatusCode;
+            using var reader = new StreamReader(response.GetResponseStream());
+            return reader.ReadToEnd();
+        }
+        catch (WebException exception) when (exception.Response is HttpWebResponse refused)
+        {
+            code = (int)refused.StatusCode;
+            refused.Close();
+            return "";
+        }
     }
 
     private static bool StatusAnswers(string root, string token)

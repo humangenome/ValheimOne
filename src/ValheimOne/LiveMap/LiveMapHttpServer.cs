@@ -1030,6 +1030,7 @@ internal sealed class LiveMapHttpServer
             json.Append(",\"joinCode\":").Append(JsonWriter.Quote(snapshot.JoinCode));
         }
 
+        AppendSeedJson(json, viewLevel == ViewLevel.Admin, _renderer.Seed, _renderer.SeedName);
         json.Append(",\"pluginVersion\":").Append(JsonWriter.Quote(ValheimOnePlugin.PluginVersion));
         json.Append(",\"day\":").Append(snapshot.Day.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"uptimeSeconds\":").Append(JsonWriter.Number(uptimeSeconds));
@@ -1146,6 +1147,20 @@ internal sealed class LiveMapHttpServer
 
         changeKey = key.ToString();
         return json.ToString();
+    }
+
+    // The world seed tells anyone with a seed map where every boss altar, dungeon and ore field
+    // is, so only the admin view (the access token) gets it, the same rule as the join code:
+    // never the shared link and never the public view or the token-free status.
+    internal static void AppendSeedJson(StringBuilder json, bool adminView, int seed, string? seedName)
+    {
+        if (!adminView)
+        {
+            return;
+        }
+
+        json.Append(",\"seed\":").Append(seed.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"seedName\":").Append(JsonWriter.Quote(seedName ?? string.Empty));
     }
 
     private static void AppendStringArray(StringBuilder json, string[] values)

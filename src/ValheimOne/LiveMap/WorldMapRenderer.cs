@@ -83,6 +83,9 @@ internal sealed class WorldMapRenderer
 
     public int Seed => _seed;
 
+    // The seed text the world was created with (what a player types into a seed map).
+    public string SeedName => _seedName;
+
     // Deepest zoom whose tiles come from the pre-rendered base pyramid.
     public int BaseMaximumZoom { get; }
 
