@@ -202,6 +202,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         DrainPendingPings();
 
         float now = Time.realtimeSinceStartup;
+        _httpServer?.RetryBindIfDue(now);
         ZNet? network = ZNet.instance;
         bool idle = network == null || GameAccess.GetPeers(network).Count == 0;
         bool idleChanged = idle != _idle;

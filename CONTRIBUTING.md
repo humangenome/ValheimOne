@@ -18,7 +18,7 @@ Install the exact .NET SDK pinned in `global.json`; `./build.sh` refuses any oth
 
 ## Verify before you patch
 
-Check every target member's existence and runtime visibility against the original Valheim game assembly before writing a patch. Use a verified public API where one exists and cached reflection for vanilla-private members. Prefer prefixes and postfixes: the host player-cap rewrites in `ServerHostModule` are the only transpilers, and a new one needs its reason in the pull request. Install patches at startup and keep their behavior behind runtime `Enabled` guards so synchronized configuration can hot-enable features safely.
+Check every target member's existence and runtime visibility against the original Valheim game assembly before writing a patch. Use a verified public API where one exists and cached reflection for vanilla-private members. Prefer prefixes and postfixes: the host player-cap rewrites in `ServerHostModule` and the send-queue read in `NetworkModule` are the only transpilers, and a new one needs its reason in the pull request. Install patches at startup and keep their behavior behind runtime `Enabled` guards so synchronized configuration can hot-enable features safely.
 
 ## Clean-room requirement
 
