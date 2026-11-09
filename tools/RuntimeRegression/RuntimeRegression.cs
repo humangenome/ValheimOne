@@ -6,6 +6,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
 using System.Threading;
@@ -135,6 +136,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestRelayKey();
             TestSyncedSecrets();
             TestPlayFabRetryPolicy();
+            TestServerCapRewrite();
             _liveDeadline = Time.realtimeSinceStartup + 200f;
             _liveCheck = new Thread(RunLiveEventStreamChecks) { IsBackground = true, Name = "vo-regression-events" };
             _liveCheck.Start();
@@ -1518,6 +1520,85 @@ public sealed class RuntimeRegression : BaseUnityPlugin
 
     // 0.13.28: a failed crossplay login on a dedicated server is retried after 5-20 s, at most 5 times since the last
     // success; a banned account is not; then the game's own failure path runs.
+    // [Server] player cap rewrites (issue #10, 2026-11-02). On the game build under test each rewrite must find its one
+    // vanilla constant. When another plugin has already changed the same check (a self-hoster's log: "[Server] cap
+    // transpiler expected exactly one 10 in ZNet.RPC_PeerInfo; found 0", three times), ValheimOne must stand aside for that
+    // check only: no exception, the other plugin's patch and every later patch of the method keep working, and the rest of
+    // [Server] and the handshake stay installed. VALHEIMONE_CAP_CONFLICT=1 adds a stand-in plugin that patches before
+    // ValheimOne loads; without it the later-conflict case runs in this process.
+    private void TestServerCapRewrite()
+    {
+        MethodInfo peerInfo = AccessTools.Method(typeof(ZNet), "RPC_PeerInfo");
+        MethodInfo getNr = AccessTools.Method(typeof(ZNet), nameof(ZNet.GetNrOfPlayers));
+        MethodInfo cap = AccessTools.Method(typeof(ServerHostModule), nameof(ServerHostModule.EffectiveMaxPlayers));
+        MethodInfo capPlusOne = AccessTools.Method(typeof(ServerHostModule), nameof(ServerHostModule.EffectiveMaxPlayersPlusOne));
+        string game = global::Version.GetVersionString();
+
+        int anchored = CapConflictStandIn.CountAnchoredLimit(PatchProcessor.GetOriginalInstructions(peerInfo));
+        List<CodeInstruction> joined = CapRewrite("JoinCapTranspiler", peerInfo);
+        Check(anchored == 1 && joined.Count(c => c.Calls(cap)) == 1 && CapConflictStandIn.CountAnchoredLimit(joined) == 0,
+            "server cap: game " + game + " has one player-limit 10 after GetNrOfPlayers in ZNet.RPC_PeerInfo (found " + anchored + ") and the join rewrite takes it");
+        foreach (var (method, transpiler, replacement) in new[]
+        {
+            ("CreateLobby", "LobbyCapacityTranspiler", capPlusOne),
+            ("CreateAndJoinNetwork", "NetworkCapacityTranspiler", capPlusOne),
+            ("SetPlatformMatchmakingData", "PlatformCapacityTranspiler", cap),
+        })
+        {
+            List<CodeInstruction> rewritten = CapRewrite(transpiler, AccessTools.Method(typeof(ZPlayFabMatchmaking), method));
+            Check(rewritten.Count(c => c.Calls(replacement)) == 1, "server cap: game " + game + " ZPlayFabMatchmaking." + method + " capacity rewrite takes its one constant");
+        }
+
+        Patches peerPatches = Harmony.GetPatchInfo(peerInfo);
+        Check(peerPatches != null && peerPatches.Postfixes.Any(p => p.owner == ValheimOnePlugin.PluginGuid && p.PatchMethod.Name == "PeerInfoPostfix"),
+            "server cap: the handshake postfix on ZNet.RPC_PeerInfo is installed" + (CapConflictStandIn.Patched ? " with the other plugin present" : ""));
+        foreach (string method in new[] { "CreateLobby", "CreateAndJoinNetwork", "SetPlatformMatchmakingData" })
+        {
+            Patches lobby = Harmony.GetPatchInfo(AccessTools.Method(typeof(ZPlayFabMatchmaking), method));
+            Check(lobby != null && lobby.Transpilers.Any(p => p.owner == ValheimOnePlugin.PluginGuid),
+                "server cap: the rest of [Server] is patched (ZPlayFabMatchmaking." + method + ")" + (CapConflictStandIn.Patched ? " with the other plugin present" : ""));
+        }
+
+        List<CodeInstruction> live = PatchProcessor.GetCurrentInstructions(peerInfo);
+        if (CapConflictStandIn.Patched)
+        {
+            Check(live.Any(c => c.LoadsConstant(CapConflictStandIn.StandInLimit)) && !live.Any(c => c.Calls(cap)),
+                "server cap: with another plugin owning the join check, its limit stands and ValheimOne's rewrite stands aside");
+            return;
+        }
+
+        Check(live.Count(c => c.Calls(cap)) == 1, "server cap: the live join check calls ValheimOne's cap");
+        var late = new Harmony("com.humangenome.valheimone.regression.latecap");
+        Exception? thrown = null;
+        try
+        {
+            late.Patch(peerInfo, transpiler: new HarmonyMethod(typeof(CapConflictStandIn), nameof(CapConflictStandIn.Transpiler)) { priority = Priority.First });
+        }
+        catch (Exception exception)
+        {
+            thrown = exception;
+        }
+
+        try
+        {
+            Check(thrown == null, "server cap: a plugin that changes the same check after ValheimOne loaded is not broken by it" +
+                (thrown == null ? "" : " (" + (thrown.InnerException?.InnerException?.Message ?? thrown.InnerException?.Message ?? thrown.Message) + ")"));
+            List<CodeInstruction> after = PatchProcessor.GetCurrentInstructions(peerInfo);
+            Check(after.Any(c => c.LoadsConstant(CapConflictStandIn.StandInLimit)) && !after.Any(c => c.Calls(cap)),
+                "server cap: that plugin's limit stands and ValheimOne's rewrite stands aside");
+        }
+        finally
+        {
+            late.UnpatchSelf();
+        }
+
+        Check(PatchProcessor.GetCurrentInstructions(peerInfo).Count(c => c.Calls(cap)) == 1,
+            "server cap: once that plugin's patch is gone, ValheimOne's cap is back on the join check");
+    }
+
+    private static List<CodeInstruction> CapRewrite(string transpiler, MethodInfo original) =>
+        ((IEnumerable<CodeInstruction>)Call(typeof(ServerHostModule), transpiler, PatchProcessor.GetOriginalInstructions(original))!).ToList();
+
     private void TestPlayFabRetryPolicy()
     {
         Check(PlayFabLoginRetry.ShouldRetry("APIClientRequestRateLimitExceeded", 0), "a throttled login is retried");
@@ -1759,6 +1840,55 @@ public sealed class RuntimeRegression : BaseUnityPlugin
 
     private static object? Call(object target, string name, params object[] args) =>
         AccessTools.Method(target as Type ?? target.GetType(), name).Invoke(target is Type ? null : target, args);
+}
+
+// Issue #10 stand-in: another server plugin that rewrites the same vanilla player-limit check in ZNet.RPC_PeerInfo
+// (`GetNrOfPlayers() >= 10` becomes `>= 64`). Without a dependency and with a GUID that sorts first it patches before
+// ValheimOne, as in the report. Does nothing unless VALHEIMONE_CAP_CONFLICT=1.
+[BepInPlugin("com.humangenome.aaa.capconflict", "ValheimOne cap conflict stand-in", "1.0.0")]
+public sealed class CapConflictStandIn : BaseUnityPlugin
+{
+    internal const int StandInLimit = 64;
+    internal static bool Patched;
+
+    private void Awake()
+    {
+        if (Environment.GetEnvironmentVariable("VALHEIMONE_CAP_CONFLICT") != "1") return;
+        new Harmony("com.humangenome.aaa.capconflict").Patch(
+            AccessTools.Method(typeof(ZNet), "RPC_PeerInfo"),
+            transpiler: new HarmonyMethod(typeof(CapConflictStandIn), nameof(Transpiler)));
+        Patched = true;
+        Logger.LogInfo("cap conflict stand-in: patched ZNet.RPC_PeerInfo before ValheimOne");
+    }
+
+    internal static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+    {
+        MethodInfo getNr = AccessTools.Method(typeof(ZNet), nameof(ZNet.GetNrOfPlayers));
+        CodeInstruction? previous = null;
+        foreach (CodeInstruction code in instructions)
+        {
+            if (previous != null && previous.Calls(getNr) && code.LoadsConstant(10))
+            {
+                code.opcode = OpCodes.Ldc_I4;
+                code.operand = StandInLimit;
+            }
+
+            previous = code;
+            yield return code;
+        }
+    }
+
+    internal static int CountAnchoredLimit(List<CodeInstruction> codes)
+    {
+        MethodInfo getNr = AccessTools.Method(typeof(ZNet), nameof(ZNet.GetNrOfPlayers));
+        int found = 0;
+        for (int i = 1; i < codes.Count; i++)
+        {
+            if (codes[i - 1].Calls(getNr) && codes[i].LoadsConstant(10)) found++;
+        }
+
+        return found;
+    }
 }
 
 // Opt-in spatial fixture for browser checks. It records known coordinates using
