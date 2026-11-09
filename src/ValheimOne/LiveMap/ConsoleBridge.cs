@@ -445,6 +445,11 @@ internal sealed class ConsoleBridge
         }
     }
 
+    // The game's own world save, called directly: never through the game's Console object (a broken
+    // mod can leave the Console without commands or missing altogether), so a save asked for right
+    // before a stop still runs. The disk check the game makes first stays; if that check itself
+    // throws, the save still goes ahead. The game starts the save at once or declines it ("Skipping
+    // world save", "World save blocked"); a declined save is reported as such instead of waited for.
     internal static ConsoleSaveResult SaveOnMainThread(ModLogger? log)
     {
         ZNet? network = ZNet.instance;
@@ -453,10 +458,36 @@ internal sealed class ConsoleBridge
             return ConsoleSaveResult.Failure("server unavailable");
         }
 
+        if (ZNet.World == null)
+        {
+            return ConsoleSaveResult.Failure("world not loaded");
+        }
+
         try
         {
+            bool enoughDisk = true;
+            try
+            {
+                enoughDisk = network.EnoughDiskSpaceAvailable(out _);
+            }
+            catch (Exception exception)
+            {
+                LogException(log, "disk space check failed; saving anyway", exception);
+            }
+
+            if (!enoughDisk)
+            {
+                return ConsoleSaveResult.Failure("not enough disk space to save");
+            }
+
             bool alreadySaving = network.IsSaving();
-            network.SaveWorldAndPlayerProfiles();
+            long startsBefore = WorldSavePatch.StartSequence;
+            network.Save(sync: false, saveOtherPlayerProfiles: true, waitForNextFrame: false);
+            if (WorldSavePatch.Applied && WorldSavePatch.StartSequence == startsBefore)
+            {
+                return ConsoleSaveResult.Failure("the game skipped the save");
+            }
+
             return ConsoleSaveResult.Success(alreadySaving);
         }
         catch (Exception exception)
@@ -667,7 +698,8 @@ internal sealed class ConsoleBridge
             GC.GetTotalMemory(false),
             (float)(frameAverageSeconds * 1000d),
             frameMaxSeconds * 1000f,
-            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            ProcessInfo.WorkingSetBytes());
     }
 
     private void RefreshKnownCommands()
@@ -1032,6 +1064,7 @@ internal sealed class StatsSnapshot
         0L,
         0f,
         0f,
+        0L,
         0L);
 
     public StatsSnapshot(
@@ -1042,7 +1075,8 @@ internal sealed class StatsSnapshot
         long monoHeapBytes,
         float frameAvgMs,
         float frameMaxMs,
-        long snapshotUnixMs)
+        long snapshotUnixMs,
+        long workingSetBytes)
     {
         UptimeSeconds = uptimeSeconds;
         Players = players;
@@ -1052,6 +1086,7 @@ internal sealed class StatsSnapshot
         FrameAvgMs = frameAvgMs;
         FrameMaxMs = frameMaxMs;
         SnapshotUnixMs = snapshotUnixMs;
+        WorkingSetBytes = workingSetBytes;
     }
 
     public double UptimeSeconds { get; }
@@ -1069,6 +1104,10 @@ internal sealed class StatsSnapshot
     public float FrameMaxMs { get; }
 
     public long SnapshotUnixMs { get; }
+
+    // The whole process (Process.WorkingSet64, read at most once a minute); MonoHeapBytes is only
+    // the managed heap.
+    public long WorkingSetBytes { get; }
 }
 
 internal sealed class ConsoleCommandInfo

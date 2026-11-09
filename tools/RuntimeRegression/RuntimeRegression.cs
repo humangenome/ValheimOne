@@ -15,6 +15,7 @@ using BepInEx.Bootstrap;
 using HarmonyLib;
 using Steamworks;
 using UnityEngine;
+using ValheimOne.ActivityLog;
 using ValheimOne.Configuration;
 using ValheimOne.Infrastructure;
 using ValheimOne.LiveMap;
@@ -142,7 +143,14 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestWorldWalk();
             TestEntityWalk();
             TestObjectCensus();
-            _liveDeadline = Time.realtimeSinceStartup + 300f;
+            TestConsoleGate();
+            TestStatsHistory();
+            TestWorldSaveEvents();
+            TestBossDefeated();
+            TestRaidEventName();
+            TestSaveWaitProof();
+            TestDirectSaveWithoutConsole();
+            _liveDeadline = Time.realtimeSinceStartup + 420f;
             _liveCheck = new Thread(RunLiveEventStreamChecks) { IsBackground = true, Name = "vo-regression-events" };
             _liveCheck.Start();
         }
@@ -1949,6 +1957,478 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         }
     }
 
+    // /api/stats and its history need the access token but not the web console.
+    private void TestConsoleGate()
+    {
+        Check(LiveMapHttpServer.ConsoleGateAllows("/api/stats", false, false) &&
+              LiveMapHttpServer.ConsoleGateAllows("/api/stats/history", false, false),
+            "the server numbers are served with the web console off");
+        Check(!LiveMapHttpServer.ConsoleGateAllows("/api/console/exec", false, false) &&
+              !LiveMapHttpServer.ConsoleGateAllows("/api/console/log", true, false) &&
+              LiveMapHttpServer.ConsoleGateAllows("/api/console/log", true, true),
+            "console commands and the console log still need the console on");
+        Check(LiveMapHttpServer.ConsoleGateAllows("/api/admin/chat", false, false) &&
+              LiveMapHttpServer.ConsoleGateAllows("/api/admin/tow", false, false) &&
+              !LiveMapHttpServer.ConsoleGateAllows("/api/admin/kick", false, false),
+            "chat and ship tow work without the console as before; kick does not");
+    }
+
+    private ModLogger RunningLog()
+    {
+        Type behaviourType = typeof(ValheimOnePlugin).Assembly.GetType("ValheimOne.LiveMap.LiveMapBehaviour", true)!;
+        object behaviour = AccessTools.Property(behaviourType, "Instance").GetValue(null, null)!;
+        return (ModLogger)AccessTools.Field(behaviourType, "_log").GetValue(behaviour)!;
+    }
+
+    private static ActivityLogModule RunningActivityLog()
+    {
+        object plugin = Chainloader.PluginInfos[ValheimOnePlugin.PluginGuid].Instance;
+        return (ActivityLogModule)AccessTools.Field(plugin.GetType(), "_activityLogModule").GetValue(plugin)!;
+    }
+
+    private static List<ActivityFeedEntry> FeedAfter(ActivityLogModule module, long cursor)
+    {
+        var entries = new List<ActivityFeedEntry>();
+        module.CopyActivityAfter(cursor, 200, entries);
+        return entries;
+    }
+
+    // The minute history keeps 24 hours across restarts and says how each run ended.
+    private void TestStatsHistory()
+    {
+        ModLogger log = RunningLog();
+        string dir = Path.Combine(_root, "stats-history-test");
+        Directory.CreateDirectory(dir);
+        long t0 = new DateTimeOffset(2026, 11, 4, 0, 10, 0, TimeSpan.Zero).ToUnixTimeMilliseconds();
+        string old = Path.Combine(dir, "stats-20000101.jsonl");
+        File.WriteAllText(old, "{\"boot\":1}\n");
+        static StatsSample Sample(long at, int players) => new StatsSample(at, 30f, 61.5f, 1700, 2, 4700000, 2400000000L, 3800000000L, players, players);
+
+        var first = new StatsHistory(dir, log);
+        first.Begin(t0, t0 + 1000);
+        Check(!File.Exists(old), "history files older than two days are deleted at start");
+        first.Add(Sample(t0 + 60000, 1), t0 + 60001);
+        first.Add(Sample(t0 + 120000, 2), t0 + 120001);
+        first.Flush();
+
+        long t1 = t0 + 300000;
+        var second = new StatsHistory(dir, log);
+        second.Begin(t1, t1 + 1000);
+        second.Add(Sample(t1 + 60000, 3), t1 + 60001);
+        second.Flush();
+        string json = second.BuildJson(0, t1 + 61000);
+        Check(json.StartsWith("{\"intervalSeconds\":60,\"retentionMinutes\":1440,\"bootUnixMs\":" + t1, StringComparison.Ordinal),
+            "the history answer starts with its interval, window and this run's start");
+        Check(json.Contains("{\"bootUnixMs\":" + t0 + ",\"lastSampleUnixMs\":" + (t0 + 120000) + ",\"stop\":\"none\"}") &&
+              json.Contains("{\"bootUnixMs\":" + t1 + ",\"lastSampleUnixMs\":" + (t1 + 60000) + ",\"stop\":\"running\"}"),
+            "a run that ended without its clean line reads stop none; this one reads running");
+        Check(json.Contains("\"samples\":[{\"unixMs\":" + (t0 + 60000) + ",\"frameAvgMs\":30,\"frameMaxMs\":61.5,\"frames\":1700,\"framesOver100Ms\":2,\"zdoCount\":4700000,\"monoHeapBytes\":2400000000,\"workingSetBytes\":3800000000,\"players\":1,\"peers\":1}"),
+            "samples come back from disk with every field");
+        string since = second.BuildJson(t0 + 60000, t1 + 61000);
+        Check(!since.Contains("\"unixMs\":" + (t0 + 60000) + ",") && since.Contains("\"unixMs\":" + (t0 + 120000) + ","),
+            "since returns only the newer minutes");
+
+        second.WriteCleanStop(t1 + 90000);
+        var third = new StatsHistory(dir, log);
+        third.Begin(t1 + 200000, t1 + 201000);
+        Check(third.BuildJson(0, t1 + 201000).Contains("{\"bootUnixMs\":" + t1 + ",\"lastSampleUnixMs\":" + (t1 + 60000) + ",\"stop\":\"clean\"}"),
+            "a run that quit cleanly reads stop clean after the next start");
+        third.Flush();
+
+        var later = new StatsHistory(dir, log);
+        later.Begin(t0 + 25L * 3600000L, t0 + 25L * 3600000L + 1000);
+        string window = later.BuildJson(0, t0 + 25L * 3600000L + 1000);
+        Check(!window.Contains("\"bootUnixMs\":" + t0 + ",") && !window.Contains("\"unixMs\":" + (t0 + 60000)),
+            "minutes and runs older than 24 hours drop out");
+        later.Flush();
+
+        var ticking = new StatsHistory(Path.Combine(dir, "tick"), log);
+        long m0 = t0 + 3600000;
+        ticking.Begin(m0, m0);
+        var gauges = new StatsGauges(123, 456, 789, 4, 5);
+        ticking.Tick(0.02f, m0 + 500, () => gauges);
+        for (int i = 0; i < 9; i++) ticking.Tick(0.02f, m0 + 1000 + i, () => gauges);
+        ticking.Tick(0.25f, m0 + 30000, () => gauges);
+        ticking.Tick(0.02f, m0 + 60000, () => gauges);
+        string ticked = ticking.BuildJson(0, m0 + 60001);
+        Check(ticked.Contains("{\"unixMs\":" + (m0 + 60000) + ",\"frameAvgMs\":39.17,\"frameMaxMs\":250,\"frames\":12,\"framesOver100Ms\":1,\"zdoCount\":123,\"monoHeapBytes\":456,\"workingSetBytes\":789,\"players\":4,\"peers\":5}"),
+            "a minute's frames become one sample when the next minute starts (" + ticked.Substring(Math.Max(0, ticked.IndexOf("\"samples\""))) + ")");
+        ticking.Flush();
+    }
+
+    // world.save at the save's real end with its duration; world.save_failed with the game's reason.
+    private void TestWorldSaveEvents()
+    {
+        ActivityLogModule activity = RunningActivityLog();
+        long cursor = activity.LatestActivityCursor;
+        int saved = 0;
+        var failures = new List<WorldSaveFailure>();
+        Action onSaved = () => saved++;
+        Action<WorldSaveFailure> onFailed = failure => failures.Add(failure);
+        WorldSavePatch.WorldSaved += onSaved;
+        WorldSavePatch.WorldSaveFailed += onFailed;
+        try
+        {
+            Check(Harmony.GetPatchInfo(AccessTools.Method(typeof(SaveSystem), "EndSave"))?.Postfixes.Count > 0 &&
+                  Harmony.GetPatchInfo(AccessTools.Method(typeof(ZNet), "SaveWorld", new[] { typeof(bool) })) == null,
+                "the save is followed at its end (SaveSystem.EndSave), no longer at its start (ZNet.SaveWorld)");
+            long before = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            WorldSavePatch.OnWorldSaveStarted();
+            Thread.Sleep(30);
+            WorldSavePatch.EndSavePostfix(true);
+            WorldSavePatch.Pump();
+            Check(saved == 1 && WorldSavePatch.LastSavedUnixMs >= before && WorldSavePatch.LastSaveDurationMs >= 25,
+                "a save that worked is reported at its end with its duration (" + WorldSavePatch.LastSaveDurationMs + " ms)");
+
+            WorldSavePatch.OnWorldSaveStarted();
+            WorldSavePatch.EndSavePostfix(false);
+            WorldSavePatch.Pump();
+            Check(failures.Count == 0, "a failed save waits for the game's reason before it is reported");
+            WorldSavePatch.OnLogMessage("World save (5/5) FAILED. Total time [3ms]", "", LogType.Error);
+            WorldSavePatch.Pump();
+            Check(failures.Count == 1 && failures[0].Stage == "write" && failures[0].Message == "World save (5/5) FAILED. Total time [3ms]" &&
+                  WorldSavePatch.LastSaveFailedUnixMs >= before,
+                "a save the game could not write is reported as stage write with the game's line");
+
+            WorldSavePatch.OnWorldSaveStarted();
+            WorldSavePatch.OnLogMessage("Error saving world! The disk is full  StackTrace: at ZNet.SaveWorldThread()", "", LogType.Error);
+            WorldSavePatch.EndSavePostfix(false);
+            WorldSavePatch.Pump();
+            Check(failures.Count == 2 && failures[1].Stage == "exception" && failures[1].Message == "Error saving world! The disk is full",
+                "a save that threw is reported as stage exception, without the stack trace");
+
+            WorldSavePatch.OnWorldSaveStarted();
+            WorldSavePatch.EndSavePostfix(false);
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            WorldSavePatch.Pump(now);
+            WorldSavePatch.Pump(now + 3L * System.Diagnostics.Stopwatch.Frequency);
+            Check(failures.Count == 3 && failures[2].Stage == "write" && failures[2].Message.Length == 0,
+                "a failed save with no reason in the log is still reported after 2 s");
+
+            List<ActivityFeedEntry> feed = FeedAfter(activity, cursor);
+            Check(feed.Any(e => e.Type == "world.save" && e.DataJson.StartsWith("{\"durationMs\":", StringComparison.Ordinal)) &&
+                  feed.Any(e => e.Type == "world.save_failed" && e.DataJson == "{\"stage\":\"exception\",\"message\":\"Error saving world! The disk is full\"}"),
+                "the activity feed gets world.save with its duration and world.save_failed with stage and message");
+        }
+        finally
+        {
+            WorldSavePatch.WorldSaved -= onSaved;
+            WorldSavePatch.WorldSaveFailed -= onFailed;
+        }
+    }
+
+    // boss.defeated on every kill: the killing game sends the defeat key to the server each time.
+    private void TestBossDefeated()
+    {
+        ActivityLogModule activity = RunningActivityLog();
+        long cursor = activity.LatestActivityCursor;
+        ZoneSystem zones = ZoneSystem.instance;
+        MethodInfo rpc = AccessTools.Method(typeof(ZoneSystem), "RPC_SetGlobalKey", new[] { typeof(long), typeof(string) });
+        MethodInfo remove = AccessTools.Method(typeof(ZoneSystem), "GlobalKeyRemove", new[] { typeof(string), typeof(bool) });
+        Check(Harmony.GetPatchInfo(rpc)?.Prefixes.Count > 0, "the server's global key RPC is patched");
+        bool had = zones.GetGlobalKeyExact("defeated_eikthyr");
+        var seen = new List<ServerBossDefeatedEvent>();
+        Action<ServerBossDefeatedEvent> onBoss = value => seen.Add(value);
+        BossDefeatPatch.BossDefeated += onBoss;
+        try
+        {
+            rpc.Invoke(zones, new object[] { 0L, "defeated_eikthyr" });
+            rpc.Invoke(zones, new object[] { 0L, "defeated_eikthyr" });
+            rpc.Invoke(zones, new object[] { 0L, "defeated_regression_wyrm" });
+            rpc.Invoke(zones, new object[] { 0L, "regression_plainkey" });
+            Check(seen.Count == 3, "three defeat keys, three boss events; a plain key, none (" + seen.Count + ")");
+            Check(seen[0].Name == "Eikthyr" && seen[0].Key == "defeated_eikthyr" && seen[0].FirstTime == !had &&
+                  !seen[1].FirstTime && zones.GetGlobalKeyExact("defeated_eikthyr"),
+                "the first kill says firstTime, a repeat kill is still reported");
+            Check(seen[2].Name == "Regression wyrm" && seen[2].FirstTime, "a boss the table does not know gets a readable name");
+            List<ActivityFeedEntry> feed = FeedAfter(activity, cursor);
+            Check(feed.Count(e => e.Type == "boss.defeated") == 3 &&
+                  feed.Any(e => e.Type == "boss.defeated" && e.DataJson == "{\"name\":\"Eikthyr\",\"key\":\"defeated_eikthyr\",\"firstTime\":false}"),
+                "the activity feed gets boss.defeated with name, key and firstTime");
+        }
+        finally
+        {
+            BossDefeatPatch.BossDefeated -= onBoss;
+            if (!had) remove.Invoke(zones, new object[] { "defeated_eikthyr", true });
+            remove.Invoke(zones, new object[] { "defeated_regression_wyrm", true });
+            remove.Invoke(zones, new object[] { "regression_plainkey", true });
+        }
+    }
+
+    private void TestRaidEventName()
+    {
+        ActivityLogModule activity = RunningActivityLog();
+        long cursor = activity.LatestActivityCursor;
+        activity.RecordRaidStarted("The ground is shaking", "army_eikthyr");
+        activity.RecordRaidEnded("The ground is shaking", "army_eikthyr");
+        List<ActivityFeedEntry> feed = FeedAfter(activity, cursor);
+        Check(feed.Any(e => e.Type == "raid.start" && e.DataJson == "{\"name\":\"The ground is shaking\",\"event\":\"army_eikthyr\"}") &&
+              feed.Any(e => e.Type == "raid.end" && e.DataJson.Contains("\"event\":\"army_eikthyr\"")),
+            "raid start and end carry the game's event name next to its words");
+        Check(activity.BootUnixMs == ProcessInfo.BootUnixMs && ProcessInfo.BootUnixMs > 0 &&
+              ProcessInfo.BootUnixMs <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            "the feed's boot time is the process start");
+    }
+
+    // The doctor's numbers on the running map, over HTTP with the access token.
+    private void CheckLiveDoctor(string root, string token)
+    {
+        string stats = DoctorHttp(root, token, "/api/stats", false, out int statsCode, out _);
+        LiveResult(statsCode == 200 && System.Text.RegularExpressions.Regex.IsMatch(stats, "\"workingSetBytes\":[1-9][0-9]{6,}"),
+            "/api/stats reports the process working set (HTTP " + statsCode + ")");
+        string status = DoctorHttp(root, token, "/api/status", false, out _, out _);
+        LiveResult(status.Contains("\"lastSaveFailedUnixMs\":"), "the admin status carries the last failed save time");
+        string activity = DoctorHttp(root, token, "/api/activity", false, out int activityCode, out _);
+        LiveResult(activityCode == 200 && activity.Contains("\"bootUnixMs\":" + ProcessInfo.BootUnixMs + ","),
+            "the activity feed names the boot its ids belong to");
+        string history = "";
+        int historyCode = 0;
+        string encoding = "";
+        DateTime until = DateTime.UtcNow.AddSeconds(75);
+        while (DateTime.UtcNow < until)
+        {
+            history = DoctorHttp(root, token, "/api/stats/history", true, out historyCode, out encoding);
+            if (history.Contains("\"samples\":[{")) break;
+            Thread.Sleep(2000);
+        }
+
+        LiveResult(historyCode == 200 && encoding == "gzip", "the history answers gzipped when asked (HTTP " + historyCode + ", encoding '" + encoding + "')");
+        LiveResult(history.Contains("{\"bootUnixMs\":" + ProcessInfo.BootUnixMs + ",") && history.Contains("\"stop\":\"running\"}"),
+            "the history lists this run as running");
+        LiveResult(history.Contains("\"samples\":[{\"unixMs\":"), "the history has the running server's first minute");
+        DoctorHttp(root, "", "/api/stats/history", false, out int anonymous, out _);
+        LiveResult(anonymous == 401, "no token, no history (HTTP " + anonymous + ")");
+        string saves = "";
+        DateTime saveUntil = DateTime.UtcNow.AddSeconds(150);
+        while (DateTime.UtcNow < saveUntil)
+        {
+            saves = DoctorHttp(root, token, "/api/activity", false, out _, out _);
+            if (System.Text.RegularExpressions.Regex.IsMatch(saves, "\"type\":\"world.save\",\"data\":\\{\"durationMs\":[1-9]")) break;
+            Thread.Sleep(2000);
+        }
+
+        LiveResult(System.Text.RegularExpressions.Regex.IsMatch(saves, "\"type\":\"world.save\",\"data\":\\{\"durationMs\":[1-9]"),
+            "a real save of the running world is reported at its end with its duration");
+    }
+
+    private static string DoctorHttp(string root, string token, string path, bool gzip, out int code, out string encoding)
+    {
+        encoding = "";
+        var request = (HttpWebRequest)WebRequest.Create(root + path);
+        if (token.Length > 0) request.Headers["X-LiveMap-Token"] = token;
+        if (gzip) request.Headers["Accept-Encoding"] = "gzip";
+        request.Timeout = 5000;
+        request.KeepAlive = false;
+        try
+        {
+            using var response = (HttpWebResponse)request.GetResponse();
+            code = (int)response.StatusCode;
+            encoding = response.Headers["Content-Encoding"] ?? "";
+            Stream body = response.GetResponseStream();
+            if (encoding == "gzip") body = new System.IO.Compression.GZipStream(body, System.IO.Compression.CompressionMode.Decompress);
+            using var reader = new StreamReader(body);
+            return reader.ReadToEnd();
+        }
+        catch (WebException exception) when (exception.Response is HttpWebResponse refused)
+        {
+            code = (int)refused.StatusCode;
+            refused.Close();
+            return "";
+        }
+    }
+
+    // Which save answers a wait: only one that started after the request. A save already running
+    // when the request came in ends first and does not count, even when the game raised the start
+    // of the asked-for save before that running save ended.
+    private void TestSaveWaitProof()
+    {
+        Func<bool> running = WorldSavePatch.SaveThreadRunning;
+        try
+        {
+            Check(WorldSavePatch.CanSeeSaveThread, "the game's save thread can be seen");
+            WorldSavePatch.SaveThreadRunning = () => false;
+            WorldSavePatch.OnWorldSaveStarted();
+            long requested = WorldSavePatch.StartSequence;
+            Thread.Sleep(20);
+            WorldSavePatch.EndSavePostfix(true);
+            WorldSavePatch.Pump();
+            string early = LiveMapHttpServer.WaitForSave(ConsoleSaveResult.Success(true), requested, 1, out string earlyOutcome);
+            Check(earlyOutcome == "save not finished" && early.StartsWith("{\"ok\":false,\"saved\":false,\"error\":\"save not finished\"", StringComparison.Ordinal),
+                "a save that started before the request does not answer it (" + early + ")");
+            WorldSavePatch.OnWorldSaveStarted();
+            WorldSavePatch.EndSavePostfix(true);
+            WorldSavePatch.Pump();
+            string ours = LiveMapHttpServer.WaitForSave(ConsoleSaveResult.Success(true), requested, 1, out string oursOutcome);
+            Check(oursOutcome == "saved" && ours.StartsWith("{\"ok\":true,\"saved\":true,\"alreadySaving\":true,", StringComparison.Ordinal),
+                "the save that started after it does (" + ours + ")");
+
+            // The game raises the start of the asked-for save, then waits for the running save to end.
+            WorldSavePatch.OnWorldSaveStarted();
+            Thread.Sleep(30);
+            long runningAtRequest = WorldSavePatch.StartSequence;
+            WorldSavePatch.SaveThreadRunning = () => true;
+            WorldSavePatch.OnWorldSaveStarted();
+            WorldSavePatch.EndSavePostfix(true);
+            WorldSavePatch.Pump();
+            string queued = LiveMapHttpServer.WaitForSave(ConsoleSaveResult.Success(true), runningAtRequest, 0, out string queuedOutcome);
+            Check(queuedOutcome == "save not finished",
+                "the end of the save that was running does not answer for the save asked for during it (" + queued + ")");
+            Check(WorldSavePatch.LastSavedStartSequence == runningAtRequest && WorldSavePatch.LastSaveDurationMs >= 25,
+                "that end is paired with its own start (" + WorldSavePatch.LastSaveDurationMs + " ms)");
+            WorldSavePatch.SaveThreadRunning = () => false;
+            WorldSavePatch.EndSavePostfix(true);
+            WorldSavePatch.Pump();
+            string after = LiveMapHttpServer.WaitForSave(ConsoleSaveResult.Success(true), runningAtRequest, 1, out string afterOutcome);
+            Check(afterOutcome == "saved" && WorldSavePatch.LastSavedStartSequence == runningAtRequest + 1 && WorldSavePatch.LastSaveDurationMs < 25,
+                "the asked-for save answers when it ends, timed from its own start (" + after + ")");
+
+            // A start that never got a save thread leaves no end; the next start replaces it.
+            WorldSavePatch.OnWorldSaveStarted();
+            WorldSavePatch.OnWorldSaveStarted();
+            long replacing = WorldSavePatch.StartSequence;
+            WorldSavePatch.EndSavePostfix(true);
+            WorldSavePatch.Pump();
+            Check(WorldSavePatch.LastSavedStartSequence == replacing, "a start whose save never began is replaced by the next one");
+
+            WorldSavePatch.OnWorldSaveStarted();
+            long again = WorldSavePatch.StartSequence - 1L;
+            WorldSavePatch.OnLogMessage("World save (5/5) FAILED. Total time [3ms]", "", LogType.Error);
+            WorldSavePatch.EndSavePostfix(false);
+            WorldSavePatch.Pump();
+            string failed = LiveMapHttpServer.WaitForSave(ConsoleSaveResult.Success(false), again, 1, out string failedOutcome);
+            Check(failedOutcome == "save failed: write" && failed.Contains("\"error\":\"save failed\",\"stage\":\"write\",\"message\":\"World save (5/5) FAILED. Total time [3ms]\""),
+                "a failed save answers with its stage and the game's line (" + failed + ")");
+            string refused = LiveMapHttpServer.WaitForSave(ConsoleSaveResult.Failure("world not loaded"), again, 1, out _);
+            Check(refused == "{\"ok\":false,\"saved\":false,\"error\":\"world not loaded\"}", "a save that could not start says why");
+        }
+        finally
+        {
+            WorldSavePatch.SaveThreadRunning = running;
+        }
+    }
+
+    // The save a host makes before every stop goes to the game's world save directly. With the game's
+    // Console gone (a mod built for an older game build can break Console.Awake), the console command
+    // path fails and the direct save still writes the world.
+    private void TestDirectSaveWithoutConsole()
+    {
+        Check(LiveMapHttpServer.ConsoleGateAllows("/api/admin/save", false, false), "the save is served with the web console off");
+        FieldInfo consoleField = AccessTools.Field(typeof(global::Console), "m_instance");
+        object? console = consoleField.GetValue(null);
+        Type behaviourType = typeof(ValheimOnePlugin).Assembly.GetType("ValheimOne.LiveMap.LiveMapBehaviour", true)!;
+        object behaviour = AccessTools.Property(behaviourType, "Instance").GetValue(null, null)!;
+        object bridge = AccessTools.Field(behaviourType, "_consoleBridge").GetValue(behaviour)!;
+        World world = ZNet.World!;
+        string folder = SaveSystem.GetWorldsSaveRootPath(world.m_fileSource) + "/" + world.m_worldName;
+        consoleField.SetValue(null, null);
+        try
+        {
+            object viaConsole = AccessTools.Method(bridge.GetType(), "ExecuteCommandOnMainThread").Invoke(bridge, new object[] { "save" })!;
+            Check((string?)ReadMember(viaConsole, "Error") == "console unavailable", "with the Console gone, the console save fails (as on the broken server)");
+            long requested = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            long startsBefore = WorldSavePatch.StartSequence;
+            DateTime newestBefore = NewestWrite(folder);
+            ConsoleSaveResult result = ConsoleBridge.SaveOnMainThread(RunningLog());
+            Check(result.Ok, "the direct save starts with the Console gone (" + result.Error + ")");
+            WaitForSaveEnd(startsBefore + 1L);
+            Check(WorldSavePatch.LastSavedStartSequence > startsBefore && WorldSavePatch.LastSavedUnixMs >= requested,
+                "the direct save finished: lastSavedUnixMs moved on (" + (WorldSavePatch.LastSavedUnixMs - requested) + " ms after the request)");
+            Check(NewestWrite(folder) > newestBefore, "the world folder was written (" + Path.GetFileName(folder) + ")");
+
+            // Two saves asked for back to back: the game waits for the first before it starts the second.
+            ZNet network = ZNet.instance!;
+            network.Save(sync: false, saveOtherPlayerProfiles: false, waitForNextFrame: false);
+            long betweenSaves = WorldSavePatch.StartSequence;
+            ConsoleSaveResult second = ConsoleBridge.SaveOnMainThread(RunningLog());
+            Check(second.Ok && WorldSavePatch.StartSequence == betweenSaves + 1L, "a save asked for while one runs is started after it");
+            WaitForSaveEnd(betweenSaves + 1L);
+            Check(WorldSavePatch.LastSavedStartSequence == betweenSaves + 1L, "and it is the asked-for save that answers, not the one before it");
+
+            // The game declines a save it cannot make (here: a world that failed to load).
+            ZNet.m_loadError = true;
+            try
+            {
+                ConsoleSaveResult skipped = ConsoleBridge.SaveOnMainThread(RunningLog());
+                Check(!skipped.Ok && skipped.Error == "the game skipped the save", "a save the game declines is reported at once (" + skipped.Error + ")");
+            }
+            finally
+            {
+                ZNet.m_loadError = false;
+            }
+        }
+        finally
+        {
+            consoleField.SetValue(null, console);
+        }
+    }
+
+    private static void WaitForSaveEnd(long sequence)
+    {
+        DateTime until = DateTime.UtcNow.AddSeconds(60);
+        while (DateTime.UtcNow < until && WorldSavePatch.LastSavedStartSequence < sequence && WorldSavePatch.LastSaveFailedStartSequence < sequence)
+        {
+            Thread.Sleep(100);
+            WorldSavePatch.Pump();
+        }
+    }
+
+    private static DateTime NewestWrite(string folder)
+    {
+        DateTime newest = DateTime.MinValue;
+        if (!Directory.Exists(folder)) return newest;
+        foreach (string file in Directory.GetFiles(folder))
+        {
+            DateTime written = File.GetLastWriteTimeUtc(file);
+            if (written > newest) newest = written;
+        }
+
+        return newest;
+    }
+
+    // The save over HTTP as the host calls it before a stop: ?wait answers when this save has ended.
+    private void CheckLiveSave(string root, string token)
+    {
+        World? world = ZNet.World;
+        string folder = world == null ? "" : SaveSystem.GetWorldsSaveRootPath(world.m_fileSource) + "/" + world.m_worldName;
+        DateTime before = NewestWrite(folder);
+        long requested = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        string waited = PostAdmin(root, token, "/api/admin/save?wait=90", out int waitedCode);
+        var saved = System.Text.RegularExpressions.Regex.Match(waited, "\"savedUnixMs\":([0-9]+)");
+        LiveResult(waitedCode == 200 && waited.StartsWith("{\"ok\":true,\"saved\":true,", StringComparison.Ordinal) && saved.Success &&
+                   long.Parse(saved.Groups[1].Value) >= requested && waited.Contains("\"durationMs\":"),
+            "the save with wait answers when the save has ended (" + waited + ")");
+        LiveResult(NewestWrite(folder) > before, "and the world folder was written by then");
+        string quick = PostAdmin(root, token, "/api/admin/save", out int quickCode);
+        LiveResult(quickCode == 200 && quick.StartsWith("{\"ok\":true,\"alreadySaving\":", StringComparison.Ordinal) && !quick.Contains("\"saved\""),
+            "without wait the save answers at once in the old shape (" + quick + ")");
+        PostAdmin(root, "", "/api/admin/save?wait=5", out int anonymous);
+        LiveResult(anonymous == 401, "no token, no save (HTTP " + anonymous + ")");
+    }
+
+    private static string PostAdmin(string root, string token, string path, out int code)
+    {
+        var request = (HttpWebRequest)WebRequest.Create(root + path);
+        request.Method = "POST";
+        request.ContentLength = 0;
+        if (token.Length > 0) request.Headers["X-LiveMap-Token"] = token;
+        request.Timeout = 120000;
+        request.ReadWriteTimeout = 120000;
+        request.KeepAlive = false;
+        try
+        {
+            using var response = (HttpWebResponse)request.GetResponse();
+            code = (int)response.StatusCode;
+            using var reader = new StreamReader(response.GetResponseStream());
+            return reader.ReadToEnd();
+        }
+        catch (WebException exception) when (exception.Response is HttpWebResponse refused)
+        {
+            code = (int)refused.StatusCode;
+            refused.Close();
+            return "";
+        }
+    }
+
     // 0.13.28: a failed crossplay login on a dedicated server is retried after 5-20 s, at most 5 times since the last
     // success; a banned account is not; then the game's own failure path runs.
     private void TestPlayFabRetryPolicy()
@@ -2014,6 +2494,8 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             }
 
             CheckLiveSeed(root, token);
+            CheckLiveDoctor(root, token);
+            CheckLiveSave(root, token);
             CheckLiveCensus(root, token);
 
             int publicTaken = FillSlots(slots, EventStreamView.Public);

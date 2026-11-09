@@ -1304,6 +1304,25 @@ internal static class VoCommands
         }
     }
 
+    // The boss a defeat key names ("defeated_eikthyr" is Eikthyr); a key this table does not know
+    // reads as its own name ("defeated_some_boss" is "Some boss").
+    internal static string BossNameForKey(string globalKey)
+    {
+        for (int index = 0; index < Bosses.Length; index++)
+        {
+            if (string.Equals(Bosses[index].GlobalKey, globalKey, StringComparison.OrdinalIgnoreCase))
+            {
+                return Bosses[index].Name;
+            }
+        }
+
+        string rest = globalKey.StartsWith("defeated_", StringComparison.OrdinalIgnoreCase)
+            ? globalKey.Substring("defeated_".Length)
+            : globalKey;
+        rest = rest.Replace('_', ' ').Trim();
+        return rest.Length == 0 ? "Unknown boss" : char.ToUpperInvariant(rest[0]) + rest.Substring(1);
+    }
+
     private sealed class BossDefinition
     {
         public BossDefinition(string name, string globalKey)

@@ -114,8 +114,9 @@ CONSOLE_PROBE_URL=http://127.0.0.1:24583 CONSOLE_PROBE_RESULT="$console_result" 
     -world SmokeWorld -password regression1 -savedir "$backup/worlds" -nographics -batchmode -public 0 $crossplay_arg \
     > "$output/server.log" 2>&1 9>&- &
 pid=$!
-# the live checks include an object census, which waits for the map's own bases survey after a start
-deadline=$((SECONDS + 330))
+# the live checks wait for the history's first minute, a real save's end and an object census (which waits
+# for the map's own bases survey after a start)
+deadline=$((SECONDS + 480))
 while (( SECONDS < deadline )); do
     if [[ -f "$config/runtime-regression/result.txt" && -f "$console_result" ]]; then break; fi
     if [[ -f "$server/BepInEx/LogOutput.log" ]] &&

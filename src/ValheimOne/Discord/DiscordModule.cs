@@ -108,8 +108,8 @@ public sealed class DiscordModule : IFeatureModule
 
     public void ApplyPatches(Harmony harmony)
     {
-        // This is the existing shared SaveWorld postfix; the Live Map consumes its timestamp and
-        // Discord subscribes to the same callback path instead of installing another save patch.
+        // The shared save-end patch (SaveSystem.EndSave): the Live Map reads its times, the activity
+        // log and Discord listen to the same events instead of installing another save patch.
         WorldSavePatch.ApplyPatches(harmony, _log);
 
         var rpcCharacterId = AccessTools.Method(

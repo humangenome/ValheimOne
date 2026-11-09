@@ -120,6 +120,9 @@ public sealed class ServerSessionEventSource : MonoBehaviour
             return;
         }
 
+        // A world save's outcome is raised here, on the main thread (the save itself ends on its own thread).
+        ValheimOne.LiveMap.WorldSavePatch.Pump();
+
         ZNet? network = ZNet.instance;
         if (network == null || !network.IsServer())
         {
@@ -247,17 +250,17 @@ public sealed class ServerSessionEventSource : MonoBehaviour
         RaidObservation? previous = _activeRaid;
         if (previous == null && current != null)
         {
-            Publish(RaidStarted, new ServerRaidEvent(current.ReadableName), "raid start");
+            Publish(RaidStarted, new ServerRaidEvent(current.ReadableName, current.InternalName), "raid start");
         }
         else if (previous != null && current == null)
         {
-            Publish(RaidEnded, new ServerRaidEvent(previous.ReadableName), "raid end");
+            Publish(RaidEnded, new ServerRaidEvent(previous.ReadableName, previous.InternalName), "raid end");
         }
         else if (previous != null && current != null &&
                  !string.Equals(previous.InternalName, current.InternalName, StringComparison.Ordinal))
         {
-            Publish(RaidEnded, new ServerRaidEvent(previous.ReadableName), "raid end");
-            Publish(RaidStarted, new ServerRaidEvent(current.ReadableName), "raid start");
+            Publish(RaidEnded, new ServerRaidEvent(previous.ReadableName, previous.InternalName), "raid end");
+            Publish(RaidStarted, new ServerRaidEvent(current.ReadableName, current.InternalName), "raid start");
         }
 
         _activeRaid = current;
@@ -522,12 +525,17 @@ internal sealed class ServerPlayerDeathEvent
 
 internal sealed class ServerRaidEvent
 {
-    public ServerRaidEvent(string name)
+    public ServerRaidEvent(string name, string eventName)
     {
         Name = name;
+        EventName = eventName;
     }
 
+    // The raid's own words ("The ground is shaking"), for people.
     public string Name { get; }
+
+    // The game's internal event name ("army_eikthyr"), for tools.
+    public string EventName { get; }
 }
 
 internal sealed class ServerDayChangedEvent

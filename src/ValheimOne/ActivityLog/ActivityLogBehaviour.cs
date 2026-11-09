@@ -27,6 +27,8 @@ internal sealed class ActivityLogBehaviour : MonoBehaviour
         sessionEvents.RaidEnded += behaviour.OnRaidEnded;
         sessionEvents.DayChanged += behaviour.OnDayChanged;
         WorldSavePatch.WorldSaved += behaviour.OnWorldSaved;
+        WorldSavePatch.WorldSaveFailed += behaviour.OnWorldSaveFailed;
+        BossDefeatPatch.BossDefeated += behaviour.OnBossDefeated;
         return behaviour;
     }
 
@@ -38,6 +40,8 @@ internal sealed class ActivityLogBehaviour : MonoBehaviour
         }
 
         _stopped = true;
+        // The quit's own save may have ended this frame: report it before the stop.
+        WorldSavePatch.Pump();
         if (recordServerStop && _sessionStarted)
         {
             _module?.RecordServerStop();
@@ -56,6 +60,8 @@ internal sealed class ActivityLogBehaviour : MonoBehaviour
         }
 
         WorldSavePatch.WorldSaved -= OnWorldSaved;
+        WorldSavePatch.WorldSaveFailed -= OnWorldSaveFailed;
+        BossDefeatPatch.BossDefeated -= OnBossDefeated;
         _sessionEvents = null;
         _module = null;
     }
@@ -84,12 +90,22 @@ internal sealed class ActivityLogBehaviour : MonoBehaviour
 
     private void OnRaidStarted(ServerRaidEvent value)
     {
-        _module?.RecordRaidStarted(value.Name);
+        _module?.RecordRaidStarted(value.Name, value.EventName);
     }
 
     private void OnRaidEnded(ServerRaidEvent value)
     {
-        _module?.RecordRaidEnded(value.Name);
+        _module?.RecordRaidEnded(value.Name, value.EventName);
+    }
+
+    private void OnBossDefeated(ServerBossDefeatedEvent value)
+    {
+        _module?.RecordBossDefeated(value.Name, value.Key, value.FirstTime);
+    }
+
+    private void OnWorldSaveFailed(WorldSaveFailure value)
+    {
+        _module?.RecordWorldSaveFailed(value.Stage, value.Message);
     }
 
     private void OnDayChanged(ServerDayChangedEvent value)
@@ -99,7 +115,7 @@ internal sealed class ActivityLogBehaviour : MonoBehaviour
 
     private void OnWorldSaved()
     {
-        _module?.RecordWorldSave();
+        _module?.RecordWorldSave(WorldSavePatch.LastSaveDurationMs);
     }
 
     private void OnApplicationQuit()

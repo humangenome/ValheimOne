@@ -287,6 +287,9 @@ internal sealed class LiveMapHttpServer
     // The on-demand object census behind /api/stats/objects (admin view only).
     internal ObjectCensus? ObjectCensus { get; set; }
 
+    // The per-minute numbers behind /api/stats/history (admin token; the console need not be on).
+    internal StatsHistory? StatsHistory { get; set; }
+
     public void Stop()
     {
         _stopping = true;
@@ -411,12 +414,8 @@ internal sealed class LiveMapHttpServer
                     return;
                 }
 
-                bool isTowPath = string.Equals(path, "/api/admin/tow", StringComparison.Ordinal);
-                bool isChatPath = string.Equals(path, "/api/admin/chat", StringComparison.Ordinal);
                 if (_consoleBridge == null ||
-                    (!isChatPath &&
-                     !isTowPath &&
-                     (!_config.ConsoleEnabled || _logRingBuffer == null)))
+                    !ConsoleGateAllows(path, _config.ConsoleEnabled, _logRingBuffer != null))
                 {
                     WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
                     return;
@@ -622,6 +621,10 @@ internal sealed class LiveMapHttpServer
             {
                 ServeObjectCensus(response, viewLevel, isPost);
             }
+            else if (isGet && path == "/api/stats/history")
+            {
+                ServeStatsHistory(request, response);
+            }
             else
             {
                 WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
@@ -725,7 +728,22 @@ internal sealed class LiveMapHttpServer
     {
         return path.StartsWith("/api/console/", StringComparison.Ordinal) ||
                path.StartsWith("/api/admin/", StringComparison.Ordinal) ||
-               path == "/api/stats";
+               path == "/api/stats" ||
+               path == "/api/stats/history";
+    }
+
+    // Every console path needs the access token. Most also need the web console on; chat, ship tow,
+    // the world save (a host saves before every stop) and the server numbers (/api/stats and its
+    // history) do not.
+    internal static bool ConsoleGateAllows(string path, bool consoleEnabled, bool consoleLogRunning)
+    {
+        if (path == "/api/admin/tow" || path == "/api/admin/chat" || path == "/api/admin/save" ||
+            path == "/api/stats" || path == "/api/stats/history")
+        {
+            return true;
+        }
+
+        return consoleEnabled && consoleLogRunning;
     }
 
     private static void ReadAuditIdentity(
@@ -1097,6 +1115,12 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"snapshotAgeMs\":").Append(snapshotAgeMs.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"lastSavedUnixMs\":").Append(
             lastSavedUnixMs.ToString(CultureInfo.InvariantCulture));
+        long lastSaveFailedUnixMs = WorldSavePatch.LastSaveFailedUnixMs;
+        if (viewLevel == ViewLevel.Admin)
+        {
+            json.Append(",\"lastSaveFailedUnixMs\":").Append(
+                lastSaveFailedUnixMs.ToString(CultureInfo.InvariantCulture));
+        }
         if (snapshotStale)
         {
             json.Append(",\"stale\":true");
@@ -1135,6 +1159,7 @@ internal sealed class LiveMapHttpServer
         if (viewLevel == ViewLevel.Admin)
         {
             key.Append('|').Append(snapshot.JoinCode);
+            key.Append('|').Append(lastSaveFailedUnixMs.ToString(CultureInfo.InvariantCulture));
         }
 
         if (hasSharedMapAccess)
@@ -1571,6 +1596,7 @@ internal sealed class LiveMapHttpServer
 
         var json = new StringBuilder(48 + (entries.Count * 128));
         json.Append("{\"enabled\":").Append(enabled ? "true" : "false");
+        json.Append(",\"bootUnixMs\":").Append(_activityLog.BootUnixMs.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"cursor\":");
         json.Append(latestCursor.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"events\":[");
@@ -1951,10 +1977,23 @@ internal sealed class LiveMapHttpServer
         WriteJson(response, HttpStatusCode.OK, json.ToString());
     }
 
+    // POST /api/admin/save: the game's own world save, never through the game's Console. With
+    // ?wait=<seconds> (1..120) the answer comes when this save has ended: "saved":true with its end
+    // time and duration, or "saved":false with the reason. Without wait it answers at once, as before.
     private void ServeSave(HttpListenerRequest request, HttpListenerResponse response)
     {
         ReadAuditIdentity(request, out string operatorName, out string source);
+        int waitSeconds = (int)Math.Max(0L, Math.Min(MaximumSaveWaitSeconds, ParseLong(request.QueryString["wait"], 0L)));
+        long startsBefore = WorldSavePatch.StartSequence;
         ConsoleSaveResult result = _consoleBridge!.Save();
+        if (waitSeconds > 0)
+        {
+            string waited = WaitForSave(result, startsBefore, waitSeconds, out string outcome);
+            _activityLog.RecordAdminAction(operatorName, "save", null, outcome == "saved" ? "ok" : "error", outcome, source);
+            WriteJson(response, HttpStatusCode.OK, waited);
+            return;
+        }
+
         _activityLog.RecordAdminAction(
             operatorName,
             "save",
@@ -1968,6 +2007,51 @@ internal sealed class LiveMapHttpServer
             ? "{\"ok\":true,\"alreadySaving\":" + (result.AlreadySaving ? "true" : "false") + "}"
             : "{\"ok\":false,\"error\":" + JsonWriter.Quote(result.Error) + "}";
         WriteJson(response, HttpStatusCode.OK, json);
+    }
+
+    private const int MaximumSaveWaitSeconds = 120;
+
+    // Waits for the save that answers a request made when the newest save start was startsBefore: one
+    // that started after it. A save already running then ends first and does not count.
+    internal static string WaitForSave(ConsoleSaveResult result, long startsBefore, int waitSeconds, out string outcome)
+    {
+        if (!result.Ok)
+        {
+            outcome = result.Error;
+            return "{\"ok\":false,\"saved\":false,\"error\":" + JsonWriter.Quote(result.Error) + "}";
+        }
+
+        DateTime until = DateTime.UtcNow.AddSeconds(waitSeconds);
+        while (true)
+        {
+            if (WorldSavePatch.LastSavedStartSequence > startsBefore)
+            {
+                outcome = "saved";
+                return "{\"ok\":true,\"saved\":true,\"alreadySaving\":" + (result.AlreadySaving ? "true" : "false") +
+                       ",\"savedUnixMs\":" + WorldSavePatch.LastSavedUnixMs.ToString(CultureInfo.InvariantCulture) +
+                       ",\"durationMs\":" + WorldSavePatch.LastSaveDurationMs.ToString(CultureInfo.InvariantCulture) + "}";
+            }
+
+            // The failure is stored before its start number, so read the number first.
+            WorldSaveFailure? failure = WorldSavePatch.LastSaveFailedStartSequence > startsBefore ? WorldSavePatch.LastFailure : null;
+            if (failure != null)
+            {
+                outcome = "save failed: " + failure.Stage;
+                return "{\"ok\":false,\"saved\":false,\"error\":\"save failed\",\"stage\":" + JsonWriter.Quote(failure.Stage) +
+                       ",\"message\":" + JsonWriter.Quote(failure.Message) +
+                       ",\"failedUnixMs\":" + failure.UnixMs.ToString(CultureInfo.InvariantCulture) + "}";
+            }
+
+            if (DateTime.UtcNow >= until)
+            {
+                outcome = "save not finished";
+                return "{\"ok\":false,\"saved\":false,\"error\":\"save not finished\",\"waitedMs\":" +
+                       (waitSeconds * 1000).ToString(CultureInfo.InvariantCulture) +
+                       ",\"alreadySaving\":" + (result.AlreadySaving ? "true" : "false") + "}";
+            }
+
+            Thread.Sleep(100);
+        }
     }
 
     private void ServeTow(HttpListenerRequest request, HttpListenerResponse response)
@@ -2131,6 +2215,7 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"peers\":").Append(stats.Peers.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"zdoCount\":").Append(stats.ZdoCount.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"monoHeapBytes\":").Append(stats.MonoHeapBytes.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"workingSetBytes\":").Append(stats.WorkingSetBytes.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"frameAvgMs\":").Append(JsonWriter.Number(stats.FrameAvgMs));
         json.Append(",\"frameMaxMs\":").Append(JsonWriter.Number(stats.FrameMaxMs));
         json.Append(",\"snapshotUnixMs\":").Append(stats.SnapshotUnixMs.ToString(CultureInfo.InvariantCulture));
@@ -2190,6 +2275,37 @@ internal sealed class LiveMapHttpServer
             response,
             cached ? HttpStatusCode.OK : HttpStatusCode.Accepted,
             census.Snapshot.ToJson(cached));
+    }
+
+    // GET /api/stats/history?since=<unixMs>: the last 24 hours a minute at a time, across restarts.
+    private void ServeStatsHistory(HttpListenerRequest request, HttpListenerResponse response)
+    {
+        StatsHistory? history = StatsHistory;
+        if (history == null)
+        {
+            WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
+        long since = Math.Max(0L, ParseLong(request.QueryString["since"], 0L));
+        byte[] body = Encoding.UTF8.GetBytes(
+            history.BuildJson(since, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+        response.Headers[HttpResponseHeader.Vary] = "Accept-Encoding";
+        if (AcceptsGzip(request))
+        {
+            using (var compressed = new MemoryStream())
+            {
+                using (var gzip = new System.IO.Compression.GZipStream(compressed, System.IO.Compression.CompressionMode.Compress, true))
+                {
+                    gzip.Write(body, 0, body.Length);
+                }
+
+                response.Headers[HttpResponseHeader.ContentEncoding] = "gzip";
+                body = compressed.ToArray();
+            }
+        }
+
+        WriteBytes(response, HttpStatusCode.OK, "application/json; charset=utf-8", body, "no-store");
     }
 
     private static void AppendShutdownJson(

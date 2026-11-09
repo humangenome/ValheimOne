@@ -37,6 +37,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private LiveMapHttpServer? _httpServer;
     private LogRingBuffer? _logRingBuffer;
     private ConsoleBridge? _consoleBridge;
+    private StatsHistory? _statsHistory;
+    private static readonly Func<StatsGauges> _readGauges = ReadGauges;
     private ServerShutdownScheduler? _shutdownScheduler;
     private volatile LiveMapSnapshot _snapshot = LiveMapSnapshot.Empty;
     private volatile PoiCatalog _poiCatalog = PoiCatalog.Empty;
@@ -123,6 +125,8 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         behaviour._getLeaderboardStore = getLeaderboardStore;
         behaviour._shutdownScheduler = new ServerShutdownScheduler(log);
         behaviour._consoleBridge = new ConsoleBridge(null, log, behaviour._shutdownScheduler);
+        behaviour._statsHistory = new StatsHistory(activityLog.DataDirectory, log);
+        behaviour._statsHistory.Begin(ProcessInfo.BootUnixMs, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         Instance = behaviour;
     }
 
@@ -160,6 +164,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
 #endif
         VoCommands.PumpSessionTimes();
         _consoleBridge?.Pump();
+        _statsHistory?.Tick(Time.deltaTime, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), _readGauges);
         _shutdownScheduler?.Tick();
 
         if (!_enabledCheck())
@@ -448,6 +453,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         var objectCensus = new ObjectCensus(log, () => playerBaseTracker.Snapshot.Scanning);
         _objectCensus = objectCensus;
         _httpServer.ObjectCensus = objectCensus;
+        _httpServer.StatsHistory = _statsHistory;
         _httpServer.Start();
 
         float now = Time.realtimeSinceStartup;
@@ -863,7 +869,20 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
 
     private void OnApplicationQuit()
     {
+        // The clean stop line: a run that ends without it reads stop "none" in the history.
+        _statsHistory?.WriteCleanStop(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         StopServices(true);
+    }
+
+    private static StatsGauges ReadGauges()
+    {
+        ZNet? network = ZNet.instance;
+        return new StatsGauges(
+            ZDOMan.instance?.NrOfObjects() ?? 0,
+            GC.GetTotalMemory(false),
+            ProcessInfo.WorkingSetBytes(),
+            network != null ? network.GetNrOfPlayers() : 0,
+            network?.GetPeers()?.Count ?? 0);
     }
 
     private void OnDestroy()
