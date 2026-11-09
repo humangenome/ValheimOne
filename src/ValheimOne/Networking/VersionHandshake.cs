@@ -28,6 +28,7 @@ public sealed class VersionHandshake : IVersionHandshake
 
     private ClientConfigBuffer? _clientConfigBuffer;
     private bool _clientHelloFailureLogged;
+    private readonly OverlaySkipLog _overlaySkipLog = new OverlaySkipLog();
     private bool _clientHelloSent;
     private bool _initialized;
 
@@ -520,10 +521,19 @@ public sealed class VersionHandshake : IVersionHandshake
 
         try
         {
-            int appliedValues = _settings.ApplyOverlay(serializedConfig.ToString());
+            var skipped = new List<string>();
+            int appliedValues = _settings.ApplyOverlay(serializedConfig.ToString(), skipped);
+            foreach (string description in _overlaySkipLog.TakeNew(skipped))
+            {
+                _log.Warning(
+                    $"Skipped one synced value this build (v{VersionInfo.PluginVersion}) cannot read; " +
+                    $"the rest of the server config applies: {description}");
+            }
+
             _log.Info(
                 $"Server config applied: {appliedValues} value(s) from " +
-                $"{buffer.TotalChunks} chunk(s); local cfg unchanged.");
+                $"{buffer.TotalChunks} chunk(s); local cfg unchanged." +
+                (skipped.Count == 0 ? string.Empty : $" {skipped.Count} value(s) skipped."));
         }
         catch (Exception exception)
         {
