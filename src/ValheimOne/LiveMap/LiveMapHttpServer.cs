@@ -96,6 +96,9 @@ internal sealed class LiveMapHttpServer
     private bool _accessTokenWarningLogged;
     private bool _bindFailureLogged;
     private float _nextBindRetry;
+    // Bound to 127.0.0.1 only because the all-address bind failed; the retry keeps trying every address.
+    private bool _onLoopbackFallback;
+    private int _activeRequests;
     private bool _consoleTokenWarningLogged;
     private readonly EventStreamSlots _eventStreams = new EventStreamSlots();
     private volatile bool _stopping;
@@ -202,6 +205,7 @@ internal sealed class LiveMapHttpServer
 
         string preferredHost = string.IsNullOrEmpty(_bindIp) ? "*" : FormatHost(_bindIp);
         string preferredPrefix = $"http://{preferredHost}:{_port}/";
+        bool onFallback = false;
         if (!TryStartListener(preferredPrefix, out HttpListener? listener, out Exception? failure))
         {
             if (!string.IsNullOrEmpty(_bindIp))
@@ -210,7 +214,7 @@ internal sealed class LiveMapHttpServer
                 return;
             }
 
-            string fallbackPrefix = $"http://127.0.0.1:{_port}/";
+            string fallbackPrefix = LoopbackPrefix;
             if (!_bindFailureLogged)
             {
                 _log.Warning(
@@ -225,18 +229,16 @@ internal sealed class LiveMapHttpServer
             }
 
             preferredPrefix = fallbackPrefix;
+            onFallback = true;
         }
 
         _bindFailureLogged = false;
-
-        _listener = listener;
-        _listenerThread = new Thread(Listen)
-        {
-            IsBackground = true,
-            Name = "ValheimOne.LiveMap.Http",
-        };
-        _listenerThread.Start();
-        _log.Info($"[LiveMap] listening on {preferredPrefix}");
+        _onLoopbackFallback = onFallback;
+        StartListenerThread(listener!);
+        _log.Info(onFallback
+            ? $"[LiveMap] listening on {preferredPrefix} only (this machine); trying {AllAddressesPrefix} again " +
+              $"every {BindRetrySeconds:0} seconds."
+            : $"[LiveMap] listening on {preferredPrefix}");
         if (!string.IsNullOrEmpty(RelayKey))
         {
             // Never the value: only that one is set.
@@ -249,9 +251,11 @@ internal sealed class LiveMapHttpServer
     // A port that was busy when the map started (a neighbour, or the old process still letting go)
     // used to leave the map dead until the next server restart. Called every frame; tries the bind
     // again every BindRetrySeconds until it holds, and logs only the first failure and the success.
+    // That includes the 127.0.0.1 fallback: Windows lets a program bind 127.0.0.1 while another holds
+    // the same port on every address, so without this the map stayed reachable from this machine only.
     public void RetryBindIfDue(float now)
     {
-        if (_listener != null || _stopping)
+        if (_stopping || (_listener != null && !_onLoopbackFallback))
         {
             return;
         }
@@ -268,7 +272,84 @@ internal sealed class LiveMapHttpServer
         }
 
         _nextBindRetry = now + BindRetrySeconds;
-        Start();
+        if (_listener == null)
+        {
+            Start();
+            return;
+        }
+
+        TryLeaveLoopbackFallback();
+    }
+
+    private string LoopbackPrefix => $"http://127.0.0.1:{_port}/";
+
+    private string AllAddressesPrefix => $"http://*:{_port}/";
+
+    internal bool OnLoopbackFallback => _onLoopbackFallback;
+
+    // Our own 127.0.0.1 listener blocks the all-address bind, so the port is let go for a moment: try every
+    // address, and when the port is still taken there, take 127.0.0.1 again without a log line. Waits while a
+    // request is being answered (a host's save before a stop comes in on 127.0.0.1).
+    private void TryLeaveLoopbackFallback()
+    {
+        if (Volatile.Read(ref _activeRequests) > 0)
+        {
+            return;
+        }
+
+        CloseListenerForRebind();
+        if (TryStartListener(AllAddressesPrefix, out HttpListener? listener, out _))
+        {
+            _onLoopbackFallback = false;
+            StartListenerThread(listener!);
+            _log.Info($"[LiveMap] listening on {AllAddressesPrefix}: the port is free again, so the 127.0.0.1 fallback is closed.");
+            return;
+        }
+
+        if (TryStartListener(LoopbackPrefix, out listener, out Exception? failure))
+        {
+            StartListenerThread(listener!);
+            return;
+        }
+
+        _onLoopbackFallback = false;
+        LogBindFailure(LoopbackPrefix, failure);
+    }
+
+    private void StartListenerThread(HttpListener listener)
+    {
+        _listener = listener;
+        _listenerThread = new Thread(() => Listen(listener))
+        {
+            IsBackground = true,
+            Name = "ValheimOne.LiveMap.Http",
+        };
+        _listenerThread.Start();
+    }
+
+    private void CloseListenerForRebind()
+    {
+        HttpListener? listener = _listener;
+        Thread? thread = _listenerThread;
+        _listener = null;
+        _listenerThread = null;
+        if (listener != null)
+        {
+            try
+            {
+                listener.Stop();
+                listener.Close();
+            }
+            catch (ObjectDisposedException)
+            {
+                // The listener is already stopped.
+            }
+        }
+
+        if (thread != null && thread.IsAlive && !ReferenceEquals(Thread.CurrentThread, thread))
+        {
+            thread.Join(1000);
+        }
     }
 
     private void LogBindFailure(string prefix, Exception? failure)
@@ -347,14 +428,8 @@ internal sealed class LiveMapHttpServer
         }
     }
 
-    private void Listen()
+    private void Listen(HttpListener listener)
     {
-        HttpListener? listener = _listener;
-        if (listener == null)
-        {
-            return;
-        }
-
         while (!_stopping && listener.IsListening)
         {
             try
@@ -364,7 +439,7 @@ internal sealed class LiveMapHttpServer
             }
             catch (HttpListenerException)
             {
-                if (!_stopping)
+                if (!_stopping && ReferenceEquals(listener, _listener))
                 {
                     _log.Warning("[LiveMap] HTTP listener stopped accepting requests unexpectedly.");
                 }
@@ -383,6 +458,19 @@ internal sealed class LiveMapHttpServer
     }
 
     private void HandleRequest(object? state)
+    {
+        Interlocked.Increment(ref _activeRequests);
+        try
+        {
+            HandleRequestCore(state);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _activeRequests);
+        }
+    }
+
+    private void HandleRequestCore(object? state)
     {
         var context = state as HttpListenerContext;
         if (context == null)

@@ -129,6 +129,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestRegionLabels();
             TestMapStartSettings();
             TestMapBindRetry();
+            TestMapLoopbackFallbackRetry();
             TestValheimOneZeroData();
             TestDropsChestLoot();
             TestNetworkSendLimit();
@@ -992,6 +993,87 @@ public sealed class RuntimeRegression : BaseUnityPlugin
 
             server.RetryBindIfDue(100f + (retry * 4f));
             Check(server.IsRunning, "a running listener is left alone by the retry");
+        }
+        finally
+        {
+            try
+            {
+                holder.Stop();
+            }
+            catch (SocketException)
+            {
+                // Already stopped above.
+            }
+
+            server.Stop();
+        }
+    }
+
+    // The 127.0.0.1 fallback is not the end of the retry (0.13.31). Windows lets a program bind 127.0.0.1 while another
+    // holds the same port on every address, so a busy port left the map answering this machine only, out of the
+    // hosting relay's reach until a restart. Linux refuses that pair, so the holder here takes the port on one of this
+    // machine's other addresses: the all-address bind fails and 127.0.0.1 binds, as on Windows. Real listener, real
+    // sockets; a throwaway server object on its own port.
+    private void TestMapLoopbackFallbackRetry()
+    {
+        IPAddress? outside = System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
+            .Where(nic => nic.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up)
+            .SelectMany(nic => nic.GetIPProperties().UnicastAddresses)
+            .Select(unicast => unicast.Address)
+            .FirstOrDefault(address => address.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(address));
+        Check(outside != null, "fallback retry: this machine has an address besides loopback for the holder");
+        if (outside == null)
+        {
+            return;
+        }
+
+        Type behaviourType = typeof(ValheimOnePlugin).Assembly.GetType("ValheimOne.LiveMap.LiveMapBehaviour", true)!;
+        object? behaviour = AccessTools.Property(behaviourType, "Instance").GetValue(null, null);
+        var server = (LiveMapHttpServer)FormatterServices.GetUninitializedObject(typeof(LiveMapHttpServer));
+        void SetField(string name, object? value) =>
+            AccessTools.Field(typeof(LiveMapHttpServer), name).SetValue(server, value);
+        var holder = new TcpListener(outside, 0);
+        holder.Start();
+        int port = ((IPEndPoint)holder.LocalEndpoint).Port;
+        SetField("_port", port);
+        SetField("_bindIp", string.Empty);
+        SetField("_config", AccessTools.Field(behaviourType, "_config").GetValue(behaviour));
+        SetField("_log", AccessTools.Field(behaviourType, "_log").GetValue(behaviour));
+        bool Answers(IPAddress address)
+        {
+            try
+            {
+                using var client = new TcpClient();
+                client.Connect(address, port);
+                return client.Connected;
+            }
+            catch (SocketException)
+            {
+                return false;
+            }
+        }
+
+        try
+        {
+            server.Start();
+            Check(server.IsRunning && server.OnLoopbackFallback && Answers(IPAddress.Loopback),
+                "fallback retry: with the port taken on another address, the map listens on 127.0.0.1 only (the Windows case)");
+            float retry = LiveMapHttpServer.BindRetrySeconds;
+            server.RetryBindIfDue(100f);
+            server.RetryBindIfDue(100f + retry + 1f);
+            Check(server.IsRunning && server.OnLoopbackFallback && Answers(IPAddress.Loopback),
+                "fallback retry: while the port is still taken, the map stays on 127.0.0.1 and still answers there");
+            AccessTools.Field(typeof(LiveMapHttpServer), "_activeRequests").SetValue(server, 1);
+            holder.Stop();
+            server.RetryBindIfDue(100f + (retry * 2f) + 2f);
+            Check(server.OnLoopbackFallback && Answers(IPAddress.Loopback),
+                "fallback retry: a request being answered (a host's save before a stop) holds the switch to the next try");
+            AccessTools.Field(typeof(LiveMapHttpServer), "_activeRequests").SetValue(server, 0);
+            server.RetryBindIfDue(100f + (retry * 3f) + 3f);
+            Check(server.IsRunning && !server.OnLoopbackFallback && Answers(outside) && Answers(IPAddress.Loopback),
+                "fallback retry: once the port is free on every address, the map switches over and answers on " + outside + " and 127.0.0.1");
+            server.RetryBindIfDue(100f + (retry * 6f));
+            Check(server.IsRunning && !server.OnLoopbackFallback, "fallback retry: a map on every address is left alone by the retry");
         }
         finally
         {

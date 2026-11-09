@@ -170,6 +170,13 @@ if [[ -n $VALHEIMONE_RELOAD_SHARE_TOKEN ]] && ! grep -qF 'Config hot-reload: [Li
     echo 'The live ShareToken change was not reloaded, so the reload log was not checked.' >&2
     status=1
 fi
+# The fallback retry check moves the map once onto 127.0.0.1 and once back to every address: each switch logs one line.
+for line in 'only (this machine); trying http://*:' 'the port is free again, so the 127.0.0.1 fallback is closed'; do
+    if [[ $(grep -cF "$line" "$output/BepInEx.log") != 1 ]]; then
+        echo "The map's fallback switch line '$line' is not in the log exactly once." >&2
+        status=1
+    fi
+done
 if grep -qE 'Failed to patch|Feature patch application failed|RUNTIME REGRESSION FAIL|FieldAccessException|MissingFieldException|NullReferenceException' "$output/BepInEx.log" "$output/server.log"; then
     echo 'Runtime log contains an unhandled failure.' >&2
     grep -nE -A8 'Failed to patch|Feature patch application failed|RUNTIME REGRESSION FAIL|FieldAccessException|MissingFieldException|NullReferenceException' "$output/BepInEx.log" "$output/server.log" | head -n 100 >&2 || true
