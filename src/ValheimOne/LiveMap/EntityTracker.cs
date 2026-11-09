@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
 using System.Threading;
@@ -108,6 +109,30 @@ internal sealed class EntityTracker
     private bool _eventWarningLogged;
     private bool _focusWarningLogged;
     private bool _wardRadiusResolved;
+    private readonly ZdoWorldWalker _walker = new ZdoWorldWalker();
+    private readonly Dictionary<int, int> _wantedPrefabs = new Dictionary<int, int>();
+    private readonly Action<ZDO> _visitWalk;
+    private readonly Stopwatch _scanClock = new Stopwatch();
+    private bool _scanLegacy;
+    private int _scanPasses;
+    private int _scanFrames;
+    private double _scanBusyMilliseconds;
+    private double _scanWorstFrameMilliseconds;
+    private long _scanStartedUnixMs;
+    private string _scanGroupsLabel = string.Empty;
+    private volatile EntityScanReport? _lastScanReport;
+
+    // The game's own per-prefab search instead of the one-pass walk, and one log line per scan:
+    // both only for measuring the two side by side (set by a lab build's switch file and by tests).
+    internal static bool LegacyScanSwitch;
+    internal static bool LogScansSwitch;
+    internal static double WalkBudgetMilliseconds = ZdoWorldWalker.DefaultBudgetMilliseconds;
+
+    internal bool? LegacyScanOverride { get; set; }
+
+    internal bool IsScanning => _scanning;
+
+    internal EntityScanReport? LastScanReport => _lastScanReport;
 
     public EntityTracker(
         LiveMapConfig config,
@@ -117,6 +142,7 @@ internal sealed class EntityTracker
         _config = config;
         _positionHistory = positionHistory;
         _log = log;
+        _visitWalk = VisitWalk;
     }
 
     public EntityMapSnapshot Snapshot => _snapshot;
@@ -282,10 +308,150 @@ internal sealed class EntityTracker
         _prefabIndex = 0;
         _scanIndex = 0;
         _scanWarningLogged = false;
+        _scanPasses = 0;
+        _scanFrames = 0;
+        _scanBusyMilliseconds = 0d;
+        _scanWorstFrameMilliseconds = 0d;
+        _scanStartedUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        _scanGroupsLabel = scanEntities && scanCreatures
+            ? "entities+creatures"
+            : scanCreatures ? "creatures" : "entities";
+        _scanLegacy = LegacyScanOverride ?? LegacyScanSwitch;
+        if (!_scanLegacy)
+        {
+            _wantedPrefabs.Clear();
+            for (int index = 0; index < _scanPrefabs.Count; index++)
+            {
+                int hash = _scanPrefabs[index].Name.GetStableHashCode();
+                if (!_wantedPrefabs.ContainsKey(hash))
+                {
+                    _wantedPrefabs.Add(hash, index);
+                }
+            }
+
+            _walker.Begin();
+        }
+
         _scanning = true;
     }
 
     private bool ContinueScan(float now)
+    {
+        if (!_scanLegacy)
+        {
+            return ContinueWalk(now);
+        }
+
+        bool complete;
+        _scanClock.Restart();
+        try
+        {
+            complete = ContinueLegacyScan(now);
+        }
+        finally
+        {
+            _scanClock.Stop();
+            double elapsed = _scanClock.Elapsed.TotalMilliseconds;
+            _scanFrames++;
+            _scanBusyMilliseconds += elapsed;
+            if (elapsed > _scanWorstFrameMilliseconds)
+            {
+                _scanWorstFrameMilliseconds = elapsed;
+            }
+        }
+
+        if (complete)
+        {
+            FinishScan();
+        }
+
+        return complete;
+    }
+
+    // One pass over the whole world that picks out every wanted prefab at once, a slice a frame,
+    // each slice stopped by the clock (ZdoWorldWalker).
+    private bool ContinueWalk(float now)
+    {
+        ZDOMan? manager = ZDOMan.instance;
+        if (manager == null)
+        {
+            ResetScan();
+            _nextEntityRefresh = now + EntityRefreshIntervalSeconds;
+            return false;
+        }
+
+        bool complete;
+        try
+        {
+            complete = _walker.Step(manager, _visitWalk, WalkBudgetMilliseconds);
+        }
+        catch (Exception exception)
+        {
+            if (!_scanWarningLogged)
+            {
+                _scanWarningLogged = true;
+                _log.Warning(
+                    $"[LiveMap] entity scan could not read the world: " +
+                    $"{exception.GetType().Name}: {exception.Message}");
+            }
+
+            ResetScan();
+            _nextEntityRefresh = now + EntityRefreshIntervalSeconds;
+            return false;
+        }
+
+        if (!complete)
+        {
+            return false;
+        }
+
+        _scanPasses = 1;
+        _scanFrames = _walker.Slices;
+        _scanBusyMilliseconds = _walker.BusyMilliseconds;
+        _scanWorstFrameMilliseconds = _walker.WorstSliceMilliseconds;
+        FinishScan();
+        return true;
+    }
+
+    private void VisitWalk(ZDO zdo)
+    {
+        if (!_wantedPrefabs.TryGetValue(zdo.GetPrefab(), out int prefabIndex))
+        {
+            return;
+        }
+
+        PrefabDefinition prefab = _scanPrefabs[prefabIndex];
+        int groupIndex = (int)prefab.Group;
+        if (_pendingGroupCounts[groupIndex] >= Groups[groupIndex].MaximumEntities)
+        {
+            _pendingGroupTruncated[groupIndex] = true;
+            return;
+        }
+
+        try
+        {
+            TryAddEntity(zdo, prefab, groupIndex);
+        }
+        catch (Exception exception)
+        {
+            if (!_scanWarningLogged)
+            {
+                _scanWarningLogged = true;
+                _log.Warning(
+                    $"[LiveMap] entity read for {prefab.Name} failed: " +
+                    $"{exception.GetType().Name}: {exception.Message}");
+            }
+        }
+
+        if (_pendingGroupCounts[groupIndex] >= Groups[groupIndex].MaximumEntities)
+        {
+            _pendingGroupTruncated[groupIndex] = true;
+        }
+    }
+
+    // The game's own per-prefab search, one prefab after another. Kept only so a real world can be
+    // measured both ways (LegacyScanSwitch); the walk above replaces it.
+    private bool ContinueLegacyScan(float now)
     {
         ZDOMan? manager = ZDOMan.instance;
         if (manager == null)
@@ -320,76 +486,10 @@ internal sealed class EntityTracker
                  entityIndex++)
             {
                 ZDO? zdo = _scanResults[entityIndex];
-                if (zdo == null)
+                if (zdo != null)
                 {
-                    continue;
+                    TryAddEntity(zdo, prefab, groupIndex);
                 }
-
-                Vector3 position = zdo.GetPosition();
-                if (prefab.RaidOnly && !IsInsideEvent(position, _scanEvent))
-                {
-                    continue;
-                }
-                if (prefab.Group == EntityGroup.Creature &&
-                    zdo.GetBool(ZDOVars.s_dead, false))
-                {
-                    continue;
-                }
-                ZDOID uid = zdo.m_uid;
-                string id = uid.UserID.ToString(CultureInfo.InvariantCulture) + ":" +
-                            uid.ID.ToString(CultureInfo.InvariantCulture);
-                float rotationY = zdo.GetRotation().eulerAngles.y;
-                string tag = prefab.Group == EntityGroup.Portal
-                    ? zdo.GetString(ZDOVars.s_tag, string.Empty)
-                    : string.Empty;
-                bool isTombstone = prefab.Group == EntityGroup.Tombstone;
-                bool isWard = prefab.Group == EntityGroup.Ward;
-                bool isBed = prefab.Group == EntityGroup.Bed;
-                string owner = isWard
-                    ? zdo.GetString(ZDOVars.s_creatorName, string.Empty)
-                    : isTombstone || isBed
-                        ? zdo.GetString(ZDOVars.s_ownerName, string.Empty)
-                        : string.Empty;
-                bool? wardEnabled = isWard
-                    ? zdo.GetBool(ZDOVars.s_enabled)
-                    : null;
-                float? wardRadius = isWard ? _wardRadius : null;
-                double? deathAgeSec = null;
-                int? level = null;
-                if (prefab.Group == EntityGroup.Creature &&
-                    zdo.GetInt(ZDOVars.s_level, out int creatureLevel))
-                {
-                    level = Math.Max(1, creatureLevel);
-                }
-                if (isTombstone)
-                {
-                    long timeOfDeath = zdo.GetLong(ZDOVars.s_timeOfDeath, 0L);
-                    ZNet? network = ZNet.instance;
-                    if (timeOfDeath != 0L && network != null)
-                    {
-                        long ageTicks = network.GetTime().Ticks - timeOfDeath;
-                        deathAgeSec = Math.Max(
-                            0d,
-                            ageTicks / (double)TimeSpan.TicksPerSecond);
-                    }
-                }
-
-                _pendingEntities.Add(new TrackedEntitySnapshot(
-                    group.Key,
-                    prefab.Name,
-                    position.x,
-                    position.y,
-                    position.z,
-                    id,
-                    rotationY,
-                    tag,
-                    owner,
-                    deathAgeSec,
-                    wardEnabled,
-                    wardRadius,
-                    prefab.DisplayName,
-                    level));
-                _pendingGroupCounts[groupIndex]++;
             }
 
             if (_pendingGroupCounts[groupIndex] >= group.MaximumEntities)
@@ -420,18 +520,111 @@ internal sealed class EntityTracker
         _scanResults.Clear();
         _scanIndex = 0;
         _prefabIndex++;
+        _scanPasses++;
         while (_prefabIndex < _scanPrefabs.Count &&
                _pendingGroupTruncated[(int)_scanPrefabs[_prefabIndex].Group])
         {
             _prefabIndex++;
         }
 
-        if (_prefabIndex < _scanPrefabs.Count)
+        return _prefabIndex >= _scanPrefabs.Count;
+    }
+
+    private void TryAddEntity(ZDO zdo, PrefabDefinition prefab, int groupIndex)
+    {
+        Vector3 position = zdo.GetPosition();
+        if (prefab.RaidOnly && !IsInsideEvent(position, _scanEvent))
         {
-            return false;
+            return;
+        }
+        if (prefab.Group == EntityGroup.Creature &&
+            zdo.GetBool(ZDOVars.s_dead, false))
+        {
+            return;
+        }
+        ZDOID uid = zdo.m_uid;
+        string id = uid.UserID.ToString(CultureInfo.InvariantCulture) + ":" +
+                    uid.ID.ToString(CultureInfo.InvariantCulture);
+        float rotationY = zdo.GetRotation().eulerAngles.y;
+        string tag = prefab.Group == EntityGroup.Portal
+            ? zdo.GetString(ZDOVars.s_tag, string.Empty)
+            : string.Empty;
+        bool isTombstone = prefab.Group == EntityGroup.Tombstone;
+        bool isWard = prefab.Group == EntityGroup.Ward;
+        bool isBed = prefab.Group == EntityGroup.Bed;
+        string owner = isWard
+            ? zdo.GetString(ZDOVars.s_creatorName, string.Empty)
+            : isTombstone || isBed
+                ? zdo.GetString(ZDOVars.s_ownerName, string.Empty)
+                : string.Empty;
+        bool? wardEnabled = isWard
+            ? zdo.GetBool(ZDOVars.s_enabled)
+            : null;
+        float? wardRadius = isWard ? _wardRadius : null;
+        double? deathAgeSec = null;
+        int? level = null;
+        if (prefab.Group == EntityGroup.Creature &&
+            zdo.GetInt(ZDOVars.s_level, out int creatureLevel))
+        {
+            level = Math.Max(1, creatureLevel);
+        }
+        if (isTombstone)
+        {
+            long timeOfDeath = zdo.GetLong(ZDOVars.s_timeOfDeath, 0L);
+            ZNet? network = ZNet.instance;
+            if (timeOfDeath != 0L && network != null)
+            {
+                long ageTicks = network.GetTime().Ticks - timeOfDeath;
+                deathAgeSec = Math.Max(
+                    0d,
+                    ageTicks / (double)TimeSpan.TicksPerSecond);
+            }
         }
 
-        _entities = _pendingEntities.ToArray();
+        _pendingEntities.Add(new TrackedEntitySnapshot(
+            Groups[groupIndex].Key,
+            prefab.Name,
+            position.x,
+            position.y,
+            position.z,
+            id,
+            rotationY,
+            tag,
+            owner,
+            deathAgeSec,
+            wardEnabled,
+            wardRadius,
+            prefab.DisplayName,
+            level));
+        _pendingGroupCounts[groupIndex]++;
+    }
+
+    private void FinishScan()
+    {
+        long finishStarted = Stopwatch.GetTimestamp();
+        if (_scanLegacy)
+        {
+            _entities = _pendingEntities.ToArray();
+        }
+        else
+        {
+            // The walk meets objects in world order; keep the groups in the order the old scan gave them.
+            var ordered = new List<TrackedEntitySnapshot>(_pendingEntities.Count);
+            for (int groupIndex = 0; groupIndex < Groups.Length; groupIndex++)
+            {
+                string key = Groups[groupIndex].Key;
+                for (int index = 0; index < _pendingEntities.Count; index++)
+                {
+                    if (string.Equals(_pendingEntities[index].Group, key, StringComparison.Ordinal))
+                    {
+                        ordered.Add(_pendingEntities[index]);
+                    }
+                }
+            }
+
+            _entities = ordered.ToArray();
+        }
+
         _entityGroups = CreateGroupSnapshots(
             _pendingGroupCounts,
             _pendingGroupTruncated);
@@ -449,8 +642,36 @@ internal sealed class EntityTracker
             }
         }
 
+        int sectorCount = _walker.SectorCount;
+        if (_scanLegacy && ZDOMan.instance != null)
+        {
+            GameAccess.TryGetZdoSectorCount(ZDOMan.instance, out sectorCount);
+        }
+
+        double finishMilliseconds = (Stopwatch.GetTimestamp() - finishStarted) * 1000d / Stopwatch.Frequency;
+        var report = new EntityScanReport(
+            _scanLegacy ? "legacy" : "walk",
+            _scanGroupsLabel,
+            _scanPrefabs.Count,
+            _scanPasses,
+            _scanFrames,
+            _scanLegacy ? 0 : _walker.SkippedFrames,
+            _scanLegacy ? -1L : _walker.ObjectsRead,
+            _scanBusyMilliseconds + finishMilliseconds,
+            _scanWorstFrameMilliseconds,
+            finishMilliseconds,
+            Math.Max(0L, _lastEntityScanUnixMs - _scanStartedUnixMs),
+            _scanLegacy ? -1 : _walker.NonEmptySectors,
+            sectorCount,
+            _entities.Length,
+            _lastEntityScanUnixMs);
+        _lastScanReport = report;
+        if (LogScansSwitch)
+        {
+            _log.Info("[LiveMap] " + report.Describe());
+        }
+
         ResetScan();
-        return true;
     }
 
     private void ResolveWardRadius()
@@ -702,6 +923,8 @@ internal sealed class EntityTracker
         _scanEvent = null;
         _prefabIndex = 0;
         _scanIndex = 0;
+        _wantedPrefabs.Clear();
+        _walker.Abandon();
         _scanning = false;
     }
 
@@ -1105,4 +1328,105 @@ internal sealed class RaidEventSnapshot
     public float Elapsed { get; }
 
     public float Duration { get; }
+}
+
+// What one entity scan cost: read by the lab, the tests and, when the switch is on, one log line.
+internal sealed class EntityScanReport
+{
+    public EntityScanReport(
+        string mode,
+        string groups,
+        int prefabs,
+        int passes,
+        int frames,
+        int waitedFrames,
+        long objectsRead,
+        double busyMilliseconds,
+        double worstFrameMilliseconds,
+        double finishMilliseconds,
+        long durationMilliseconds,
+        int nonEmptySectors,
+        int sectorCount,
+        int entities,
+        long finishedUnixMs)
+    {
+        Mode = mode;
+        Groups = groups;
+        Prefabs = prefabs;
+        Passes = passes;
+        Frames = frames;
+        WaitedFrames = waitedFrames;
+        ObjectsRead = objectsRead;
+        BusyMilliseconds = busyMilliseconds;
+        WorstFrameMilliseconds = worstFrameMilliseconds;
+        FinishMilliseconds = finishMilliseconds;
+        DurationMilliseconds = durationMilliseconds;
+        NonEmptySectors = nonEmptySectors;
+        SectorCount = sectorCount;
+        Entities = entities;
+        FinishedUnixMs = finishedUnixMs;
+    }
+
+    public string Mode { get; }
+
+    public string Groups { get; }
+
+    public int Prefabs { get; }
+
+    public int Passes { get; }
+
+    public int Frames { get; }
+
+    public int WaitedFrames { get; }
+
+    public long ObjectsRead { get; }
+
+    public double BusyMilliseconds { get; }
+
+    // The slowest single slice (walk) or search call (legacy).
+    public double WorstFrameMilliseconds { get; }
+
+    // Building the new entity list at the end, in the last frame (included in BusyMilliseconds).
+    public double FinishMilliseconds { get; }
+
+    public long DurationMilliseconds { get; }
+
+    public int NonEmptySectors { get; }
+
+    public int SectorCount { get; }
+
+    public int Entities { get; }
+
+    public long FinishedUnixMs { get; }
+
+    public string Describe()
+    {
+        var text = new System.Text.StringBuilder(220);
+        text.Append("entity scan (").Append(Mode).Append("): ").Append(Groups);
+        text.Append(", ").Append(Prefabs.ToString(CultureInfo.InvariantCulture)).Append(" prefabs in ");
+        text.Append(Passes.ToString(CultureInfo.InvariantCulture)).Append(Passes == 1 ? " pass, " : " passes, ");
+        text.Append(Frames.ToString(CultureInfo.InvariantCulture)).Append(" frames");
+        if (WaitedFrames > 0)
+        {
+            text.Append(" (").Append(WaitedFrames.ToString(CultureInfo.InvariantCulture)).Append(" waited)");
+        }
+
+        if (ObjectsRead >= 0L)
+        {
+            text.Append(", ").Append(ObjectsRead.ToString(CultureInfo.InvariantCulture)).Append(" objects");
+        }
+
+        text.Append(", busy ").Append(BusyMilliseconds.ToString("0.0", CultureInfo.InvariantCulture)).Append(" ms");
+        text.Append(", worst frame ").Append(WorstFrameMilliseconds.ToString("0.00", CultureInfo.InvariantCulture)).Append(" ms");
+        text.Append(", finish ").Append(FinishMilliseconds.ToString("0.00", CultureInfo.InvariantCulture)).Append(" ms");
+        text.Append(", took ").Append((DurationMilliseconds / 1000d).ToString("0.0", CultureInfo.InvariantCulture)).Append(" s");
+        if (NonEmptySectors >= 0)
+        {
+            text.Append(", ").Append(NonEmptySectors.ToString(CultureInfo.InvariantCulture)).Append('/');
+            text.Append(SectorCount.ToString(CultureInfo.InvariantCulture)).Append(" sectors in use");
+        }
+
+        text.Append(", ").Append(Entities.ToString(CultureInfo.InvariantCulture)).Append(" entities");
+        return text.ToString();
+    }
 }

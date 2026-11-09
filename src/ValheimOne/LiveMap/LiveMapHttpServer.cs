@@ -284,6 +284,9 @@ internal sealed class LiveMapHttpServer
             $"trying again every {BindRetrySeconds:0} seconds.");
     }
 
+    // The on-demand object census behind /api/stats/objects (admin view only).
+    internal ObjectCensus? ObjectCensus { get; set; }
+
     public void Stop()
     {
         _stopping = true;
@@ -614,6 +617,10 @@ internal sealed class LiveMapHttpServer
             else if (isGet && path == "/api/stats")
             {
                 ServeStats(response);
+            }
+            else if ((isGet || isPost) && path == "/api/stats/objects")
+            {
+                ServeObjectCensus(response, viewLevel, isPost);
             }
             else
             {
@@ -2152,6 +2159,37 @@ internal sealed class LiveMapHttpServer
         json.Append('}');
         json.Append('}');
         WriteJson(response, HttpStatusCode.OK, json.ToString());
+    }
+
+    // GET reads the census; POST starts one, or returns the running one, or the last result while it
+    // is under five minutes old ("cached": true). Admin view only; the web console need not be on.
+    private void ServeObjectCensus(HttpListenerResponse response, ViewLevel viewLevel, bool start)
+    {
+        ObjectCensus? census = ObjectCensus;
+        if (viewLevel != ViewLevel.Admin || census == null)
+        {
+            WriteJson(response, HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+            return;
+        }
+
+        if (!start)
+        {
+            WriteJson(response, HttpStatusCode.OK, census.Snapshot.ToJson(false));
+            return;
+        }
+
+        ObjectCensusRequestResult result = census.Request();
+        if (result == ObjectCensusRequestResult.Busy)
+        {
+            WriteJson(response, HttpStatusCode.Conflict, "{\"error\":\"busy\"}");
+            return;
+        }
+
+        bool cached = result == ObjectCensusRequestResult.Cached;
+        WriteJson(
+            response,
+            cached ? HttpStatusCode.OK : HttpStatusCode.Accepted,
+            census.Snapshot.ToJson(cached));
     }
 
     private static void AppendShutdownJson(

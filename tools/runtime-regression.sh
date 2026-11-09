@@ -89,6 +89,8 @@ cfg['LiveMap'].update({'Enabled':'true', 'ConsoleEnabled':'true', 'BindIp':'127.
     'Port':'24583', 'TextureSize':'512', 'AccessToken':os.environ['CONSOLE_PROBE_TOKEN'],
     'ShareToken':os.environ['VALHEIMONE_SHARE_TOKEN'],
     'PublicView':'false', 'StatusPublic':'false', 'RelayKey':os.environ['VALHEIMONE_RELAY_KEY']})
+# the entity tests compare the one-pass walk with the old per-prefab search on this map's settings
+cfg['LiveMap']['EntityLayer']='true'
 if int(os.environ['VALHEIMONE_BROWSER_HOLD_SECONDS']) > 0:
     cfg['LiveMap'].update({'PublicView':'true', 'FogMode':'trails', 'FogHideUnexplored':'true',
         'PublicWebPins':'true', 'SharedPinEditing':'true',
@@ -112,7 +114,8 @@ CONSOLE_PROBE_URL=http://127.0.0.1:24583 CONSOLE_PROBE_RESULT="$console_result" 
     -world SmokeWorld -password regression1 -savedir "$backup/worlds" -nographics -batchmode -public 0 $crossplay_arg \
     > "$output/server.log" 2>&1 9>&- &
 pid=$!
-deadline=$((SECONDS + 240))
+# the live checks include an object census, which waits for the map's own bases survey after a start
+deadline=$((SECONDS + 330))
 while (( SECONDS < deadline )); do
     if [[ -f "$config/runtime-regression/result.txt" && -f "$console_result" ]]; then break; fi
     if [[ -f "$server/BepInEx/LogOutput.log" ]] &&

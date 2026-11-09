@@ -53,6 +53,14 @@
     <IntermediateOutputPath>obj/Thunderstore/</IntermediateOutputPath>
   </PropertyGroup>
 
+  <!-- Lab build: `dotnet build -c Release -p:ValheimOneLab=true` adds a switch file for measuring
+       the entity scan both ways on a test server (LiveMap/LabSwitches.cs). Never released. -->
+  <PropertyGroup Condition="'$(ValheimOneLab)' == 'true'">
+    <DefineConstants>$(DefineConstants);VALHEIMONE_LAB</DefineConstants>
+    <OutputPath>bin/Lab/</OutputPath>
+    <IntermediateOutputPath>obj/Lab/</IntermediateOutputPath>
+  </PropertyGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="ValheimOne.RuntimeRegression" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
