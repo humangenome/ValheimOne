@@ -175,6 +175,23 @@ python -m pip install python-a2s
 import a2s; a2s.info(("ip", port))
 ```
 
+## World save summary
+
+After every world save that works, a dedicated server writes `<world>.valheimone.json` in `worlds_local`, next to the world's `.db` (older worlds) or its folder (Valheim 1.0 worlds). It is written to `<world>.valheimone.json.tmp` and then renamed, so a copy of the folder never holds half a file. A failed save writes nothing.
+
+```json
+{"worldName":"Dedicated","seedName":"AbCdEfGhIj","day":412,"bossesDefeated":["defeated_eikthyr","defeated_gdking"],"playersSinceLastSave":["Astrid","Bjorn"],"savedUnixMs":1762300000000,"pluginVersion":"0.13.29","gameVersion":"1.0.21"}
+```
+
+| Field | Meaning |
+|---|---|
+| `worldName` / `seedName` | The world and the seed text it was made with. |
+| `day` | The in-game day at the save. |
+| `bossesDefeated` | The world's `defeated_*` global keys, sorted. |
+| `playersSinceLastSave` | Every character name connected at any time since the previous save, sorted. Player-chosen text, escaped as JSON. |
+| `savedUnixMs` | When the save ended. |
+| `pluginVersion` / `gameVersion` | The ValheimOne version and the game version that wrote the save. |
+
 ## Shared point-of-interest groups
 
 `SharedPoiGroups` accepts `all` (default), `none`, or these space-separated keys.

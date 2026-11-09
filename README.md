@@ -184,6 +184,14 @@ Admins can switch on **Fog preview** under Layers to keep unexplored areas cover
 
 Fog changes what the map draws. It does not restrict access to the underlying terrain images.
 
+### New world with a chosen seed
+
+`NewWorldSeed = <seed>` in `[Server]` (1 to 10 letters or digits) makes a dedicated server create the world named by `-world` with that seed, when that world does not exist yet. After the start the setting is cleared and the log says what happened. A world that already exists is never changed: the setting is ignored, cleared and logged.
+
+### World summary beside the save
+
+After every world save that works, a dedicated server writes `<world>.valheimone.json` next to the world in `worlds_local`: the world and seed names, the day, the bosses defeated, the players since the last save, the save time and the ValheimOne and game versions. The fields are in [docs/query.md](docs/query.md#world-save-summary).
+
 ---
 
 ## Commands

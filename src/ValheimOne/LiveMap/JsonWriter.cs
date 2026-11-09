@@ -41,11 +41,27 @@ internal static class JsonWriter
                 case '\t':
                     output.Append("\\t");
                     break;
+                case '\u2028':
+                    output.Append("\\u2028");
+                    break;
+                case '\u2029':
+                    output.Append("\\u2029");
+                    break;
                 default:
                     if (character < 0x20)
                     {
                         output.Append("\\u");
                         output.Append(((int)character).ToString("x4", CultureInfo.InvariantCulture));
+                    }
+                    else if (char.IsHighSurrogate(character) && index + 1 < value.Length && char.IsLowSurrogate(value[index + 1]))
+                    {
+                        output.Append(character).Append(value[index + 1]);
+                        index++;
+                    }
+                    else if (char.IsSurrogate(character))
+                    {
+                        // Half of a character pair (from player-typed text): stricter JSON readers refuse it.
+                        output.Append('\uFFFD');
                     }
                     else
                     {

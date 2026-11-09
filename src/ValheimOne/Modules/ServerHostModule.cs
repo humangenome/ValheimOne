@@ -99,6 +99,16 @@ public sealed class ServerHostModule : IFeatureModule
         // Also compatibility: a failed crossplay login is retried instead of quitting the server.
         PlayFabLoginRetry.Apply(harmony, _log);
 
+        // The world tab's two host pieces, ahead of the transpilers that can fail on a future build:
+        // a one-shot seed for a world that does not exist yet, and the summary beside every save.
+        NewWorldSeed.Apply(harmony, _serverConfig.NewWorldSeed, _log);
+        var worldHost = new UnityEngine.GameObject("ValheimOne.WorldSummary")
+        {
+            hideFlags = UnityEngine.HideFlags.HideAndDontSave,
+        };
+        UnityEngine.Object.DontDestroyOnLoad(worldHost);
+        WorldSaveSummary.Initialize(worldHost, _log);
+
         var peerInfo = AccessTools.Method(typeof(ZNet), "RPC_PeerInfo")
             ?? throw new MissingMethodException(nameof(ZNet), "RPC_PeerInfo");
         harmony.Patch(
