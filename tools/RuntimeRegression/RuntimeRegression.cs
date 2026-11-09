@@ -135,7 +135,6 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestWorldData();
             TestEventStreamSlots();
             TestRelayKey();
-            TestSyncedSecrets();
             TestPlayFabRetryPolicy();
             TestServerCapRewrite();
             TestOverlaySkipsUnreadableValue();
@@ -152,6 +151,10 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestDirectSaveWithoutConsole();
             TestWorldSaveSummary();
             TestNewWorldSeed();
+            // Last: it edits valheimone.cfg on disk for the hot reload to pick up a frame later. A test after it that
+            // sets any setting (NewWorldSeed clears itself) makes BepInEx rewrite the whole file from memory, which
+            // would undo that edit before the reload reads it.
+            TestSyncedSecrets();
             _liveDeadline = Time.realtimeSinceStartup + 420f;
             _liveCheck = new Thread(RunLiveEventStreamChecks) { IsBackground = true, Name = "vo-regression-events" };
             _liveCheck.Start();
