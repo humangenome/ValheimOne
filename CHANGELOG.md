@@ -4,6 +4,33 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+## [0.13.31] - 2026-11-09
+
+### Added
+
+- `[Server] NewWorldSeed`: give a dedicated server's new world the seed you want. It is used once, only when the world named by `-world` does not exist yet; afterwards the setting clears itself and the log says whether it was used. An existing world is never changed.
+- A small summary file, `<world>.valheimone.json`, is written beside the world in `worlds_local` after every world save that works: world and seed names, in-game day, bosses defeated, players since the last save, the save time, and the ValheimOne and game versions. Dedicated servers only.
+- `/api/status` gives the admin view the world's seed (`seedName` and `seed`), so a panel or tool can link the world to a seed map. The shared link, the public map and the token-free status never get it, because a seed reveals where every altar, dungeon and ore field is.
+- `/api/stats/history`: the server's numbers once a minute for the last 24 hours (frame time, slow frames, objects, memory, players), kept across restarts, with each run's start and whether it ended cleanly or not (a crash or a killed process). Admin token only.
+- `/api/stats/objects`: an object count for the admin view, showing which kinds of objects fill the world and which players built the most. It reads the world a little each frame, so even a world of millions of objects never pauses for it.
+- Activity feed: a `boss.defeated` entry on every boss kill (marked when it is the first time that boss falls in this world), a `world.save_failed` entry with the game's own reason when a save fails, the game's event name on raids, and the time the feed started counting again after a restart.
+- `/api/stats` gives the memory the whole server process holds, and `/api/status` gives the admin view the time of the last failed save.
+
+### Changed
+
+- Saving the world from the web API (`/api/admin/save`) now calls the game's own save directly instead of going through the in-game console. A host's save before a stop or restart therefore works even when another mod has broken the console (for example Valheim Plus built for an older game version), and it no longer needs the web console turned on. With `?wait=<seconds>` the call answers once that save has finished, saved or not.
+- "World saved" (in the activity feed, the Discord notice and `lastSavedUnixMs`) now appears when a save has actually finished and worked, with how long it took. Before, it appeared when a save started, so a save that failed still read as saved.
+- The live map's ships, carts, portals, tombstones, wards, beds and creatures now come from one pass over the world per refresh, using at most 2 ms of each frame. On a big world this used to take a lot of the server's time while a map was open; in a test on a 4.7-million-object world one refresh went from about 70 seconds to about 3. What the map shows is unchanged.
+
+### Fixed
+
+- A server running another mod that also changes the 10-player limit no longer loses ValheimOne's startup (issue #10). ValheimOne now leaves that one check to the other mod, says so once in the log, and everything else keeps working.
+- One synced setting that a player's older ValheimOne cannot read no longer throws away the whole server config on that player's PC. That one setting is skipped and the rest still applies.
+- The live map no longer stays down until the next restart when its port is busy as the server starts. It tries again every 30 seconds until it gets the port.
+- The map's console shows each command's answer once instead of twice.
+- In a hosting panel that picks the map's tab, the chosen tab now stays chosen.
+- The web API no longer sends half of a two-part character from player-typed text (some strict readers refused it), and escapes line and paragraph separators.
+
 ## [0.13.30] - 2026-11-08
 
 ### Security
