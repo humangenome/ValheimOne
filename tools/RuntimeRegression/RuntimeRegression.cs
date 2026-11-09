@@ -2748,9 +2748,24 @@ public sealed class RuntimeRegression : BaseUnityPlugin
                 for (int i = 0; i < sharedTaken; i++) slots.Release(EventStreamView.Shared);
             }
 
-            int adminTaken = FillSlots(slots, EventStreamView.Admin);
+            // The owner's stream just above keeps its admin slot until the server notices the closed connection (at
+            // its next write, up to a heartbeat later). Fill the admin slots only once all of them are free, or that
+            // late release lands between the fill and the extra stream and the extra stream is served.
+            int adminTaken = 0;
+            DateTime fillUntil = DateTime.UtcNow.AddSeconds(45);
+            while (true)
+            {
+                adminTaken = FillSlots(slots, EventStreamView.Admin);
+                if (adminTaken == EventStreamSlots.AdminLimit || DateTime.UtcNow >= fillUntil) break;
+                for (int i = 0; i < adminTaken; i++) slots.Release(EventStreamView.Admin);
+                adminTaken = 0;
+                Thread.Sleep(250);
+            }
+
             try
             {
+                LiveResult(adminTaken == EventStreamSlots.AdminLimit,
+                    "the running map's admin slots fill at " + EventStreamSlots.AdminLimit + " once the owner's stream above has let go (" + adminTaken + ")");
                 int code = OpenEventStream(root, token, out _);
                 LiveResult(code == 409, "with every admin slot taken, one more admin stream is told to keep polling (HTTP " + code + ")");
             }
