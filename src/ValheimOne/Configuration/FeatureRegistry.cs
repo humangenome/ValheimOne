@@ -89,9 +89,46 @@ public sealed class FeatureRegistry
         return false;
     }
 
+    // Where a failing change handler is reported (set by the plugin; tests set their own).
+    internal Action<string>? Log { get; set; }
+
+    private readonly HashSet<string> _reportedHandlerFailures = new HashSet<string>(StringComparer.Ordinal);
+
+    // Each module's handler runs on its own: one that throws is logged once (per handler) and the
+    // others still get the change. A plain multicast call stopped at the first throw, so one module's
+    // bug left every later module on the old values until a restart.
     internal void NotifyEffectiveValuesChanged()
     {
-        EffectiveValuesChanged?.Invoke();
+        Action? handlers = EffectiveValuesChanged;
+        if (handlers == null)
+        {
+            return;
+        }
+
+        foreach (Delegate handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                ((Action)handler).Invoke();
+            }
+            catch (Exception exception)
+            {
+                string name = (handler.Method.DeclaringType?.Name ?? "?") + "." + handler.Method.Name;
+                bool first;
+                lock (_reportedHandlerFailures)
+                {
+                    first = _reportedHandlerFailures.Add(name);
+                }
+
+                if (first)
+                {
+                    Log?.Invoke(
+                        $"Settings change: {name} failed ({exception.GetType().Name}: " +
+                        $"{(exception.Message ?? string.Empty).Replace('\r', ' ').Replace('\n', ' ').Trim()}); " +
+                        "the other modules still took the change.");
+                }
+            }
+        }
     }
 
     internal void RecordPatchSuccess(string section)

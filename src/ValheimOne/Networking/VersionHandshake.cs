@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Text;
 using HarmonyLib;
 using UnityEngine;
@@ -62,29 +63,56 @@ public sealed class VersionHandshake : IVersionHandshake
             return;
         }
 
-        _active = this;
-        PatchPostfix(harmony, typeof(Game), nameof(Game.Start), Type.EmptyTypes, nameof(GameStartPostfix));
-        PatchPostfix(
-            harmony,
-            typeof(ZNet),
-            nameof(ZNet.RPC_PeerInfo),
-            new[] { typeof(ZRpc), typeof(ZPackage) },
-            nameof(PeerInfoPostfix));
-        PatchPostfix(
-            harmony,
-            typeof(ZNet),
-            nameof(ZNet.SendPeriodicData),
-            new[] { typeof(float) },
-            nameof(SendPeriodicDataPostfix));
-        PatchPostfix(
-            harmony,
-            typeof(ZNet),
-            nameof(ZNet.OnDestroy),
-            Type.EmptyTypes,
-            nameof(ZNetOnDestroyPostfix));
+        // Every game method is found before anything is patched, so a game update that renamed one
+        // fails here with nothing half-patched; a patch that fails part way is taken back out.
+        var targets = new (MethodInfo Original, string Postfix)[]
+        {
+            (Resolve(typeof(Game), nameof(Game.Start), Type.EmptyTypes), nameof(GameStartPostfix)),
+            (Resolve(typeof(ZNet), nameof(ZNet.RPC_PeerInfo), new[] { typeof(ZRpc), typeof(ZPackage) }), nameof(PeerInfoPostfix)),
+            (Resolve(typeof(ZNet), nameof(ZNet.SendPeriodicData), new[] { typeof(float) }), nameof(SendPeriodicDataPostfix)),
+            (Resolve(typeof(ZNet), nameof(ZNet.OnDestroy), Type.EmptyTypes), nameof(ZNetOnDestroyPostfix)),
+        };
 
+        var patched = new List<(MethodInfo Original, MethodInfo Postfix)>(targets.Length);
+        try
+        {
+            foreach ((MethodInfo original, string postfixName) in targets)
+            {
+                MethodInfo postfix = AccessTools.Method(typeof(VersionHandshake), postfixName);
+                harmony.Patch(original, postfix: new HarmonyMethod(postfix));
+                patched.Add((original, postfix));
+            }
+        }
+        catch
+        {
+            foreach ((MethodInfo original, MethodInfo postfix) in patched)
+            {
+                try
+                {
+                    harmony.Unpatch(original, postfix);
+                }
+                catch
+                {
+                    // the first error is the one worth reporting
+                }
+            }
+
+            throw;
+        }
+
+        _active = this;
         _initialized = true;
         _log.Info("Server enforcement chassis ready (VO_Hello, VO_Config, VO_Ack).");
+    }
+
+    // Replaceable for tests (a game build without one of the methods).
+    internal static Func<Type, string, Type[], MethodInfo?> FindMethod =
+        (type, name, parameters) => AccessTools.Method(type, name, parameters);
+
+    private static MethodInfo Resolve(Type declaringType, string methodName, Type[] parameterTypes)
+    {
+        return FindMethod(declaringType, methodName, parameterTypes)
+            ?? throw new MissingMethodException(declaringType.FullName, methodName);
     }
 
     public void Shutdown()
@@ -112,19 +140,6 @@ public sealed class VersionHandshake : IVersionHandshake
         _registeredRpcInstances.Clear();
         _failedRpcInstances.Clear();
         _initialized = false;
-    }
-
-    private static void PatchPostfix(
-        Harmony harmony,
-        Type declaringType,
-        string methodName,
-        Type[] parameterTypes,
-        string postfixName)
-    {
-        var original = AccessTools.Method(declaringType, methodName, parameterTypes)
-            ?? throw new MissingMethodException(declaringType.FullName, methodName);
-        var postfix = new HarmonyMethod(typeof(VersionHandshake), postfixName);
-        harmony.Patch(original, postfix: postfix);
     }
 
     private static void GameStartPostfix()

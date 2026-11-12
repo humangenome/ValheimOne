@@ -14045,17 +14045,20 @@
                 label: "Delete"
             });
         }
+        // the public view gets no author (0.13.32), so the row is left out when there is none
+        var author = typeof pin.author === "string" ? pin.author.trim() : "";
+        var rows = [{ label: "Status", value: pin.checked ? "✓ charted-off" : "Open" }];
+        if (author) {
+            rows.push({ label: "Charted by", value: author });
+        }
+        rows.push(positionPopupRow(pin.x, pin.z));
         var popup = popupShell({
             actions: actions,
             actionsInFooter: actions.length > 0,
             feed: "webpins",
             glyph: "✦",
             kicker: "WEB PIN",
-            rows: [
-                { label: "Status", value: pin.checked ? "✓ charted-off" : "Open" },
-                { label: "Charted by", value: pin.author },
-                positionPopupRow(pin.x, pin.z)
-            ],
+            rows: rows,
             title: pin.label || "Web pin"
         });
         popup.classList.toggle("webpin-checked", pin.checked);
@@ -15933,10 +15936,13 @@
         name.className = "webpin-tooltip-name";
         name.textContent = pin.label || "Web pin";
         author.className = "webpin-tooltip-author";
-        author.textContent = "Charted by " + pin.author;
+        var authorName = typeof pin.author === "string" ? pin.author.trim() : "";
+        author.textContent = "Charted by " + authorName;
         tooltip.appendChild(name);
-        tooltip.appendChild(document.createTextNode(" "));
-        tooltip.appendChild(author);
+        if (authorName) {
+            tooltip.appendChild(document.createTextNode(" "));
+            tooltip.appendChild(author);
+        }
         return tooltip;
     }
 

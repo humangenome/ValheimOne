@@ -485,6 +485,16 @@ internal sealed class ConsoleBridge
             network.Save(sync: false, saveOtherPlayerProfiles: true, waitForNextFrame: false);
             if (WorldSavePatch.Applied && WorldSavePatch.StartSequence == startsBefore)
             {
+                // The answer's words stay as they were (a host may show them); the reason goes to the server log.
+                try
+                {
+                    log?.Warning($"[LiveMap] a world save asked for through the web API was skipped by the game: {SaveSkipReason()}.");
+                }
+                catch
+                {
+                    // A logger failure must not escape the main-thread bridge.
+                }
+
                 return ConsoleSaveResult.Failure("the game skipped the save");
             }
 
@@ -776,6 +786,54 @@ internal sealed class ConsoleBridge
     private void LogException(string context, Exception exception)
     {
         LogException(_log, context, exception);
+    }
+
+    private static readonly Lazy<FieldInfo?> ZoneSystemErrorField = new(
+        () => AccessTools.Field(typeof(ZoneSystem), "m_error"));
+
+    private static readonly Lazy<FieldInfo?> DungeonDbErrorField = new(
+        () => AccessTools.Field(typeof(DungeonDB), "m_error"));
+
+    // Why ZNet.Save declined: the game skips a world save after a failed world load, after the
+    // "location" test command (saving stays off until a restart), on a zone or dungeon error, and
+    // while the save system's DontSaveWorld session flag is set (Valheim 1.0.21's ZNet.Save).
+    internal static string SaveSkipReason()
+    {
+        try
+        {
+            if (SaveSystem.HasSessionFlag(SaveSystemSessionFlags.DontSaveWorld))
+            {
+                return "world saving is blocked for this session (the DontSaveWorld flag is set)";
+            }
+
+            if (ZNet.m_loadError)
+            {
+                return "the world did not load correctly, so the game will not save over it";
+            }
+
+            ZoneSystem? zoneSystem = ZoneSystem.instance;
+            if (zoneSystem != null && zoneSystem.m_didZoneTest)
+            {
+                return "a location test command turned world saving off until the next restart";
+            }
+
+            if (zoneSystem != null && ZoneSystemErrorField.Value?.GetValue(zoneSystem) is bool zoneError && zoneError)
+            {
+                return "the game's zone system reported an error";
+            }
+
+            DungeonDB? dungeons = DungeonDB.instance;
+            if (dungeons != null && DungeonDbErrorField.Value?.GetValue(dungeons) is bool dungeonError && dungeonError)
+            {
+                return "the game's dungeon list reported an error";
+            }
+        }
+        catch (Exception exception)
+        {
+            return "reason not readable (" + exception.GetType().Name + ")";
+        }
+
+        return "reason not known";
     }
 
     private static void LogException(ModLogger? log, string context, Exception exception)

@@ -31,14 +31,21 @@ internal sealed class DiscordWebhookWorker
     private long _shutdownDeadlineUtcTicks;
     private int _overflowWarningLogged;
     private int _stopping;
+    // The webhook address Discord said is gone (401/403/404): nothing more is sent to it until
+    // the settings change, and that is logged once instead of once per batch.
+    private string? _goneWebhookUrl;
+
+    internal const int MaximumRetryAfterMilliseconds = 10000;
 
     public DiscordWebhookWorker(ModLogger log)
+        : this(log, new HttpClientHandler { AllowAutoRedirect = false })
+    {
+    }
+
+    // Tests pass a handler that answers like Discord.
+    internal DiscordWebhookWorker(ModLogger log, HttpMessageHandler handler)
     {
         _log = log;
-        var handler = new HttpClientHandler
-        {
-            AllowAutoRedirect = false,
-        };
         _httpClient = new HttpClient(handler)
         {
             Timeout = Timeout.InfiniteTimeSpan,
@@ -81,6 +88,11 @@ internal sealed class DiscordWebhookWorker
         if (!settings.Enabled || destinationChanged)
         {
             CancelActiveRequest();
+        }
+
+        if (destinationChanged || settings.Enabled != previous.Enabled)
+        {
+            Volatile.Write(ref _goneWebhookUrl, null);
         }
 
         _queueSignal.Set();
@@ -245,6 +257,11 @@ internal sealed class DiscordWebhookWorker
         string payload,
         bool shutdownFlush)
     {
+        if (string.Equals(Volatile.Read(ref _goneWebhookUrl), expectedWebhookUrl, StringComparison.Ordinal))
+        {
+            return;
+        }
+
         int attempts = shutdownFlush ? 1 : 2;
         Exception? lastFailure = null;
         for (int attempt = 0; attempt < attempts; attempt++)
@@ -270,6 +287,25 @@ internal sealed class DiscordWebhookWorker
             {
                 Post(webhookUri, expectedWebhookUrl, payload, timeout, shutdownFlush);
                 return;
+            }
+            catch (DiscordWebhookGoneException gone)
+            {
+                Volatile.Write(ref _goneWebhookUrl, expectedWebhookUrl);
+                _log.Warning(
+                    $"[Discord] Discord answered HTTP {gone.StatusCode.ToString(CultureInfo.InvariantCulture)} for the webhook: " +
+                    "it was deleted or its address is wrong. Notifications are dropped until WebhookUrl changes.");
+                return;
+            }
+            catch (DiscordRateLimitedException limited)
+            {
+                // Discord's rate limit: wait the time it asks for (at most 10 s) before the one retry,
+                // instead of asking again at once and being refused again.
+                lastFailure = limited;
+                if (attempt + 1 >= attempts ||
+                    _stopSignal.WaitOne(Math.Min(MaximumRetryAfterMilliseconds, limited.RetryAfterMilliseconds)))
+                {
+                    break;
+                }
             }
             catch (Exception exception)
             {
@@ -323,6 +359,17 @@ internal sealed class DiscordWebhookWorker
                 .PostAsync(webhookUri, content, cancellation.Token)
                 .GetAwaiter()
                 .GetResult();
+            int status = (int)response.StatusCode;
+            if (status == 429)
+            {
+                throw new DiscordRateLimitedException(RetryAfterMilliseconds(response));
+            }
+
+            if (status == 401 || status == 403 || status == 404)
+            {
+                throw new DiscordWebhookGoneException(status);
+            }
+
             response.EnsureSuccessStatusCode();
         }
         finally
@@ -403,6 +450,29 @@ internal sealed class DiscordWebhookWorker
         return milliseconds >= int.MaxValue ? int.MaxValue : (int)milliseconds;
     }
 
+    // Discord sends Retry-After in seconds (and X-RateLimit-Reset-After, which may carry a fraction).
+    internal static int RetryAfterMilliseconds(HttpResponseMessage response)
+    {
+        double seconds = 1d;
+        if (response.Headers.TryGetValues("X-RateLimit-Reset-After", out IEnumerable<string>? resetAfter))
+        {
+            foreach (string value in resetAfter)
+            {
+                if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed))
+                {
+                    seconds = parsed;
+                    break;
+                }
+            }
+        }
+        else if (response.Headers.RetryAfter?.Delta is TimeSpan delta)
+        {
+            seconds = delta.TotalSeconds;
+        }
+
+        return (int)Math.Max(250d, Math.Min(MaximumRetryAfterMilliseconds, seconds * 1000d));
+    }
+
     private static bool TryCreateWebhookUri(string value, out Uri? uri)
     {
         if (Uri.TryCreate(value, UriKind.Absolute, out Uri candidate) &&
@@ -459,6 +529,28 @@ internal sealed class DiscordWebhookWorker
 
         return value.Substring(0, maximumLength - 1) + "…";
     }
+}
+
+internal sealed class DiscordRateLimitedException : Exception
+{
+    public DiscordRateLimitedException(int retryAfterMilliseconds)
+        : base("Discord rate limit (HTTP 429)")
+    {
+        RetryAfterMilliseconds = retryAfterMilliseconds;
+    }
+
+    public int RetryAfterMilliseconds { get; }
+}
+
+internal sealed class DiscordWebhookGoneException : Exception
+{
+    public DiscordWebhookGoneException(int statusCode)
+        : base("Discord webhook refused (HTTP " + statusCode.ToString(CultureInfo.InvariantCulture) + ")")
+    {
+        StatusCode = statusCode;
+    }
+
+    public int StatusCode { get; }
 }
 
 internal sealed class DiscordDeliverySettings

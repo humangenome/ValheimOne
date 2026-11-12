@@ -151,6 +151,11 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestSaveWaitProof();
             TestDirectSaveWithoutConsole();
             TestWorldSaveSummary();
+            TestActivityWriterRetries();
+            TestSettingsHandlerIsolation();
+            TestHandshakeFindsEveryMethodFirst();
+            TestSaveSkipReason();
+            TestDiscordRateLimitAndGoneWebhook();
             TestNewWorldSeed();
             // Last: it edits valheimone.cfg on disk for the hot reload to pick up a frame later. A test after it that
             // sets any setting (NewWorldSeed clears itself) makes BepInEx rewrite the whole file from memory, which
@@ -2636,6 +2641,270 @@ public sealed class RuntimeRegression : BaseUnityPlugin
     }
 
     // The summary on the running map after a real save, read from disk off the main thread.
+    // 0.13.32: a write that fails (a file held by a backup or a virus scan) no longer ends the activity writer for
+    // the rest of the run. The events are kept, health says writes fail, and once the file can be written again
+    // every kept event lands in order, then the console history too.
+    private void TestActivityWriterRetries()
+    {
+        string dir = Path.Combine(_root, "activity-retry-" + DateTime.UtcNow.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Directory.CreateDirectory(dir);
+        string today = "activity-" + DateTime.UtcNow.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture) + ".jsonl";
+        string blocker = Path.Combine(dir, today);
+        Directory.CreateDirectory(blocker); // a folder where the day's file goes: opening it fails
+        var worker = new ActivityLogWorker(dir, () => 7, new ModLogger(Logger));
+        worker.Start();
+        try
+        {
+            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            worker.EnqueueActivity(new ActivityEventRecord(now, "regression.retry", "{\"n\":1}"));
+            DateTime until = DateTime.UtcNow.AddSeconds(5);
+            while (DateTime.UtcNow < until && !worker.GetHealth(true).WriteFailingSinceUnixMs.HasValue) Thread.Sleep(50);
+            ActivityLogHealthSnapshot failing = worker.GetHealth(true);
+            Check(failing.WriteFailingSinceUnixMs.HasValue && !string.IsNullOrEmpty(failing.WriteError),
+                "an activity write that fails shows in health as failing, with the error kind (" + failing.WriteError + ")");
+            worker.EnqueueActivity(new ActivityEventRecord(now + 1, "regression.retry", "{\"n\":2}"));
+            Thread.Sleep(1200);
+            Check(worker.GetHealth(true).WriteFailingSinceUnixMs.HasValue, "the writer keeps failing while the file cannot be opened");
+            Directory.Delete(blocker);
+            string file = Path.Combine(dir, today);
+            string text = "";
+            until = DateTime.UtcNow.AddSeconds(15);
+            while (DateTime.UtcNow < until)
+            {
+                text = File.Exists(file) ? ReadShared(file) : "";
+                if (!worker.GetHealth(true).WriteFailingSinceUnixMs.HasValue && text.Contains("\"n\":2")) break;
+                Thread.Sleep(200);
+            }
+
+            int first = text.IndexOf("{\"n\":1}", StringComparison.Ordinal);
+            int second = text.IndexOf("{\"n\":2}", StringComparison.Ordinal);
+            Check(first >= 0 && second > first && text.IndexOf("{\"n\":1}", first + 1, StringComparison.Ordinal) < 0,
+                "once the file can be written again both kept events land in order, once each");
+            ActivityLogHealthSnapshot recovered = worker.GetHealth(true);
+            Check(!recovered.WriteFailingSinceUnixMs.HasValue && recovered.WriteError == null && recovered.EventsWrittenToday == 2,
+                "health reads writing again, with both events counted");
+
+            // the console history's own file: its temporary file blocked, then freed
+            string historyBlocker = Path.Combine(dir, "console-history.json.tmp");
+            Directory.CreateDirectory(historyBlocker);
+            worker.AppendConsoleHistory("regression", "vo retry", "ok", "ok");
+            until = DateTime.UtcNow.AddSeconds(5);
+            while (DateTime.UtcNow < until && !worker.GetHealth(true).WriteFailingSinceUnixMs.HasValue) Thread.Sleep(50);
+            Check(worker.GetHealth(true).WriteFailingSinceUnixMs.HasValue, "a console history write that fails also shows in health");
+            Directory.Delete(historyBlocker);
+            worker.EnqueueActivity(new ActivityEventRecord(now + 2, "regression.retry", "{\"n\":3}"));
+            string history = Path.Combine(dir, "console-history.json");
+            until = DateTime.UtcNow.AddSeconds(15);
+            while (DateTime.UtcNow < until && !(File.Exists(history) && ReadShared(history).Contains("vo retry") && ReadShared(file).Contains("\"n\":3"))) Thread.Sleep(200);
+            Check(File.Exists(history) && ReadShared(history).Contains("vo retry") && ReadShared(file).Contains("{\"n\":3}"),
+                "after the history file came free the writer saved the history and kept writing events");
+        }
+        finally
+        {
+            worker.StopAndFlush(2000);
+        }
+    }
+
+    private static string ReadShared(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
+
+    // 0.13.32: one module's settings-change handler that throws is logged once and the other modules still get the change.
+    private void TestSettingsHandlerIsolation()
+    {
+        var settings = new ValheimOneConfig(Path.Combine(_root, "handler-isolation.cfg"));
+        var lines = new List<string>();
+        settings.Features.Log = lines.Add;
+        int ran = 0;
+        settings.Features.EffectiveValuesChanged += () => throw new InvalidOperationException("regression handler fault");
+        settings.Features.EffectiveValuesChanged += () => ran++;
+        settings.Features.NotifyEffectiveValuesChanged();
+        settings.Features.NotifyEffectiveValuesChanged();
+        Check(ran == 2, "a throwing settings handler no longer stops the next one (ran " + ran + " of 2)");
+        Check(lines.Count == 1 && lines[0].Contains("regression handler fault") && lines[0].Contains("the other modules still took the change"),
+            "the throwing handler is logged once, not on every change (" + lines.Count + " lines)");
+    }
+
+    // 0.13.32: the version handshake finds every game method before it patches any, so a game build without one of
+    // them leaves nothing half-patched and does not take over from the running handshake.
+    private void TestHandshakeFindsEveryMethodFirst()
+    {
+        Func<Type, string, Type[], MethodInfo?> find = VersionHandshake.FindMethod;
+        const string id = "com.humangenome.valheimone.regression.handshake";
+        var harmony = new Harmony(id);
+        object? activeBefore = AccessTools.Field(typeof(VersionHandshake), "_active").GetValue(null);
+        try
+        {
+            VersionHandshake.FindMethod = (type, name, parameters) =>
+                name == nameof(ZNet.SendPeriodicData) ? null : find(type, name, parameters);
+            var settings = new ValheimOneConfig(Path.Combine(_root, "handshake-missing.cfg"));
+            var handshake = new VersionHandshake(settings, new ServerConfig(settings.Features), new ModLogger(Logger));
+            bool threw = false;
+            try
+            {
+                handshake.Initialize(harmony);
+            }
+            catch (MissingMethodException)
+            {
+                threw = true;
+            }
+
+            Check(threw, "a handshake method missing from the game stops the handshake's start with MissingMethodException");
+            bool anyOfOurs = Harmony.GetAllPatchedMethods().Any(method =>
+                Harmony.GetPatchInfo(method)?.Owners.Contains(id) == true);
+            Check(!anyOfOurs, "nothing was patched before the missing method was found");
+            Check(ReferenceEquals(AccessTools.Field(typeof(VersionHandshake), "_active").GetValue(null), activeBefore),
+                "the running handshake stays the active one");
+        }
+        finally
+        {
+            VersionHandshake.FindMethod = find;
+            harmony.UnpatchSelf();
+        }
+    }
+
+    // 0.13.32: when the game declines a save the API answer stays "the game skipped the save" and the server log says why.
+    private void TestSaveSkipReason()
+    {
+        ZoneSystem zoneSystem = ZoneSystem.instance;
+        Check(ConsoleBridge.SaveSkipReason() == "reason not known", "with nothing blocking saves the skip reason reads not known");
+        bool before = zoneSystem.m_didZoneTest;
+        float saveTimer = Game.instance.m_saveTimer;
+        try
+        {
+            zoneSystem.m_didZoneTest = true;
+            Check(ConsoleBridge.SaveSkipReason().Contains("location test command"),
+                "after the location test command the skip reason names it");
+            ConsoleSaveResult result = ConsoleBridge.SaveOnMainThread(new ModLogger(Logger));
+            Check(!result.Ok && result.Error == "the game skipped the save", "the API answer for a declined save keeps its words");
+        }
+        finally
+        {
+            zoneSystem.m_didZoneTest = before;
+            Game.instance.m_saveTimer = saveTimer;
+        }
+    }
+
+    // 0.13.32: a Discord 429 waits the time Discord asks for before its one retry (it used to ask again at once and drop
+    // the batch); a deleted webhook (404) is not retried, is logged once, and gets no more posts until the address changes.
+    private void TestDiscordRateLimitAndGoneWebhook()
+    {
+        var limited = new FakeDiscord(429, 204);
+        var worker = new ValheimOne.Discord.DiscordWebhookWorker(new ModLogger(Logger), limited);
+        worker.UpdateSettings(new ValheimOne.Discord.DiscordDeliverySettings(true, "https://discord.invalid/api/webhooks/1/regression", "ValheimOne"));
+        worker.Start();
+        try
+        {
+            worker.Enqueue(new ValheimOne.Discord.DiscordEventRecord("regression", "rate limit", 0));
+            DateTime until = DateTime.UtcNow.AddSeconds(10);
+            while (DateTime.UtcNow < until && limited.Calls.Count < 2) Thread.Sleep(50);
+            Thread.Sleep(300);
+            double gap = limited.Calls.Count >= 2 ? (limited.Calls[1] - limited.Calls[0]).TotalMilliseconds : -1;
+            Check(limited.Calls.Count == 2 && gap >= 900,
+                "a Discord 429 is retried once, after the Retry-After it asked for (" + limited.Calls.Count + " posts, " + gap.ToString("0") + " ms apart)");
+        }
+        finally
+        {
+            worker.StopAndFlush(500);
+        }
+
+        var gone = new FakeDiscord(404);
+        var goneWorker = new ValheimOne.Discord.DiscordWebhookWorker(new ModLogger(Logger), gone);
+        goneWorker.UpdateSettings(new ValheimOne.Discord.DiscordDeliverySettings(true, "https://discord.invalid/api/webhooks/2/regression", "ValheimOne"));
+        goneWorker.Start();
+        try
+        {
+            goneWorker.Enqueue(new ValheimOne.Discord.DiscordEventRecord("regression", "gone 1", 0));
+            DateTime until = DateTime.UtcNow.AddSeconds(6);
+            while (DateTime.UtcNow < until && gone.Calls.Count < 1) Thread.Sleep(50);
+            Thread.Sleep(1500);
+            Check(gone.Calls.Count == 1, "a webhook Discord says is gone (404) is not retried (" + gone.Calls.Count + " posts)");
+            goneWorker.Enqueue(new ValheimOne.Discord.DiscordEventRecord("regression", "gone 2", 0));
+            Thread.Sleep(3000);
+            Check(gone.Calls.Count == 1, "later notifications to a gone webhook are dropped without a post (" + gone.Calls.Count + " posts)");
+            goneWorker.UpdateSettings(new ValheimOne.Discord.DiscordDeliverySettings(true, "https://discord.invalid/api/webhooks/3/regression", "ValheimOne"));
+            goneWorker.Enqueue(new ValheimOne.Discord.DiscordEventRecord("regression", "new address", 0));
+            until = DateTime.UtcNow.AddSeconds(6);
+            while (DateTime.UtcNow < until && gone.Calls.Count < 2) Thread.Sleep(50);
+            Check(gone.Calls.Count == 2, "a new webhook address is tried again (" + gone.Calls.Count + " posts)");
+        }
+        finally
+        {
+            goneWorker.StopAndFlush(500);
+        }
+    }
+
+    // Answers each POST with the next status in the list (the last one repeats); a 429 carries Retry-After: 1.
+    private sealed class FakeDiscord : System.Net.Http.HttpMessageHandler
+    {
+        private readonly int[] _statuses;
+        public readonly List<DateTime> Calls = new();
+
+        public FakeDiscord(params int[] statuses) => _statuses = statuses;
+
+        protected override System.Threading.Tasks.Task<System.Net.Http.HttpResponseMessage> SendAsync(
+            System.Net.Http.HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            int status;
+            lock (Calls)
+            {
+                status = _statuses[Math.Min(Calls.Count, _statuses.Length - 1)];
+                Calls.Add(DateTime.UtcNow);
+            }
+
+            var response = new System.Net.Http.HttpResponseMessage((HttpStatusCode)status);
+            if (status == 429) response.Headers.TryAddWithoutValidation("Retry-After", "1");
+            return System.Threading.Tasks.Task.FromResult(response);
+        }
+    }
+
+    // 0.13.32: the public view's web pins carry no author (from the host's panel it is the operator's login name);
+    // the admin and shared views keep it.
+    private void CheckLivePublicPinAuthor()
+    {
+        object? server = RunningHttpServer();
+        if (server == null)
+        {
+            LiveResult(false, "the running map server is readable for the pin author check");
+            return;
+        }
+
+        Type type = server.GetType();
+        var getStore = (Func<WebPinStore?>)AccessTools.Field(type, "_getWebPinStore").GetValue(server);
+        WebPinStore? store = getStore();
+        if (store == null)
+        {
+            LiveResult(false, "the running map has a web pin store for the pin author check");
+            return;
+        }
+
+        const string author = "regression@example.com";
+        if (!store.TryCreate(10f, 20f, WebPinStore.AllowedIcons[0], "regression author pin", author, out WebPinEntry? pin, out string error) || pin == null)
+        {
+            LiveResult(false, "a web pin can be made for the pin author check (" + error + ")");
+            return;
+        }
+
+        try
+        {
+            MethodInfo build = AccessTools.Method(type, "BuildWebPinsJson");
+            Type level = AccessTools.Inner(type, "ViewLevel");
+            string View(string name) => (string)build.Invoke(server, new object[] { store, Enum.Parse(level, name) });
+            string publicJson = View("Public");
+            LiveResult(publicJson.Contains("\"label\":\"regression author pin\",\"author\":\"\"") && !publicJson.Contains(author),
+                "the public view's web pins carry no author");
+            LiveResult(View("Shared").Contains("\"author\":\"" + author + "\"") && View("Admin").Contains("\"author\":\"" + author + "\""),
+                "the shared and admin views keep the pin's author");
+        }
+        finally
+        {
+            store.TryDelete(pin.Id, author, true, out _);
+        }
+    }
+
     private void CheckLiveSummary()
     {
         World? world = ZNet.World;
@@ -2731,6 +3000,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             CheckLiveSave(root, token);
             CheckLiveCensus(root, token);
             CheckLiveSummary();
+            CheckLivePublicPinAuthor();
 
             int publicTaken = FillSlots(slots, EventStreamView.Public);
             int sharedTaken = FillSlots(slots, EventStreamView.Shared);

@@ -4,6 +4,19 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+### Changed
+
+- The public map no longer shows who placed a web pin. A pin placed from a hosting panel carries that panel's account name, which can be a login name or an email address. The shared link and the admin view still show it.
+- When the game declines a world save asked for through `/api/admin/save` (after a world that did not load correctly, after the `location` test command, which turns saving off until a restart, or on a zone or dungeon error), the server log now says which. The API answer is unchanged.
+- `/api/health` `activityLog` gains `writeFailingSinceUnixMs` and `writeError` (the kind of error, no path), set while writes to disk keep failing, and `vo health` says so.
+
+### Fixed
+
+- The activity log no longer stops for the rest of the run after one failed write, for example while a backup or a virus scan holds its file. The events not yet written are kept and written once the file can be written again, retrying after 1, 2, 5, 10 and 30 seconds and then every minute, with one log line when it fails and one when it works again. Before, the first such error stopped the activity feed, the console history and the players' last-seen spots until a restart, while the health check still read "enabled".
+- One module that fails while taking a changed setting no longer stops the other modules from taking it. The failing one is logged once.
+- Discord notices: when Discord's rate limit answers (HTTP 429), the one retry now waits the time Discord asks for (at most 10 seconds) instead of asking again at once and dropping the notices. A webhook Discord says is gone (HTTP 401, 403 or 404, a deleted webhook or a wrong address) is no longer retried and is logged once, instead of a warning for every batch; nothing more is sent to it until `WebhookUrl` changes.
+- If a game update removes or renames one of the game methods ValheimOne's version check hooks, only the version check and the synced settings turn off. Nothing is left half-hooked, and the map, console, alerts, server-side modules and the config hot reload still start. Before, the rest of the startup after that point was skipped, the hot reload included.
+
 ## [0.13.31] - 2026-11-09
 
 ### Added

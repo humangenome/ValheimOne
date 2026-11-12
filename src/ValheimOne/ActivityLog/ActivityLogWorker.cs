@@ -49,6 +49,8 @@ internal sealed class ActivityLogWorker
     private int _ghostDirty;
     private int _overflowWarningLogged;
     private int _stopping;
+    private long _writeFailingSinceUnixMs;
+    private string? _writeError;
 
     public ActivityLogWorker(
         string dataDirectory,
@@ -322,11 +324,14 @@ internal sealed class ActivityLogWorker
             : Math.Max(
                 0d,
                 (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - lastWriteUnixMs) / 1000d);
+        long failingSince = Interlocked.Read(ref _writeFailingSinceUnixMs);
         return new ActivityLogHealthSnapshot(
             enabled,
             currentFileName,
             currentFileIsToday ? Interlocked.Read(ref _eventsWrittenToday) : 0L,
-            lastWriteAgeSeconds);
+            lastWriteAgeSeconds,
+            failingSince > 0L ? failingSince : (long?)null,
+            failingSince > 0L ? Volatile.Read(ref _writeError) : null);
     }
 
     public void StopAndFlush(int timeoutMilliseconds)
@@ -347,39 +352,67 @@ internal sealed class ActivityLogWorker
         }
     }
 
+    // A failed write (a file held by a backup or a virus scan, a full disk) no longer ends the writer:
+    // the events not yet written stay queued, the writer waits and tries again (RetryDelaysMilliseconds),
+    // and one log line says it failed and one says it recovered. Until 0.13.32 the first such error
+    // stopped the writer for the rest of the run, and every later event, console line and last-seen
+    // spot was thrown away while health still read "enabled".
     private void Run()
     {
+        WaitHandle[] signals = { _queueSignal, _stopSignal };
+        int failures = 0;
         try
         {
-            Directory.CreateDirectory(DataDirectory);
-            WaitHandle[] signals = { _queueSignal, _stopSignal };
             while (true)
             {
-                int signal = WaitHandle.WaitAny(signals, DateCheckMilliseconds);
-                if (signal == WaitHandle.WaitTimeout)
+                if (failures == 0)
                 {
-                    RollAtUtcDateChange();
-                    continue;
+                    int signal = WaitHandle.WaitAny(signals, DateCheckMilliseconds);
+                    if (signal == WaitHandle.WaitTimeout)
+                    {
+                        TryWriterStep(RollAtUtcDateChange, ref failures);
+                        continue;
+                    }
+
+                    if (signal == 0 && Volatile.Read(ref _stopping) == 0)
+                    {
+                        _stopSignal.WaitOne(BatchDelayMilliseconds);
+                    }
+                }
+                else
+                {
+                    // While writes fail, new events only queue up; the next try waits for its delay
+                    // (or for a stop) so a broken disk is not hit once per event.
+                    _stopSignal.WaitOne(RetryDelayMilliseconds(failures));
                 }
 
-                if (signal == 0 && Volatile.Read(ref _stopping) == 0)
+                bool stopping = Volatile.Read(ref _stopping) != 0;
+                TryWriterStep(ProcessPending, ref failures);
+                if (stopping)
                 {
-                    _stopSignal.WaitOne(BatchDelayMilliseconds);
-                }
+                    if (failures == 0)
+                    {
+                        TryWriterStep(ProcessPending, ref failures);
+                    }
 
-                ProcessPending();
-                if (Volatile.Read(ref _stopping) != 0)
-                {
-                    ProcessPending();
+                    int left = PendingCount;
+                    if (failures != 0 && left > 0)
+                    {
+                        _log.Warning(
+                            $"[ActivityLog] stopping with {left.ToString(CultureInfo.InvariantCulture)} " +
+                            "event(s) that could not be written.");
+                    }
+
                     return;
                 }
             }
         }
         catch (Exception exception)
         {
+            // Only a fault outside the writes themselves lands here.
             Interlocked.Exchange(ref _stopping, 1);
             _log.Warning(
-                $"[ActivityLog] writer stopped after a disk failure " +
+                $"[ActivityLog] writer stopped " +
                 $"({exception.GetType().Name}: {SingleLineMessage(exception)}).");
         }
         finally
@@ -388,22 +421,134 @@ internal sealed class ActivityLogWorker
         }
     }
 
+    internal const int MaximumRetryDelayMilliseconds = 60000;
+
+    private static readonly int[] RetryDelaysMilliseconds = { 1000, 2000, 5000, 10000, 30000, MaximumRetryDelayMilliseconds };
+
+    internal static int RetryDelayMilliseconds(int failures)
+    {
+        int index = Math.Max(1, failures) - 1;
+        return RetryDelaysMilliseconds[Math.Min(index, RetryDelaysMilliseconds.Length - 1)];
+    }
+
+    // One writer step (write the queue, or roll the day's file). True when it worked. On a failure the
+    // writer's file is closed (it is opened again on the next try) and the first failure of a run of
+    // them is logged; the step that works again logs how long it took.
+    private bool TryWriterStep(Action step, ref int failures)
+    {
+        try
+        {
+            Directory.CreateDirectory(DataDirectory);
+            step();
+        }
+        catch (Exception exception) when (!(exception is ThreadAbortException))
+        {
+            CloseActivityWriter();
+            failures++;
+            if (failures == 1)
+            {
+                Interlocked.Exchange(ref _writeFailingSinceUnixMs, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                Volatile.Write(ref _writeError, exception.GetType().Name);
+                _log.Warning(
+                    $"[ActivityLog] could not write to disk " +
+                    $"({exception.GetType().Name}: {SingleLineMessage(exception)}); " +
+                    "the events are kept and the writer tries again.");
+            }
+
+            return false;
+        }
+
+        if (failures != 0)
+        {
+            long since = Interlocked.Exchange(ref _writeFailingSinceUnixMs, 0L);
+            Volatile.Write(ref _writeError, null);
+            double seconds = Math.Max(0L, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - since) / 1000d;
+            _log.Info(
+                $"[ActivityLog] writing again after {failures.ToString(CultureInfo.InvariantCulture)} " +
+                $"failed {(failures == 1 ? "try" : "tries")} over {seconds.ToString("0", CultureInfo.InvariantCulture)} s.");
+            failures = 0;
+        }
+
+        return true;
+    }
+
+    private int PendingCount
+    {
+        get
+        {
+            lock (_queueLock)
+            {
+                return _queue.Count;
+            }
+        }
+    }
+
+    // Puts the records from 'first' on back at the head of the queue, in order, ahead of anything
+    // queued since. The queue keeps its cap: what does not fit is the newest and is dropped, as a
+    // full queue drops new events.
+    private void Requeue(List<ActivityEventRecord> records, int first)
+    {
+        if (first >= records.Count)
+        {
+            return;
+        }
+
+        int dropped = 0;
+        lock (_queueLock)
+        {
+            var merged = new List<ActivityEventRecord>(records.Count - first + _queue.Count);
+            for (int index = first; index < records.Count; index++)
+            {
+                merged.Add(records[index]);
+            }
+
+            merged.AddRange(_queue);
+            _queue.Clear();
+            for (int index = 0; index < merged.Count; index++)
+            {
+                if (_queue.Count >= QueueCapacity)
+                {
+                    dropped = merged.Count - index;
+                    break;
+                }
+
+                _queue.Enqueue(merged[index]);
+            }
+        }
+
+        if (dropped > 0 && Interlocked.Exchange(ref _overflowWarningLogged, 1) == 0)
+        {
+            _log.Warning(
+                "[ActivityLog] writer queue is full; excess events will be dropped.");
+        }
+    }
+
     private void ProcessPending()
     {
         List<ActivityEventRecord> records = DrainPending();
-        bool wroteActivity = false;
-        for (int index = 0; index < records.Count; index++)
+        int written = 0;
+        try
         {
-            WriteActivity(records[index]);
-            wroteActivity = true;
-        }
+            for (; written < records.Count; written++)
+            {
+                WriteActivity(records[written]);
+            }
 
-        if (wroteActivity && _activityWriter != null)
+            if (written > 0 && _activityWriter != null)
+            {
+                _activityWriter.Flush();
+                Interlocked.Exchange(
+                    ref _lastWriteUnixMs,
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            }
+        }
+        catch
         {
-            _activityWriter.Flush();
-            Interlocked.Exchange(
-                ref _lastWriteUnixMs,
-                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            // The record that failed and the ones after it are written on the next try. Lines
+            // already handed to the writer before the failure may be lost with its buffer; none
+            // is written twice.
+            Requeue(records, written);
+            throw;
         }
 
         if (Interlocked.Exchange(ref _historyDirty, 0) != 0)
@@ -990,13 +1135,23 @@ internal sealed class ActivityLogHealthSnapshot
         bool enabled,
         string currentFileName,
         long eventsWrittenToday,
-        double? lastWriteAgeSeconds)
+        double? lastWriteAgeSeconds,
+        long? writeFailingSinceUnixMs = null,
+        string? writeError = null)
     {
         Enabled = enabled;
         CurrentFileName = currentFileName;
         EventsWrittenToday = eventsWrittenToday;
         LastWriteAgeSeconds = lastWriteAgeSeconds;
+        WriteFailingSinceUnixMs = writeFailingSinceUnixMs;
+        WriteError = writeError;
     }
+
+    // Set while writes to disk keep failing (the writer keeps the events and tries again).
+    public long? WriteFailingSinceUnixMs { get; }
+
+    // The kind of the first error of that run of failures (an exception type name, no path).
+    public string? WriteError { get; }
 
     public bool Enabled { get; }
 

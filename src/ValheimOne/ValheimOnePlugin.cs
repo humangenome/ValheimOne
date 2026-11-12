@@ -40,6 +40,7 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
         string configPath = Path.Combine(Paths.ConfigPath, "valheimone.cfg");
         var settings = new ValheimOneConfig(configPath);
         _settings = settings;
+        settings.Features.Log = _log.Warning;
         var serverConfig = new ServerConfig(settings.Features);
         var mapSharingModule = new MapSharingModule(settings.Features, _log);
         var sessionEvents = ServerSessionEventSource.Initialize(gameObject, _log);
@@ -135,7 +136,21 @@ public sealed class ValheimOnePlugin : BaseUnityPlugin
             serverConfig,
             _log,
             new IVersionHandshakeExtension[] { mapSharingModule });
-        _versionHandshake.Initialize(_harmony);
+        try
+        {
+            _versionHandshake.Initialize(_harmony);
+        }
+        catch (Exception exception)
+        {
+            // A game update that moved one of the handshake's methods turns off only the handshake
+            // (the ValheimOne version check and synced settings); the map, console, alerts, the
+            // server-side modules and the config hot reload below still start.
+            _versionHandshake = null;
+            _log.Error(
+                "Version check and synced settings are off: the server enforcement chassis could not start " +
+                $"({exception.GetType().Name}: {ContractDiagnostics.SingleLineMessage(exception)}). " +
+                "Everything else keeps working.");
+        }
 
         if (ContractDiagnostics.IsEnabled)
         {

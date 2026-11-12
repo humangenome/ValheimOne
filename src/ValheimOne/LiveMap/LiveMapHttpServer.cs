@@ -2329,6 +2329,13 @@ internal sealed class LiveMapHttpServer
             json.Append("null");
         }
 
+        // 0.13.32: set while writes keep failing; the writer keeps the events and tries again
+        json.Append(",\"writeFailingSinceUnixMs\":").Append(activityHealth.WriteFailingSinceUnixMs.HasValue
+            ? activityHealth.WriteFailingSinceUnixMs.Value.ToString(CultureInfo.InvariantCulture)
+            : "null");
+        json.Append(",\"writeError\":").Append(activityHealth.WriteError != null
+            ? JsonWriter.Quote(activityHealth.WriteError)
+            : "null");
         json.Append('}');
         json.Append('}');
         WriteJson(response, HttpStatusCode.OK, json.ToString());
@@ -4390,6 +4397,11 @@ internal sealed class LiveMapHttpServer
             return;
         }
 
+        WriteJson(response, HttpStatusCode.OK, BuildWebPinsJson(store, viewLevel));
+    }
+
+    private string BuildWebPinsJson(WebPinStore store, ViewLevel viewLevel)
+    {
         WebPinEntry[] pins;
         long revision;
         do
@@ -4411,11 +4423,13 @@ internal sealed class LiveMapHttpServer
                 json.Append(',');
             }
 
-            AppendWebPinJson(json, pins[index]);
+            // the public view never gets an author: for a pin set from the host's panel it is the
+            // panel's operator name, which can be a login name or an email address (0.13.32)
+            AppendWebPinJson(json, pins[index], includeAuthor: viewLevel != ViewLevel.Public);
         }
 
         json.Append("]}");
-        WriteJson(response, HttpStatusCode.OK, json.ToString());
+        return json.ToString();
     }
 
     private void ServeCreateWebPin(
@@ -4741,7 +4755,7 @@ internal sealed class LiveMapHttpServer
         return id.IndexOf('/') < 0;
     }
 
-    private static void AppendWebPinJson(StringBuilder json, WebPinEntry pin)
+    private static void AppendWebPinJson(StringBuilder json, WebPinEntry pin, bool includeAuthor = true)
     {
         json.Append('{');
         json.Append("\"id\":").Append(JsonWriter.Quote(pin.Id));
@@ -4749,7 +4763,7 @@ internal sealed class LiveMapHttpServer
         json.Append(",\"z\":").Append(JsonWriter.Number(pin.Z));
         json.Append(",\"icon\":").Append(JsonWriter.Quote(pin.Icon));
         json.Append(",\"label\":").Append(JsonWriter.Quote(pin.Label));
-        json.Append(",\"author\":").Append(JsonWriter.Quote(pin.Author));
+        json.Append(",\"author\":").Append(JsonWriter.Quote(includeAuthor ? pin.Author : string.Empty));
         json.Append(",\"checked\":").Append(pin.Checked ? "true" : "false");
         json.Append(",\"createdUnixMs\":").Append(
             pin.CreatedUnixMs.ToString(CultureInfo.InvariantCulture));

@@ -663,6 +663,17 @@ internal static class VoCommands
             $"  Events written today: " +
             activityHealth.EventsWrittenToday.ToString(CultureInfo.InvariantCulture));
         Write(args, $"  Last write: {lastWrite}");
+        if (activityHealth.WriteFailingSinceUnixMs.HasValue)
+        {
+            double failingSeconds = Math.Max(
+                0L,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - activityHealth.WriteFailingSinceUnixMs.Value) / 1000d;
+            Write(
+                args,
+                $"  Writing to disk fails ({activityHealth.WriteError}) for " +
+                failingSeconds.ToString("0", CultureInfo.InvariantCulture) +
+                " s; the events are kept and retried.");
+        }
     }
 
     private static void RunWeather(Terminal.ConsoleEventArgs args)
