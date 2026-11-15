@@ -130,6 +130,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestMapStartSettings();
             TestMapBindRetry();
             TestMapLoopbackFallbackRetry();
+            TestMapListenerDeathRebinds();
             TestValheimOneZeroData();
             TestDropsChestLoot();
             TestNetworkSendLimit();
@@ -1091,6 +1092,114 @@ public sealed class RuntimeRegression : BaseUnityPlugin
                 // Already stopped above.
             }
 
+            server.Stop();
+        }
+    }
+
+    // A listener that stops under the map (not our Stop, not a rebind) is bound again on the next frame (0.13.32).
+    // Until then the listen loop ended (Mono throws HttpListenerException 500 at a waiting GetContext when its listener
+    // is closed) while the map still held the dead listener, so the 30 s retry never ran and the map stayed down.
+    // Real listener and sockets on a throwaway server object; the death is the listener closed under its own thread.
+    private void TestMapListenerDeathRebinds()
+    {
+        Type behaviourType = typeof(ValheimOnePlugin).Assembly.GetType("ValheimOne.LiveMap.LiveMapBehaviour", true)!;
+        object? behaviour = AccessTools.Property(behaviourType, "Instance").GetValue(null, null);
+        Check(behaviour != null, "listener death: live map behaviour exists");
+        var server = (LiveMapHttpServer)FormatterServices.GetUninitializedObject(typeof(LiveMapHttpServer));
+        void SetField(string name, object? value) =>
+            AccessTools.Field(typeof(LiveMapHttpServer), name).SetValue(server, value);
+        object? GetField(string name) => AccessTools.Field(typeof(LiveMapHttpServer), name)?.GetValue(server);
+        var probe = new TcpListener(IPAddress.Loopback, 0);
+        probe.Start();
+        int port = ((IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+        SetField("_port", port);
+        SetField("_bindIp", string.Empty);
+        SetField("_config", AccessTools.Field(behaviourType, "_config").GetValue(behaviour));
+        SetField("_log", AccessTools.Field(behaviourType, "_log").GetValue(behaviour));
+        bool Answers()
+        {
+            try
+            {
+                using var client = new TcpClient();
+                client.Connect(IPAddress.Loopback, port);
+                return client.Connected;
+            }
+            catch (SocketException)
+            {
+                return false;
+            }
+        }
+
+        bool WaitFor(Func<bool> condition)
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (!condition())
+            {
+                if (clock.ElapsedMilliseconds > 3000)
+                {
+                    return false;
+                }
+
+                Thread.Sleep(25);
+            }
+
+            return true;
+        }
+
+        try
+        {
+            server.Start();
+            Check(server.IsRunning && Answers(), "listener death: the map listens at start");
+            float retry = LiveMapHttpServer.BindRetrySeconds;
+            server.RetryBindIfDue(100f);
+            Check(GetField("_deadListener") == null && server.IsRunning, "listener death: a healthy listener is never taken for dead");
+
+            var first = (HttpListener)GetField("_listener")!;
+            var firstThread = (Thread)GetField("_listenerThread")!;
+            first.Close();
+            Check(WaitFor(() => !firstThread.IsAlive), "listener death: the listen loop ends when its listener is closed under it");
+            Check(ReferenceEquals(GetField("_deadListener"), first), "listener death: the loop marks the map's own listener as dead");
+            Check(!Answers(), "listener death: the map port is down until the next frame");
+
+            server.RetryBindIfDue(100f + 1f);
+            Check(GetField("_deadListener") == null, "listener death: the next frame takes the mark");
+            Check(server.IsRunning && !ReferenceEquals(GetField("_listener"), first) && Answers(),
+                "listener death: the next frame binds a new listener and the map answers again");
+            Check(!server.OnLoopbackFallback, "listener death: the new listener is on every address, not the 127.0.0.1 fallback");
+
+            // a second death while the port is taken: the bind fails and the ordinary retry takes over
+            var second = (HttpListener)GetField("_listener")!;
+            var secondThread = (Thread)GetField("_listenerThread")!;
+            var holder = new TcpListener(IPAddress.Loopback, port);
+            holder.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            second.Close();
+            Check(WaitFor(() => !secondThread.IsAlive) && ReferenceEquals(GetField("_deadListener"), second),
+                "listener death: a second death is marked as well");
+            holder.Start();
+            try
+            {
+                server.RetryBindIfDue(200f);
+                Check(GetField("_deadListener") == null, "listener death: the mark is taken even when the port is busy");
+                Check(!ReferenceEquals(GetField("_listener"), second), "listener death: the dead listener is let go even when the port is busy");
+            }
+            finally
+            {
+                holder.Stop();
+            }
+
+            server.RetryBindIfDue(200f + retry + 1f);
+            Check(server.IsRunning && Answers(), "listener death: with the port free again, the ordinary 30 s retry binds the map");
+
+            // our own stop never counts as a death
+            var last = (HttpListener)GetField("_listener")!;
+            server.Stop();
+            Check(GetField("_deadListener") == null, "listener death: our own Stop is not taken for a death");
+            server.RetryBindIfDue(500f);
+            Check(!server.IsRunning && !ReferenceEquals(GetField("_listener"), last), "listener death: nothing binds again after our own Stop");
+        }
+        finally
+        {
             server.Stop();
         }
     }

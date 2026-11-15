@@ -99,6 +99,9 @@ internal sealed class LiveMapHttpServer
     // Bound to 127.0.0.1 only because the all-address bind failed; the retry keeps trying every address.
     private bool _onLoopbackFallback;
     private int _activeRequests;
+    // Set by the listener thread when its listener stopped while it was still the map's own (not our stop, not a rebind);
+    // the next frame's RetryBindIfDue closes it and binds again (0.13.32: until then the map stayed down until a restart).
+    private HttpListener? _deadListener;
     private bool _consoleTokenWarningLogged;
     private readonly EventStreamSlots _eventStreams = new EventStreamSlots();
     private volatile bool _stopping;
@@ -255,7 +258,27 @@ internal sealed class LiveMapHttpServer
     // the same port on every address, so without this the map stayed reachable from this machine only.
     public void RetryBindIfDue(float now)
     {
-        if (_stopping || (_listener != null && !_onLoopbackFallback))
+        if (_stopping)
+        {
+            return;
+        }
+
+        HttpListener? dead = Interlocked.Exchange(ref _deadListener, null);
+        if (dead != null && ReferenceEquals(dead, _listener))
+        {
+            CloseListenerForRebind();
+            _onLoopbackFallback = false;
+            _nextBindRetry = now + BindRetrySeconds;
+            Start();
+            if (_listener != null)
+            {
+                _log.Info("[LiveMap] the map is listening again after its listener stopped.");
+            }
+
+            return;
+        }
+
+        if (_listener != null && !_onLoopbackFallback)
         {
             return;
         }
@@ -430,6 +453,7 @@ internal sealed class LiveMapHttpServer
 
     private void Listen(HttpListener listener)
     {
+        string why = "it stopped listening";
         while (!_stopping && listener.IsListening)
         {
             try
@@ -437,23 +461,31 @@ internal sealed class LiveMapHttpServer
                 HttpListenerContext context = listener.GetContext();
                 ThreadPool.QueueUserWorkItem(HandleRequest, context);
             }
-            catch (HttpListenerException)
+            catch (HttpListenerException exception)
             {
-                if (!_stopping && ReferenceEquals(listener, _listener))
-                {
-                    _log.Warning("[LiveMap] HTTP listener stopped accepting requests unexpectedly.");
-                }
-
+                why = "HttpListenerException " + exception.ErrorCode;
                 break;
             }
             catch (ObjectDisposedException)
             {
+                why = "ObjectDisposedException";
                 break;
             }
             catch (InvalidOperationException)
             {
+                why = "InvalidOperationException";
                 break;
             }
+        }
+
+        // Our own Stop sets _stopping first and a rebind clears _listener first, so only a listener that died under the
+        // map gets here as the current one. Until 0.13.32 this loop just ended (with one warning on HttpListenerException,
+        // which is what Mono throws when a listener is closed under a waiting GetContext: error 500 in the harness, and
+        // with none on the other two), the map kept the dead listener and the 30 s retry never ran: down until a restart.
+        if (!_stopping && ReferenceEquals(listener, Volatile.Read(ref _listener)))
+        {
+            _log.Warning($"[LiveMap] HTTP listener stopped accepting requests unexpectedly ({why}); binding the map port again.");
+            Interlocked.CompareExchange(ref _deadListener, listener, null);
         }
     }
 

@@ -16,6 +16,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 - One module that fails while taking a changed setting no longer stops the other modules from taking it. The failing one is logged once.
 - Discord notices: when Discord's rate limit answers (HTTP 429), the one retry now waits the time Discord asks for (at most 10 seconds) instead of asking again at once and dropping the notices. A webhook Discord says is gone (HTTP 401, 403 or 404, a deleted webhook or a wrong address) is no longer retried and is logged once, instead of a warning for every batch; nothing more is sent to it until `WebhookUrl` changes.
 - If a game update removes or renames one of the game methods ValheimOne's version check hooks, only the version check and the synced settings turn off. Nothing is left half-hooked, and the map, console, alerts, server-side modules and the config hot reload still start. Before, the rest of the startup after that point was skipped, the hot reload included.
+- The live map no longer stays down until a restart when its web listener stops while the server runs. It binds its port again on the next frame (and every 30 seconds while the port is taken), and the server log says why it stopped.
 
 ## [0.13.31] - 2026-11-09
 
