@@ -54,6 +54,10 @@ Twenty-six opt-in modules covering carry weight, stamina, food, drops, gathering
 
 Joins, leaves, deaths with their biome, raids, world saves and new days can be posted to a Discord webhook. A standalone A2S responder lets server browsers and monitoring tools see the server, including crossplay servers that do not answer A2S on their own. JSON status lives at `/api/status` and `/api/players`; see [query.md](https://github.com/HumanGenome/ValheimOne/blob/main/docs/query.md).
 
+### New world seed and save summary
+
+`NewWorldSeed` in `[Server]` gives a dedicated server's new world the seed you choose. It is used once, only when that world does not exist yet. After every save that works, the server writes `<world>.valheimone.json` beside the world with the day, the bosses defeated, who played and the versions.
+
 ### Higher per-player send limit
 
 Valheim lets the server have at most 10 KB of world updates on the way to each player, so a group playing close together gets updates in bursts and rubber-bands. ValheimOne raises that to 32 KB on Steam and crossplay alike, and lets Steam send up to 1 MB/s per player instead of a fixed 150 KB/s. It runs on the server only and is on by default; `Enabled = false` in `[Network]` turns it off. It turns itself off when Better Networking or another mod that changes the same limit is installed.
