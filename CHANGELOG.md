@@ -6,6 +6,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ### Changed
 
+- The shared map link no longer shows who placed a web pin or who used the admin tools. Visitors with the shared link can still add pins, and now change only the pins they made in the same browser. Pins made before this update can be changed from the admin view.
 - The public map no longer shows who placed a web pin. A pin placed from a hosting panel carries that panel's account name, which can be a login name or an email address. The shared link and the admin view still show it.
 - When the game declines a world save asked for through `/api/admin/save` (after a world that did not load correctly, after the `location` test command, which turns saving off until a restart, or on a zone or dungeon error), the server log now says which. The API answer is unchanged.
 - `/api/health` `activityLog` gains `writeFailingSinceUnixMs` and `writeError` (the kind of error, no path), set while writes to disk keep failing, and `vo health` says so.
@@ -16,9 +17,9 @@ All notable changes to ValheimOne will be documented in this file. This project 
 - One module that fails while taking a changed setting no longer stops the other modules from taking it. The failing one is logged once.
 - Discord notices: when Discord's rate limit answers (HTTP 429), the one retry now waits the time Discord asks for (at most 10 seconds) instead of asking again at once and dropping the notices. A webhook Discord says is gone (HTTP 401, 403 or 404, a deleted webhook or a wrong address) is no longer retried and is logged once, instead of a warning for every batch; nothing more is sent to it until `WebhookUrl` changes.
 - If a game update removes or renames one of the game methods ValheimOne's version check hooks, only the version check and the synced settings turn off. Nothing is left half-hooked, and the map, console, alerts, server-side modules and the config hot reload still start. Before, the rest of the startup after that point was skipped, the hot reload included.
-- The live map no longer stays down until a restart when its web listener stops while the server runs. It binds its port again on the next frame (and every 30 seconds while the port is taken), and the server log says why it stopped.
-- The server query responder (A2S) no longer keeps one processor core busy, and no longer stays down, when its network socket stops working while the server runs. It lets the socket go and binds a new one, at most every 30 seconds.
-- A dedicated server whose live map cannot start because the game never finished loading (for example when another mod breaks the start) now says so once in the server log after 3 minutes, naming what the map is still waiting for. Before, it waited without a word.
+- The live map comes back on its own if its web listener stops while the server runs. Before, it stayed down until the next restart.
+- The server query (A2S) lets a broken network socket go and opens a new one, instead of keeping a processor core busy and staying silent until a restart.
+- If the game never finishes loading (for example when another mod breaks the start), the server log says after 3 minutes what the live map is still waiting for.
 
 ## [0.13.31] - 2026-11-09
 
