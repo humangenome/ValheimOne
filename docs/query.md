@@ -163,7 +163,7 @@ The automatic port is the Valheim game port plus 4. Vanilla non-crossplay Valhei
 
 Both A2S_INFO and A2S_PLAYER use the standard S2C_CHALLENGE flow: the responder issues a challenge for the requesting client, the client repeats the request with that challenge, and the challenge expires after 30 seconds. Wrong challenges are re-challenged; malformed and oversized (over 1400 bytes) packets are dropped without throwing.
 
-The responder uses one background thread and serves an immutable status snapshot refreshed on the main thread every 2 seconds. If the UDP port cannot be bound, it logs one warning and retries every 30 seconds.
+The responder uses one background thread and serves an immutable status snapshot refreshed on the main thread every 2 seconds. If the UDP port cannot be bound, it logs one warning and retries every 30 seconds. A socket that stops working while the server runs is let go and opened again the same way.
 
 With `python-a2s`:
 
