@@ -282,6 +282,7 @@
     var LEGACY_MINIMAP_STORAGE_KEY = "vo-livemap-minimap";
     var MOTD_VERSION_STORAGE_KEY = "vo-livemap-motd-version";
     var WEB_PIN_AUTHOR_STORAGE_KEY = "webPinAuthor";
+    var WEB_PIN_EDITOR_STORAGE_KEY = "vo-livemap-pin-editor";
     var TAB_SESSION_KEY = "vo-livemap-active-tab";
     var CODEX_ROW_HEIGHT = 42;
     var CODEX_WINDOW_OVERSCAN = 8;
@@ -4173,6 +4174,52 @@
         return author;
     }
 
+    // The shared link's own pins (0.13.32): this browser's random key, made once and kept with the map's
+    // settings, goes with every shared-view pin read and write. The server keeps only its hash, marks the pins
+    // made with it "own" and lets this browser change only those. Without storage the key lasts this visit.
+    var webPinEditorKeyValue = "";
+
+    function webPinEditorKey() {
+        if (webPinEditorKeyValue) {
+            return webPinEditorKeyValue;
+        }
+        var stored = "";
+        try {
+            stored = String(window.localStorage.getItem(WEB_PIN_EDITOR_STORAGE_KEY) || "");
+        } catch (error) {
+            stored = "";
+        }
+        if (/^[0-9a-f]{32}$/.test(stored)) {
+            webPinEditorKeyValue = stored;
+            return stored;
+        }
+        try {
+            var bytes = new Uint8Array(16);
+            window.crypto.getRandomValues(bytes);
+            webPinEditorKeyValue = Array.prototype.map.call(bytes, function (value) {
+                return (value < 16 ? "0" : "") + value.toString(16);
+            }).join("");
+        } catch (error) {
+            return "";
+        }
+        try {
+            window.localStorage.setItem(WEB_PIN_EDITOR_STORAGE_KEY, webPinEditorKeyValue);
+        } catch (error) {
+            // this visit only
+        }
+        return webPinEditorKeyValue;
+    }
+
+    function addWebPinEditorHeader(headers) {
+        if (currentView === "shared") {
+            var key = webPinEditorKey();
+            if (key) {
+                headers["X-Pin-Editor"] = key;
+            }
+        }
+        return headers;
+    }
+
     function canCreateWebPin() {
         return webPinsAvailable &&
             (currentView === "admin" || (currentView === "shared" && webPinsSharedEditing));
@@ -4182,10 +4229,7 @@
         if (currentView === "admin") {
             return true;
         }
-        var author = storedWebPinAuthor();
-        return currentView !== "public" && webPinsSharedEditing && Boolean(author) &&
-            typeof pin.author === "string" &&
-            pin.author.toLocaleLowerCase() === author.toLocaleLowerCase();
+        return currentView === "shared" && webPinsSharedEditing && Boolean(pin) && pin.own === true;
     }
 
     function loadLayerSettings() {
@@ -8003,10 +8047,10 @@
 
     function webPinWriteOptions(method, body, author) {
         var options = {
-            headers: {
+            headers: addWebPinEditorHeader({
                 "Content-Type": "application/json",
                 "X-Operator": author
-            },
+            }),
             method: method
         };
         if (body !== null) {
@@ -15921,6 +15965,7 @@
             icon: icon,
             id: pin.id,
             label: typeof pin.label === "string" ? pin.label.trim() : "",
+            own: pin.own === true,
             updatedUnixMs: Number(pin.updatedUnixMs) || 0,
             x: Number(pin.x),
             z: Number(pin.z)
@@ -16084,7 +16129,11 @@
         var requestView = currentView;
         var wasAvailable = webPinsAvailable;
         try {
-            var payload = await fetchJson("api/webpins");
+            var readHeaders = addWebPinEditorHeader({});
+            var payload = await fetchJson(
+                "api/webpins",
+                Object.keys(readHeaders).length ? { headers: readHeaders } : undefined
+            );
             if (requestView !== currentView) {
                 recordPollSuccess("webpins");
                 webPinsFetchQueued = true;

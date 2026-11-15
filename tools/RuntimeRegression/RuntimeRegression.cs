@@ -159,6 +159,8 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestHandshakeFindsEveryMethodFirst();
             TestSaveSkipReason();
             TestDiscordRateLimitAndGoneWebhook();
+            TestWebPinEditorKeys();
+            TestSharedActivityFilter();
             TestNewWorldSeed();
             // Last: it edits valheimone.cfg on disk for the hot reload to pick up a frame later. A test after it that
             // sets any setting (NewWorldSeed clears itself) makes BepInEx rewrite the whole file from memory, which
@@ -1111,7 +1113,9 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         void SetField(string name, object? value) =>
             AccessTools.Field(typeof(LiveMapHttpServer), name).SetValue(server, value);
         object? GetField(string name) => AccessTools.Field(typeof(LiveMapHttpServer), name)?.GetValue(server);
-        var probe = new TcpListener(IPAddress.Loopback, 0);
+        // a port free on every address: a loopback-only probe once picked 10001 while something on this machine held it
+        // on another address, so the map fell back to 127.0.0.1 and the "every address" check below failed (11/15)
+        var probe = new TcpListener(IPAddress.Any, 0);
         probe.Start();
         int port = ((IPEndPoint)probe.LocalEndpoint).Port;
         probe.Stop();
@@ -2912,6 +2916,156 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         return reader.ReadToEnd();
     }
 
+    // 0.13.32: a shared-link editor changes only the pins made with its own browser key. The store keeps only the key's
+    // SHA-256, in webpins-editors.json; webpins.json keeps its exact old format (0.13.31 reads it after a downgrade);
+    // an admin pin and a pin from before 0.13.32 (no entry) change only from the admin view.
+    private void TestWebPinEditorKeys()
+    {
+        var log = new ModLogger(new BepInEx.Logging.ManualLogSource("regression-webpin-editors"));
+        string dir = Path.Combine(_root, "webpin-editors-test");
+        if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        Directory.CreateDirectory(dir);
+        string keyA = NewHex(16), keyB = NewHex(16);
+        string hashA = WebPinStore.EditorKeyHash(keyA) ?? "", hashB = WebPinStore.EditorKeyHash(keyB) ?? "";
+        Check(hashA.Length == 64 && hashA.All(c => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) && hashA != hashB,
+            "web pin editor key: 32 lowercase hex characters give a 64-character SHA-256");
+        Check(WebPinStore.EditorKeyHash(keyA.ToUpperInvariant()) == null && WebPinStore.EditorKeyHash(keyA.Substring(1)) == null &&
+              WebPinStore.EditorKeyHash(keyA + "0") == null && WebPinStore.EditorKeyHash("g" + keyA.Substring(1)) == null &&
+              WebPinStore.EditorKeyHash("") == null && WebPinStore.EditorKeyHash(null) == null,
+            "web pin editor key: anything but exactly 32 lowercase hex characters is no key");
+
+        string icon = WebPinStore.AllowedIcons[0];
+        string sharedId, adminId, oldId;
+        var store = new WebPinStore(dir, log);
+        try
+        {
+            bool made = store.TryCreate(1f, 2f, icon, "shared", "Viking", hashA, out WebPinEntry? shared, out string e1);
+            made &= store.TryCreate(3f, 4f, icon, "admin", "owner@example.com", null, out WebPinEntry? admin, out string e2);
+            made &= store.TryCreate(5f, 6f, icon, "old", "Viking", out WebPinEntry? old, out string e3);
+            Check(made && shared != null && admin != null && old != null,
+                "web pin editor key: a shared pin with a key, an admin pin and a keyless pin are made (" + e1 + e2 + e3 + ")");
+            sharedId = shared!.Id;
+            adminId = admin!.Id;
+            oldId = old!.Id;
+            store.Snapshot(hashA, out HashSet<string> ownA);
+            store.Snapshot(hashB, out HashSet<string> ownB);
+            store.Snapshot(null, out HashSet<string> ownNone);
+            Check(ownA.Count == 1 && ownA.Contains(sharedId) && ownB.Count == 0 && ownNone.Count == 0,
+                "web pin editor key: only the key a pin was made with owns it; another key and no key own nothing");
+            Check(!store.TryUpdate(sharedId, null, null, null, "b", null, hashB, false, out _, out string f1) && f1 == WebPinStore.ErrorForbidden &&
+                  !store.TryUpdate(sharedId, null, null, null, "none", null, null, false, out _, out string f2) && f2 == WebPinStore.ErrorForbidden &&
+                  !store.TryDelete(sharedId, hashB, false, out string f3) && f3 == WebPinStore.ErrorForbidden,
+                "web pin editor key: another key or no key cannot change or delete a shared pin");
+            Check(store.TryUpdate(sharedId, null, null, null, "mine", null, hashA, false, out WebPinEntry? changed, out _) && changed?.Label == "mine" &&
+                  changed.Author == "Viking",
+                "web pin editor key: the pin's own key changes it, and its author stays");
+            Check(!store.TryUpdate(adminId, null, null, null, "x", null, hashA, false, out _, out _) && !store.TryDelete(adminId, hashA, false, out _) &&
+                  !store.TryUpdate(oldId, null, null, null, "x", null, hashA, false, out _, out _) && !store.TryDelete(oldId, hashA, false, out _),
+                "web pin editor key: no key changes an admin pin or a pin without a key");
+            Check(store.TryUpdate(adminId, null, null, null, "admin2", null, null, true, out _, out _) &&
+                  store.TryUpdate(oldId, null, null, null, "old2", null, null, true, out _, out _) &&
+                  store.TryUpdate(sharedId, null, null, null, "mine2", null, null, true, out _, out _),
+                "web pin editor key: the admin view changes every pin");
+        }
+        finally
+        {
+            store.Dispose();
+        }
+
+        string pinsText = File.ReadAllText(Path.Combine(dir, "webpins.json"));
+        string editorsPath = Path.Combine(dir, WebPinStore.EditorsFileName);
+        string editorsText = File.Exists(editorsPath) ? File.ReadAllText(editorsPath) : "";
+        var oldShape = new System.Text.RegularExpressions.Regex(
+            "^\\{\"revision\":[0-9]+,\"pins\":\\[(\\{\"id\":\"[0-9a-f]{12}\",\"x\":[-0-9.eE+]+,\"z\":[-0-9.eE+]+,\"icon\":\"[a-z_]+\",\"label\":\"[^\"]*\",\"author\":\"[^\"]*\"," +
+            "\"checked\":(true|false),\"createdUnixMs\":[0-9]+,\"updatedUnixMs\":[0-9]+\\},?){3}\\]\\}$");
+        Check(oldShape.IsMatch(pinsText) && pinsText.IndexOf("\"own\"", StringComparison.Ordinal) < 0 && pinsText.IndexOf(hashA, StringComparison.Ordinal) < 0,
+            "web pin editor key: webpins.json keeps the 0.13.31 shape, field for field (" + pinsText.Length + " bytes)");
+        Check(editorsText == "{\"version\":1,\"editors\":{\"" + sharedId + "\":\"" + hashA + "\"}}" && editorsText.IndexOf(keyA, StringComparison.Ordinal) < 0,
+            "web pin editor key: the side file holds the shared pin's key hash only, never the key (" + editorsText + ")");
+
+        // a new run reads the keys back; a removed pin takes its entry with it
+        store = new WebPinStore(dir, log);
+        try
+        {
+            Check(store.IsEditor(sharedId, hashA) && !store.IsEditor(adminId, hashA) && !store.IsEditor(oldId, hashA),
+                "web pin editor key: after a restart the shared pin's key still owns it, and only it");
+            Check(store.TryDelete(sharedId, hashA, false, out _) && !store.IsEditor(sharedId, hashA), "web pin editor key: its own key deletes the shared pin");
+        }
+        finally
+        {
+            store.Dispose();
+        }
+
+        Check(File.ReadAllText(editorsPath) == "{\"version\":1,\"editors\":{}}", "web pin editor key: a deleted pin's entry leaves the side file");
+
+        // an entry for a pin that is gone is dropped; a side file that cannot be read costs no pin
+        File.WriteAllText(editorsPath, "{\"version\":1,\"editors\":{\"" + adminId + "\":\"" + hashA + "\",\"0123456789ab\":\"" + hashB + "\"}}");
+        store = new WebPinStore(dir, log);
+        try
+        {
+            Check(store.Count == 2 && store.IsEditor(adminId, hashA) && !store.IsEditor("0123456789ab", hashB),
+                "web pin editor key: an entry for a pin that is gone is dropped at load");
+        }
+        finally
+        {
+            store.Dispose();
+        }
+
+        File.WriteAllText(editorsPath, "{\"version\":1,\"editors\":{\"" + adminId + "\":\"" + hashA.ToUpperInvariant() + "\"}}");
+        store = new WebPinStore(dir, log);
+        try
+        {
+            Check(store.Count == 2 && !store.IsEditor(adminId, hashA) && !store.IsEditor(adminId, hashA.ToUpperInvariant()),
+                "web pin editor key: a side file it cannot read keeps every pin and gives no shared key any pin");
+        }
+        finally
+        {
+            store.Dispose();
+        }
+
+        // a server from before 0.13.32: webpins.json alone; its pins change from the admin view only
+        File.Delete(editorsPath);
+        store = new WebPinStore(dir, log);
+        try
+        {
+            store.Snapshot(hashA, out HashSet<string> none);
+            Check(store.Count == 2 && none.Count == 0 && !store.TryUpdate(oldId, null, null, null, "x", null, hashA, false, out _, out _) &&
+                  store.TryUpdate(oldId, null, null, null, "old3", null, null, true, out _, out _),
+                "web pin editor key: pins from before 0.13.32 load, and only the admin view changes them");
+        }
+        finally
+        {
+            store.Dispose();
+        }
+
+        Check(!File.Exists(editorsPath), "web pin editor key: a server with no shared-link pin gets no side file");
+        Directory.Delete(dir, true);
+    }
+
+    // 0.13.32: the shared link's activity feed leaves out admin entries (they name the operator) and the Steam ID of a join.
+    private void TestSharedActivityFilter()
+    {
+        Check(LiveMapHttpServer.ActivityHiddenFromSharedView("admin.action") && LiveMapHttpServer.ActivityHiddenFromSharedView("admin.command") &&
+              !LiveMapHttpServer.ActivityHiddenFromSharedView("player.join") && !LiveMapHttpServer.ActivityHiddenFromSharedView("world.save") &&
+              !LiveMapHttpServer.ActivityHiddenFromSharedView("chat"),
+            "shared activity: admin entries are left out, game events are kept");
+        const string join = "{\"name\":\"Odd \\\",\\\"steamId\\\":\\\"1\\\" Viking\",\"steamId\":\"76561190000012345\"}";
+        string shared = LiveMapHttpServer.ActivityDataForView("player.join", join, false);
+        Check(shared == "{\"name\":\"Odd \\\",\\\"steamId\\\":\\\"1\\\" Viking\"}" &&
+              LiveMapHttpServer.ActivityDataForView("player.join", join, true) == join,
+            "shared activity: a join loses only its Steam ID field (a name holding that text keeps it), the admin view keeps it (" + shared + ")");
+        Check(LiveMapHttpServer.ActivityDataForView("player.join", "{\"name\":\"Viking\"}", false) == "{\"name\":\"Viking\"}" &&
+              LiveMapHttpServer.ActivityDataForView("player.leave", "{\"name\":\"Viking\",\"sessionSeconds\":5}", false) == "{\"name\":\"Viking\",\"sessionSeconds\":5}",
+            "shared activity: a join without a Steam ID and other entries pass unchanged");
+    }
+
+    private static string NewHex(int bytes)
+    {
+        var data = new byte[bytes];
+        using (var random = System.Security.Cryptography.RandomNumberGenerator.Create()) random.GetBytes(data);
+        return string.Concat(data.Select(b => b.ToString("x2", System.Globalization.CultureInfo.InvariantCulture)));
+    }
+
     // 0.13.32: one module's settings-change handler that throws is logged once and the other modules still get the change.
     private void TestSettingsHandlerIsolation()
     {
@@ -3061,8 +3215,8 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         }
     }
 
-    // 0.13.32: the public view's web pins carry no author (from the host's panel it is the operator's login name);
-    // the admin and shared views keep it.
+    // 0.13.32: only the admin view's web pins carry an author (from the host's panel it is the operator's login name);
+    // the public map and the shared link get none.
     private void CheckLivePublicPinAuthor()
     {
         object? server = RunningHttpServer();
@@ -3092,16 +3246,405 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         {
             MethodInfo build = AccessTools.Method(type, "BuildWebPinsJson");
             Type level = AccessTools.Inner(type, "ViewLevel");
-            string View(string name) => (string)build.Invoke(server, new object[] { store, Enum.Parse(level, name) });
+            string View(string name) => (string)build.Invoke(server, new object?[] { store, Enum.Parse(level, name), null });
             string publicJson = View("Public");
             LiveResult(publicJson.Contains("\"label\":\"regression author pin\",\"author\":\"\"") && !publicJson.Contains(author),
                 "the public view's web pins carry no author");
-            LiveResult(View("Shared").Contains("\"author\":\"" + author + "\"") && View("Admin").Contains("\"author\":\"" + author + "\""),
-                "the shared and admin views keep the pin's author");
+            string sharedJson = View("Shared");
+            LiveResult(sharedJson.Contains("\"label\":\"regression author pin\",\"author\":\"\"") && !sharedJson.Contains(author),
+                "the shared link's web pins carry no author either");
+            LiveResult(View("Admin").Contains("\"author\":\"" + author + "\""), "the admin view keeps the pin's author");
         }
         finally
         {
             store.TryDelete(pin.Id, author, true, out _);
+        }
+    }
+
+    // 0.13.32: nothing the shared link or the public map gets names the person who acted from
+    // the admin side. Admin-side records are made here with a marker as X-Operator (the panel sends its account name
+    // there): a web pin, a chat shout, a save, a console command, a kick and a map ping. Then every shared-view route, the
+    // same as the public map (no token, the map opened to the public for this check) and about 12 s of both event streams
+    // must not hold the marker, its local part or its random part, in any case. The admin view must (or the check proves
+    // nothing). Then the shared link's own pins: only the browser key a pin was made with changes it.
+    private void CheckLiveSharedNames(string root, string token)
+    {
+        object? server = RunningHttpServer();
+        if (server == null)
+        {
+            LiveResult(false, "the running map server is readable for the shared-names check");
+            return;
+        }
+
+        Type type = server.GetType();
+        string shareToken = AccessTools.Property(type, "ShareToken").GetValue(server, null) as string ?? "";
+        if (shareToken.Length == 0 || token.Length == 0)
+        {
+            LiveResult(false, "the regression map has an admin and a share token for the shared-names check");
+            return;
+        }
+
+        string random = NewHex(6);
+        string local = "owner-marker-" + random;
+        string marker = local + "@example.com";
+        bool Leaks(string text) =>
+            text.IndexOf(random, StringComparison.OrdinalIgnoreCase) >= 0 ||
+            text.IndexOf(local, StringComparison.OrdinalIgnoreCase) >= 0 ||
+            text.IndexOf(marker, StringComparison.OrdinalIgnoreCase) >= 0;
+        var asOwner = new Dictionary<string, string> { ["X-Operator"] = marker };
+        FieldInfo publicViewField = AccessTools.Field(type, "_publicView");
+        bool publicViewBefore = (bool)publicViewField.GetValue(server);
+        var getStore = (Func<WebPinStore?>)AccessTools.Field(type, "_getWebPinStore").GetValue(server);
+        WebPinStore? store = getStore();
+        var sharedStream = new StreamCapture();
+        var publicStream = new StreamCapture();
+        var adminStream = new StreamCapture();
+        var cleanup = new List<string>();
+        try
+        {
+            if (store == null)
+            {
+                LiveResult(false, "the running map has a web pin store for the shared-names check");
+                return;
+            }
+
+            // the regression map is token-locked; for this check a token-free call is the public map
+            publicViewField.SetValue(server, true);
+            DateTime streamsOpened = DateTime.UtcNow;
+            sharedStream.Start(root, shareToken);
+            publicStream.Start(root, "");
+            adminStream.Start(root, token);
+            DateTime openUntil = DateTime.UtcNow.AddSeconds(10);
+            while (DateTime.UtcNow < openUntil &&
+                   !(sharedStream.Text.StartsWith("retry:", StringComparison.Ordinal) &&
+                     publicStream.Text.StartsWith("retry:", StringComparison.Ordinal) &&
+                     adminStream.Text.StartsWith("retry:", StringComparison.Ordinal)))
+            {
+                Thread.Sleep(100);
+            }
+
+            LiveResult(sharedStream.Text.StartsWith("retry:", StringComparison.Ordinal) && publicStream.Text.StartsWith("retry:", StringComparison.Ordinal) &&
+                       adminStream.Text.StartsWith("retry:", StringComparison.Ordinal),
+                "shared names: the shared, public and admin event streams are open before the admin records are made (" +
+                sharedStream.Error + publicStream.Error + adminStream.Error + "; " + sharedStream.Text.Length + "/" + publicStream.Text.Length + "/" +
+                adminStream.Text.Length + " bytes)");
+
+            string keyA = NewHex(16), keyB = NewHex(16);
+            string adminPin = PinWrite(root, token, "POST", "/api/webpins", "{\"x\":30,\"z\":40,\"icon\":\"pin\",\"label\":\"owner pin\"}",
+                new Dictionary<string, string> { ["X-Operator"] = marker, ["X-Pin-Editor"] = keyA }, out int pinCode);
+            string adminPinId = JsonString(adminPin, "id");
+            if (adminPinId.Length > 0) cleanup.Add(adminPinId);
+            HttpSend(root, token, "POST", "/api/admin/chat", "{\"text\":\"regression shout\"}", asOwner, 5000, out int chatCode);
+            HttpSend(root, token, "POST", "/api/admin/save?wait=60", "", asOwner, 90000, out int saveCode);
+            HttpSend(root, token, "POST", "/api/console/exec", "{\"command\":\"vo help\"}", asOwner, 10000, out int execCode);
+            HttpSend(root, token, "POST", "/api/admin/kick", "{\"player\":\"nobody-" + NewHex(4) + "\"}", asOwner, 10000, out int kickCode);
+            HttpSend(root, token, "POST", "/api/ping", "{\"x\":0,\"z\":0}", asOwner, 5000, out int pingCode);
+            // a join, for the Steam ID rule (no player can join this harness)
+            const long steamId = 76561190000012345L;
+            RunningActivityLog().RecordPlayerJoin("Regression Viking", steamId);
+            LiveResult(pinCode == 200 && adminPinId.Length > 0 && chatCode == 200 && saveCode == 200 && execCode == 200 && kickCode == 200 && pingCode == 200,
+                "shared names: admin records made with the marker as the operator (pin " + pinCode + ", shout " + chatCode + ", save " + saveCode +
+                ", console " + execCode + ", kick " + kickCode + ", ping " + pingCode + ")");
+
+            // the admin view names the operator: without this the checks below prove nothing
+            string adminPins = HttpSend(root, token, "GET", "/api/webpins", null, null, 5000, out _);
+            string adminActivity = HttpSend(root, token, "GET", "/api/activity", null, null, 5000, out _);
+            int adminActions = CountOccurrences(adminActivity, "\"type\":\"admin.action\"");
+            LiveResult(adminPins.Contains("\"author\":\"" + local) && adminActivity.Contains("\"operator\":\"" + marker + "\"") && adminActions >= 4 &&
+                       adminActivity.Contains("\"type\":\"admin.command\"") && adminActivity.Contains("\"steamId\":\"" + steamId + "\""),
+                "shared names: the admin view's pins and activity carry the marker (" + adminActions + " admin actions) and the join's Steam ID");
+
+            string firstDungeon = JsonString(HttpSend(root, token, "GET", "/api/dungeons", null, null, 10000, out _), "id");
+            string firstFrame = JsonNumber(HttpSend(root, token, "GET", "/api/timelapse", null, null, 10000, out _), "t");
+            var routes = new List<string>
+            {
+                "/", "/api/status", "/api/players", "/api/pois", "/api/pins", "/api/webpins", "/api/activity", "/api/chat",
+                "/api/heatmap", "/api/heatmap?window=7d", "/api/timelapse", "/api/timelapse/frame?t=" + (firstFrame.Length > 0 ? firstFrame : "0"),
+                "/api/leaderboard", "/api/dungeons", "/api/entities", "/api/regions", "/api/height?x=0&z=0", "/api/trail",
+                "/api/stats/objects", "/api/embed",
+            };
+            if (firstDungeon.Length > 0) routes.Add("/api/dungeons/" + Uri.EscapeDataString(firstDungeon));
+            foreach ((string view, string viewToken) in new[] { ("shared", shareToken), ("public", "") })
+            {
+                var leaked = new List<string>();
+                var codes = new List<string>();
+                foreach (string route in routes)
+                {
+                    string body = HttpSend(root, viewToken, "GET", route, null, null, 15000, out int code);
+                    codes.Add(route + " " + code);
+                    if (Leaks(body)) leaked.Add(route);
+                }
+
+                // the shared link's pin reads with a key, too
+                if (view == "shared")
+                {
+                    string keyed = HttpSend(root, viewToken, "GET", "/api/webpins", null, new Dictionary<string, string> { ["X-Pin-Editor"] = keyA }, 5000, out int keyedCode);
+                    codes.Add("/api/webpins (key) " + keyedCode);
+                    if (Leaks(keyed)) leaked.Add("/api/webpins (key)");
+                }
+
+                LiveResult(leaked.Count == 0, "shared names: no " + view + " answer holds the marker (" + string.Join(", ", codes) + ")" +
+                                              (leaked.Count > 0 ? " LEAKED IN " + string.Join(", ", leaked) : ""));
+            }
+
+            string sharedPins = HttpSend(root, shareToken, "GET", "/api/webpins", null, null, 5000, out int sharedPinsCode);
+            LiveResult(sharedPinsCode == 200 && sharedPins.Contains("\"label\":\"owner pin\",\"author\":\"\""), "shared names: the shared link sees the owner's pin, without an author");
+            string sharedActivity = HttpSend(root, shareToken, "GET", "/api/activity", null, null, 5000, out int sharedActivityCode);
+            LiveResult(sharedActivityCode == 200 && sharedActivity.IndexOf("\"type\":\"admin.", StringComparison.Ordinal) < 0 &&
+                       sharedActivity.Contains("\"type\":\"player.join\",\"data\":{\"name\":\"Regression Viking\"}") &&
+                       sharedActivity.IndexOf(steamId.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal) < 0,
+                "shared names: the shared link's activity has no admin entries and its join no Steam ID");
+            // the public view and the public webpins (served when PublicWebPins is on) are built the same way
+            MethodInfo build = AccessTools.Method(type, "BuildWebPinsJson");
+            object publicLevel = Enum.Parse(AccessTools.Inner(type, "ViewLevel"), "Public");
+            string publicPins = (string)build.Invoke(server, new object?[] { store, publicLevel, WebPinStore.EditorKeyHash(keyA) });
+            LiveResult(publicPins.Contains("\"label\":\"owner pin\",\"author\":\"\"") && !Leaks(publicPins) && !publicPins.Contains("\"own\":true"),
+                "shared names: the public map's web pins (PublicWebPins on) carry no author and own nothing");
+
+            // the shared link's own pins
+            CheckLiveSharedPinKeys(root, token, shareToken, store, keyA, keyB, adminPinId, marker, cleanup);
+
+            // about 12 s of the streams, every admin record and pin change above inside it
+            int wait = 12000 - (int)(DateTime.UtcNow - streamsOpened).TotalMilliseconds;
+            if (wait > 0) Thread.Sleep(wait);
+            sharedStream.Stop();
+            publicStream.Stop();
+            adminStream.Stop();
+            string sharedText = sharedStream.Text, publicText = publicStream.Text, adminText = adminStream.Text;
+            LiveResult(CountOccurrences(adminText, "\"type\":\"admin.action\"") >= 4 && adminText.Contains(marker),
+                "shared names: the admin event stream carried the admin actions with the marker (" + adminText.Length + " bytes)");
+            LiveResult(!Leaks(sharedText) && sharedText.Contains("event: webpins") && sharedText.Contains("event: activity") &&
+                       sharedText.Contains("Regression Viking") && sharedText.IndexOf("\"type\":\"admin.", StringComparison.Ordinal) < 0 &&
+                       sharedText.IndexOf(steamId.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal) < 0,
+                "shared names: " + (DateTime.UtcNow - streamsOpened).TotalSeconds.ToString("0") + " s of the shared event stream: pin changes and the join, " +
+                "no marker, no admin entry, no Steam ID (" + sharedText.Length + " bytes)");
+            LiveResult(!Leaks(publicText) && publicText.StartsWith("retry:", StringComparison.Ordinal) && publicText.IndexOf("event: activity", StringComparison.Ordinal) < 0,
+                "shared names: the public event stream holds no marker and no activity (" + publicText.Length + " bytes)");
+        }
+        catch (Exception exception)
+        {
+            LiveResult(false, "shared names: " + exception.GetType().Name + ": " + exception.Message);
+        }
+        finally
+        {
+            publicViewField.SetValue(server, publicViewBefore);
+            sharedStream.Stop();
+            publicStream.Stop();
+            adminStream.Stop();
+            foreach (string id in cleanup)
+            {
+                store?.TryDelete(id, null, true, out _);
+            }
+        }
+    }
+
+    private void CheckLiveSharedPinKeys(
+        string root,
+        string token,
+        string shareToken,
+        WebPinStore store,
+        string keyA,
+        string keyB,
+        string adminPinId,
+        string marker,
+        List<string> cleanup)
+    {
+        Dictionary<string, string> As(string? key, string name = "Shared Viking")
+        {
+            var headers = new Dictionary<string, string> { ["X-Operator"] = name };
+            if (key != null) headers["X-Pin-Editor"] = key;
+            return headers;
+        }
+
+        string Read(string? key) => HttpSend(root, shareToken, "GET", "/api/webpins", null, key == null ? null : As(key), 5000, out _);
+        string listed = Read(null);
+        if (!listed.Contains("\"sharedEditing\":true"))
+        {
+            LiveResult(false, "shared pin keys: the regression map has shared pin editing on (" + listed + ")");
+            return;
+        }
+
+        string created = PinWrite(root, shareToken, "POST", "/api/webpins",
+            "{\"x\":50,\"z\":60,\"icon\":\"pin\",\"label\":\"shared pin\",\"author\":\"Shared Viking\"}", As(keyA), out int createCode);
+        string id = JsonString(created, "id");
+        if (id.Length > 0) cleanup.Add(id);
+        LiveResult(createCode == 200 && id.Length > 0 && created.Contains("\"author\":\"\"") && created.Contains("\"own\":true"),
+            "shared pin keys: a shared pin made with key A answers own, without an author (HTTP " + createCode + ")");
+        LiveResult(PinOwn(Read(keyA), id) == "true" && PinOwn(Read(keyB), id) == "false" && PinOwn(Read(null), id) == "false",
+            "shared pin keys: key A reads its pin as own; key B and no key do not");
+        LiveResult(store.IsEditor(id, WebPinStore.EditorKeyHash(keyA)) && !store.IsEditor(id, WebPinStore.EditorKeyHash(keyB)),
+            "shared pin keys: the store keeps key A's hash on the pin");
+
+        PinWrite(root, shareToken, "PATCH", "/api/webpins/" + id, "{\"label\":\"by B\"}", As(keyB), out int patchB);
+        PinWrite(root, shareToken, "PATCH", "/api/webpins/" + id, "{\"label\":\"by nobody\"}", As(null), out int patchNone);
+        PinWrite(root, shareToken, "PATCH", "/api/webpins/" + id, "{\"label\":\"by A upper\"}", As(keyA.ToUpperInvariant()), out int patchUpper);
+        LiveResult(patchB == 403 && patchNone == 403 && patchUpper == 403,
+            "shared pin keys: key B, no key and key A in capitals cannot change it (" + patchB + ", " + patchNone + ", " + patchUpper + ")");
+        string patched = PinWrite(root, shareToken, "PATCH", "/api/webpins/" + id, "{\"label\":\"by A\"}", As(keyA), out int patchA);
+        LiveResult(patchA == 200 && patched.Contains("\"label\":\"by A\"") && patched.Contains("\"own\":true") && patched.Contains("\"author\":\"\""),
+            "shared pin keys: key A changes it (HTTP " + patchA + ")");
+
+        // the owner's pin (placed from the admin view, which sent key A too): never own, never changed from the shared link,
+        // also not by typing the owner's name (before 0.13.32 that name was the whole check)
+        PinWrite(root, shareToken, "PATCH", "/api/webpins/" + adminPinId, "{\"label\":\"hijack\"}", As(keyA), out int adminPatch);
+        PinWrite(root, shareToken, "DELETE", "/api/webpins/" + adminPinId, null, As(keyA), out int adminDelete);
+        PinWrite(root, shareToken, "PATCH", "/api/webpins/" + adminPinId, "{\"label\":\"hijack\"}", As(null, marker.Substring(0, 32)), out int adminByName);
+        LiveResult(PinOwn(Read(keyA), adminPinId) == "false" && !store.IsEditor(adminPinId, WebPinStore.EditorKeyHash(keyA)) &&
+                   adminPatch == 403 && adminDelete == 403 && adminByName == 403,
+            "shared pin keys: the admin pin is never own, and the shared link cannot change or delete it, by key or by the owner's name (" +
+            adminPatch + ", " + adminDelete + ", " + adminByName + ")");
+
+        // a pin from before 0.13.32 has no key: only the admin view changes it
+        if (store.TryCreate(70f, 80f, WebPinStore.AllowedIcons[0], "old pin", "Shared Viking", out WebPinEntry? old, out _) && old != null)
+        {
+            cleanup.Add(old.Id);
+            PinWrite(root, shareToken, "PATCH", "/api/webpins/" + old.Id, "{\"label\":\"x\"}", As(keyA), out int oldShared);
+            PinWrite(root, token, "PATCH", "/api/webpins/" + old.Id, "{\"label\":\"old by admin\"}", new Dictionary<string, string> { ["X-Operator"] = marker }, out int oldAdmin);
+            LiveResult(oldShared == 403 && oldAdmin == 200 && PinOwn(Read(keyA), old.Id) == "false",
+                "shared pin keys: a pin without a key changes from the admin view only (" + oldShared + ", " + oldAdmin + ")");
+        }
+        else
+        {
+            LiveResult(false, "shared pin keys: an old-style pin can be made");
+        }
+
+        PinWrite(root, shareToken, "DELETE", "/api/webpins/" + id, null, As(keyB), out int deleteB);
+        PinWrite(root, shareToken, "DELETE", "/api/webpins/" + id, null, As(null), out int deleteNone);
+        PinWrite(root, shareToken, "DELETE", "/api/webpins/" + id, null, As(keyA), out int deleteA);
+        LiveResult(deleteB == 403 && deleteNone == 403 && deleteA == 200 && PinOwn(Read(keyA), id) == null,
+            "shared pin keys: key B and no key cannot delete it; key A does (" + deleteB + ", " + deleteNone + ", " + deleteA + ")");
+    }
+
+    // web pin writes are limited to 5 a second from one address
+    private static string PinWrite(string root, string token, string method, string path, string? body, Dictionary<string, string>? headers, out int code)
+    {
+        Thread.Sleep(250);
+        return HttpSend(root, token, method, path, body, headers, 5000, out code);
+    }
+
+    private static string HttpSend(string root, string token, string method, string path, string? body, Dictionary<string, string>? headers, int timeoutMs, out int code)
+    {
+        var request = (HttpWebRequest)WebRequest.Create(root + path);
+        request.Method = method;
+        if (token.Length > 0) request.Headers["X-LiveMap-Token"] = token;
+        if (headers != null)
+        {
+            foreach (KeyValuePair<string, string> header in headers) request.Headers[header.Key] = header.Value;
+        }
+
+        request.Timeout = timeoutMs;
+        request.ReadWriteTimeout = timeoutMs;
+        request.KeepAlive = false;
+        // three event streams stay open meanwhile; .NET allows two connections to one host unless told otherwise
+        request.ServicePoint.ConnectionLimit = Math.Max(request.ServicePoint.ConnectionLimit, 16);
+        if (method != "GET")
+        {
+            byte[] bytes = System.Text.Encoding.UTF8.GetBytes(body ?? "");
+            request.ContentType = "application/json";
+            request.ContentLength = bytes.Length;
+            if (bytes.Length > 0)
+            {
+                using Stream stream = request.GetRequestStream();
+                stream.Write(bytes, 0, bytes.Length);
+            }
+        }
+
+        try
+        {
+            using var response = (HttpWebResponse)request.GetResponse();
+            code = (int)response.StatusCode;
+            using var reader = new StreamReader(response.GetResponseStream(), System.Text.Encoding.UTF8);
+            return reader.ReadToEnd();
+        }
+        catch (WebException exception) when (exception.Response is HttpWebResponse refused)
+        {
+            code = (int)refused.StatusCode;
+            using var reader = new StreamReader(refused.GetResponseStream(), System.Text.Encoding.UTF8);
+            string text = reader.ReadToEnd();
+            refused.Close();
+            return text;
+        }
+    }
+
+    private static string JsonString(string json, string name)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(json, "\"" + name + "\":\"([^\"]*)\"");
+        return match.Success ? match.Groups[1].Value : "";
+    }
+
+    private static string JsonNumber(string json, string name)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(json, "\"" + name + "\":([0-9]+)");
+        return match.Success ? match.Groups[1].Value : "";
+    }
+
+    // "true" / "false" for the pin with this id in a /api/webpins answer, null when it is not there
+    private static string? PinOwn(string json, string id)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(json, "\\{\"id\":\"" + id + "\"[^{}]*\"own\":(true|false)\\}");
+        return match.Success ? match.Groups[1].Value : null;
+    }
+
+    private static int CountOccurrences(string text, string value)
+    {
+        int count = 0;
+        for (int index = text.IndexOf(value, StringComparison.Ordinal); index >= 0; index = text.IndexOf(value, index + value.Length, StringComparison.Ordinal)) count++;
+        return count;
+    }
+
+    // one /api/events stream read on its own thread until Stop
+    private sealed class StreamCapture
+    {
+        private readonly System.Text.StringBuilder _text = new();
+        private volatile HttpWebRequest? _request;
+        private volatile bool _stopping;
+        private Thread? _thread;
+
+        public string Text
+        {
+            get { lock (_text) return _text.ToString(); }
+        }
+
+        public string Error { get; private set; } = "";
+
+        public void Start(string root, string token)
+        {
+            _thread = new Thread(() =>
+            {
+                try
+                {
+                    var request = (HttpWebRequest)WebRequest.Create(root + "/api/events");
+                    if (token.Length > 0) request.Headers["X-LiveMap-Token"] = token;
+                    request.Timeout = 10000;
+                    request.ReadWriteTimeout = 30000;
+                    request.KeepAlive = false;
+                    request.ServicePoint.ConnectionLimit = Math.Max(request.ServicePoint.ConnectionLimit, 16);
+                    _request = request;
+                    using var response = (HttpWebResponse)request.GetResponse();
+                    using Stream stream = response.GetResponseStream();
+                    var buffer = new byte[4096];
+                    int read;
+                    while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
+                    {
+                        // event text is ASCII JSON (the names here are ASCII too), so a split character cannot matter
+                        string chunk = System.Text.Encoding.UTF8.GetString(buffer, 0, read);
+                        lock (_text) _text.Append(chunk);
+                    }
+                }
+                catch (Exception exception)
+                {
+                    // Stop aborts the request; anything else is reported by the caller's check
+                    if (!_stopping) Error = exception.GetType().Name + ": " + exception.Message;
+                }
+            }) { IsBackground = true, Name = "vo-regression-stream" };
+            _thread.Start();
+        }
+
+        public void Stop()
+        {
+            _stopping = true;
+            try { _request?.Abort(); } catch (Exception) { }
+            _thread?.Join(5000);
         }
     }
 
@@ -3243,6 +3786,9 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             {
                 for (int i = 0; i < adminTaken; i++) slots.Release(EventStreamView.Admin);
             }
+
+            // last: it opens streams of its own, after the slot checks above have let every slot go
+            CheckLiveSharedNames(root, token);
         }
         catch (Exception exception)
         {

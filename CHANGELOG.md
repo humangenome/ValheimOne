@@ -4,9 +4,12 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+### Security
+
+- The shared link and the public map no longer show who placed a web pin, and the shared link's activity feed leaves out admin actions (kick, ban, chat, save, ping and console commands) and the Steam ID of a joining player. A pin or action from a hosting panel carries that panel's account name, which can be a login name or an email address; only the admin view shows it now. Shared-link visitors now change only the web pins they made from the same browser: the map keeps a random key in the browser and the server keeps only its hash, in `webpins-editors.json` beside `webpins.json` (whose format is unchanged, so an older ValheimOne still reads it). Before, a visitor was matched by the name they typed, so typing another person's name opened that person's pins. Pins made before this version, and pins placed from the admin view, are changed from the admin view only.
+
 ### Changed
 
-- The public map no longer shows who placed a web pin. A pin placed from a hosting panel carries that panel's account name, which can be a login name or an email address. The shared link and the admin view still show it.
 - When the game declines a world save asked for through `/api/admin/save` (after a world that did not load correctly, after the `location` test command, which turns saving off until a restart, or on a zone or dungeon error), the server log now says which. The API answer is unchanged.
 - `/api/health` `activityLog` gains `writeFailingSinceUnixMs` and `writeError` (the kind of error, no path), set while writes to disk keep failing, and `vo health` says so.
 
