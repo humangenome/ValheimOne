@@ -18,6 +18,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 - If a game update removes or renames one of the game methods ValheimOne's version check hooks, only the version check and the synced settings turn off. Nothing is left half-hooked, and the map, console, alerts, server-side modules and the config hot reload still start. Before, the rest of the startup after that point was skipped, the hot reload included.
 - The live map no longer stays down until a restart when its web listener stops while the server runs. It binds its port again on the next frame (and every 30 seconds while the port is taken), and the server log says why it stopped.
 - The server query responder (A2S) no longer keeps one processor core busy, and no longer stays down, when its network socket stops working while the server runs. It lets the socket go and binds a new one, at most every 30 seconds.
+- A dedicated server whose live map cannot start because the game never finished loading (for example when another mod breaks the start) now says so once in the server log after 3 minutes, naming what the map is still waiting for. Before, it waited without a word.
 
 ## [0.13.31] - 2026-11-09
 

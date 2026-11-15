@@ -132,6 +132,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestMapLoopbackFallbackRetry();
             TestMapListenerDeathRebinds();
             TestQueryResponderSocketDeath();
+            TestMapWaitingLine();
             TestValheimOneZeroData();
             TestDropsChestLoot();
             TestNetworkSendLimit();
@@ -1269,6 +1270,29 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         }
 
         Check(!responder.IsRunning, "query socket death: our own Stop ends the worker");
+    }
+
+    // The map says once what it still waits for when the game has not let it start after WaitingLogSeconds (0.13.32;
+    // ticket 769814: a server whose start another mod broke had the map on, its port never opened and nothing in the log).
+    private void TestMapWaitingLine()
+    {
+        Type behaviourType = typeof(ValheimOnePlugin).Assembly.GetType("ValheimOne.LiveMap.LiveMapBehaviour", true)!;
+        string Waiting(params bool[] ready) =>
+            (string)AccessTools.Method(behaviourType, "WaitingFor").Invoke(null, ready.Cast<object>().ToArray());
+        bool ShouldLog(float since, float now, bool logged) =>
+            (bool)AccessTools.Method(behaviourType, "ShouldLogWaiting").Invoke(null, new object[] { since, now, logged });
+        float wait = (float)AccessTools.Field(behaviourType, "WaitingLogSeconds").GetRawConstantValue();
+        Check(Waiting(true, true, true, true, true, true, true, true) == string.Empty, "map waiting: nothing missing names nothing");
+        Check(Waiting(false, false, false, false, false, false, false, false) == "ZNet, WorldGenerator, ZoneSystem, ObjectDB items, ZNetScene prefabs, the world",
+            "map waiting: before the game exists, the pieces are named in the game's own words");
+        Check(Waiting(true, true, true, true, true, true, false, true) == "generated locations", "map waiting: a world still generating its locations says so");
+        Check(Waiting(true, true, true, false, true, true, true, true) == "ObjectDB items", "map waiting: an empty item database says so");
+        Check(wait >= 60f && wait <= 600f, "map waiting: the line waits a few minutes, not seconds");
+        Check(!ShouldLog(-1f, 1000f, false), "map waiting: no line before the wait was first seen");
+        Check(!ShouldLog(10f, 10f + wait - 1f, false), "map waiting: no line before the wait is long enough");
+        Check(ShouldLog(10f, 10f + wait, false), "map waiting: one line once the wait is long enough");
+        Check(!ShouldLog(10f, 10f + (wait * 5f), true), "map waiting: never a second line");
+        Check(GameProcess.IsDedicatedServer, "map waiting: the harness is a dedicated server, so the line can show there and nowhere else");
     }
 
     private void TestRegionLabels()

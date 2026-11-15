@@ -59,6 +59,10 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
     private bool _startFailed;
     private bool _stopped;
     private bool _startAttempted;
+    // When the map first found the game not ready, and whether the one "still waiting" line went out (0.13.32).
+    private float _waitingSince = -1f;
+    private bool _waitingLogged;
+    internal const float WaitingLogSeconds = 180f;
     private int _attemptedPort;
     private string _attemptedBindIp = string.Empty;
     private int _attemptedTextureSize;
@@ -276,19 +280,22 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
         ZoneSystem? zoneSystem = ZoneSystem.instance;
         ObjectDB? objectDb = ObjectDB.instance;
         ZNetScene? netScene = ZNetScene.instance;
+        World? world = null;
         if (network == null || generator == null || zoneSystem == null ||
             objectDb == null || netScene == null ||
             objectDb.m_items.Count == 0 || netScene.m_prefabs.Count == 0 ||
-            !network.IsServer() || !zoneSystem.LocationsGenerated)
+            !network.IsServer() || !zoneSystem.LocationsGenerated ||
+            (world = GameAccess.GetWorld()) == null)
         {
+            NoteStillWaiting(log, WaitingFor(
+                network != null, generator != null, zoneSystem != null,
+                objectDb != null && objectDb.m_items.Count > 0, netScene != null && netScene.m_prefabs.Count > 0,
+                network != null && network.IsServer(), zoneSystem != null && zoneSystem.LocationsGenerated, world != null));
             return;
         }
 
-        World? world = GameAccess.GetWorld();
-        if (world == null)
-        {
-            return;
-        }
+        _waitingSince = -1f;
+        _waitingLogged = false;
 
         // Everything below runs once. A vanilla member that does not resolve on this
         // game build used to throw out of Update every frame (thousands of log lines a
@@ -307,6 +314,51 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
                 "server restarts or the [LiveMap] section is toggled; every other feature is " +
                 $"unaffected. {exception.GetType().Name}: {exception.Message}");
         }
+    }
+
+    // What the map still waits for before it can start, in the game's own names; empty when everything is there.
+    internal static string WaitingFor(bool network, bool generator, bool zoneSystem, bool items, bool prefabs, bool isServer, bool locations, bool world)
+    {
+        var missing = new List<string>();
+        if (!network) { missing.Add("ZNet"); }
+        if (!generator) { missing.Add("WorldGenerator"); }
+        if (!zoneSystem) { missing.Add("ZoneSystem"); }
+        if (!items) { missing.Add("ObjectDB items"); }
+        if (!prefabs) { missing.Add("ZNetScene prefabs"); }
+        if (network && !isServer) { missing.Add("a dedicated server (ZNet.IsServer)"); }
+        if (zoneSystem && !locations) { missing.Add("generated locations"); }
+        if (!world) { missing.Add("the world"); }
+        return string.Join(", ", missing.ToArray());
+    }
+
+    // Until 0.13.32 the map waited for the game without a word, so a server whose start was broken by another mod (ticket
+    // 769814: the map on, its port never opened) left nothing in the log to say why. Now, once, after WaitingLogSeconds.
+    internal static bool ShouldLogWaiting(float waitingSince, float now, bool alreadyLogged) =>
+        !alreadyLogged && waitingSince >= 0f && now - waitingSince >= WaitingLogSeconds;
+
+    private void NoteStillWaiting(ModLogger log, string missing)
+    {
+        // a player's own game waits forever on purpose (synced settings can say Enabled there): never a line there
+        if (!GameProcess.IsDedicatedServer)
+        {
+            return;
+        }
+
+        float now = Time.realtimeSinceStartup;
+        if (_waitingSince < 0f)
+        {
+            _waitingSince = now;
+            return;
+        }
+
+        if (!ShouldLogWaiting(_waitingSince, now, _waitingLogged))
+        {
+            return;
+        }
+
+        _waitingLogged = true;
+        log.Warning($"[LiveMap] the map has waited {WaitingLogSeconds:0} seconds for the game and has not started; still missing: " +
+            (missing.Length > 0 ? missing : "nothing it checks (it starts on the next frame)") + ".");
     }
 
     private void StartServices(
