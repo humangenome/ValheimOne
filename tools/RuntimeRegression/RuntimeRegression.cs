@@ -131,6 +131,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestMapBindRetry();
             TestMapLoopbackFallbackRetry();
             TestMapListenerDeathRebinds();
+            TestQueryResponderSocketDeath();
             TestValheimOneZeroData();
             TestDropsChestLoot();
             TestNetworkSendLimit();
@@ -1202,6 +1203,72 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         {
             server.Stop();
         }
+    }
+
+    // The A2S responder gives up a socket that died under it instead of spinning on it (0.13.32). Until then a disposed
+    // socket threw at once on every read and the loop went round again: one core busy until the server stopped, and the
+    // responder never came back. Real UDP socket on its own port; the death is the socket closed under its thread.
+    private void TestQueryResponderSocketDeath()
+    {
+        Type behaviourType = typeof(ValheimOnePlugin).Assembly.GetType("ValheimOne.LiveMap.LiveMapBehaviour", true)!;
+        object? behaviour = AccessTools.Property(behaviourType, "Instance").GetValue(null, null);
+        var log = (ModLogger)AccessTools.Field(behaviourType, "_log").GetValue(behaviour)!;
+        int port;
+        using (var probe = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0)))
+        {
+            port = ((IPEndPoint)probe.Client.LocalEndPoint).Port;
+        }
+
+        var responder = new ValheimOne.Query.QueryResponder(port, () => ValheimOne.Query.QuerySnapshot.Empty, log);
+        bool Answers()
+        {
+            using var client = new UdpClient();
+            client.Client.ReceiveTimeout = 1000;
+            byte[] request = new byte[] { 0xff, 0xff, 0xff, 0xff, 0x54 }
+                .Concat(System.Text.Encoding.ASCII.GetBytes("Source Engine Query\0")).ToArray();
+            try
+            {
+                client.Send(request, request.Length, new IPEndPoint(IPAddress.Loopback, port));
+                var from = new IPEndPoint(IPAddress.Any, 0);
+                return client.Receive(ref from).Length > 4;
+            }
+            catch (SocketException)
+            {
+                return false;
+            }
+        }
+
+        bool WaitFor(Func<bool> condition)
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (!condition())
+            {
+                if (clock.ElapsedMilliseconds > 3000)
+                {
+                    return false;
+                }
+
+                Thread.Sleep(25);
+            }
+
+            return true;
+        }
+
+        try
+        {
+            Check(responder.Start() && responder.IsRunning && Answers(), "query socket death: the responder answers an A2S info request");
+            Check(ValheimOne.Query.QueryResponder.MaximumFailuresInARow >= 10, "query socket death: one stray failure never gives the socket up");
+            var socket = (UdpClient)AccessTools.Field(typeof(ValheimOne.Query.QueryResponder), "_socket").GetValue(responder)!;
+            socket.Close();
+            Check(WaitFor(() => !responder.IsRunning), "query socket death: the worker ends instead of spinning on a closed socket");
+            Check(responder.Start() && responder.IsRunning && Answers(), "query socket death: a new socket answers again");
+        }
+        finally
+        {
+            responder.Stop();
+        }
+
+        Check(!responder.IsRunning, "query socket death: our own Stop ends the worker");
     }
 
     private void TestRegionLabels()

@@ -116,10 +116,10 @@ internal sealed class QueryBehaviour : MonoBehaviour
 
         if (!_responder.IsRunning && now >= _nextStartAttempt)
         {
-            if (!_responder.Start())
-            {
-                _nextStartAttempt = now + BindRetrySeconds;
-            }
+            // also after a start that worked (0.13.32): a worker that gives its socket up is bound again at most every
+            // BindRetrySeconds, never once a frame
+            _responder.Start();
+            _nextStartAttempt = now + BindRetrySeconds;
         }
     }
 

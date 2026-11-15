@@ -102,38 +102,61 @@ internal sealed class QueryResponder
         }
     }
 
+    // Failed reads in a row after which the worker gives the socket up: the behaviour then binds a new one (at most every
+    // 30 s). One bad datagram or a Windows "connection reset" (an ICMP reply to an earlier send) is a single failure.
+    internal const int MaximumFailuresInARow = 100;
+
     private void Listen(UdpClient socket)
     {
+        int failuresInARow = 0;
         while (!_stopping)
         {
             try
             {
                 var remoteEndpoint = new IPEndPoint(IPAddress.Any, 0);
                 byte[] datagram = socket.Receive(ref remoteEndpoint);
+                failuresInARow = 0;
                 HandleDatagram(socket, remoteEndpoint, datagram);
             }
             catch (ObjectDisposedException)
             {
+                // Until 0.13.32 the loop went round again on a disposed socket, which throws at once every time: one core
+                // spun until the server stopped and the responder never came back. Our own Stop sets _stopping first.
                 if (!_stopping)
                 {
-                    LogWorkerFailure("UDP socket was disposed unexpectedly.");
+                    LogWorkerFailure("UDP socket was disposed unexpectedly; binding a new one.");
                 }
+
+                break;
             }
             catch (SocketException exception)
             {
-                if (!_stopping)
+                if (!_stopping && GiveUpAfterFailure($"SocketException: {exception.Message}", ref failuresInARow))
                 {
-                    LogWorkerFailure($"SocketException: {exception.Message}");
+                    break;
                 }
             }
             catch (Exception exception)
             {
-                if (!_stopping)
+                if (!_stopping && GiveUpAfterFailure($"{exception.GetType().Name}: {exception.Message}", ref failuresInARow))
                 {
-                    LogWorkerFailure($"{exception.GetType().Name}: {exception.Message}");
+                    break;
                 }
             }
         }
+    }
+
+    private bool GiveUpAfterFailure(string message, ref int failuresInARow)
+    {
+        LogWorkerFailure(message);
+        failuresInARow++;
+        if (failuresInARow < MaximumFailuresInARow)
+        {
+            return false;
+        }
+
+        _log.Warning($"[Query] A2S responder: {MaximumFailuresInARow} failed reads in a row on UDP {_port}; binding a new socket.");
+        return true;
     }
 
     private void HandleDatagram(UdpClient socket, IPEndPoint remoteEndpoint, byte[] datagram)
