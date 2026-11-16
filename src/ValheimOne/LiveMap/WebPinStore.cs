@@ -67,6 +67,14 @@ public sealed class WebPinStore : IDisposable
     private const int PersistedFileMaximumBytes = 1024 * 1024;
     private const int WriteDebounceMilliseconds = 1000;
     private const int ShutdownFlushMilliseconds = 2000;
+    private const int EditorKeyHashLength = 64;
+
+    // Who may change a pin from the shared link (0.13.32): the page there makes a random key once per browser and
+    // sends it with its pin calls; the store keeps only the key's SHA-256 per pin, in this file beside webpins.json.
+    // webpins.json keeps its exact old format, so ValheimOne 0.13.31 still reads every pin after a downgrade (its
+    // reader takes no unknown field). A pin without an entry here (placed from the admin view, or before 0.13.32)
+    // changes only from the admin view.
+    internal const string EditorsFileName = "webpins-editors.json";
 
     private static readonly string[] AllowedIconNames =
     {
@@ -102,8 +110,11 @@ public sealed class WebPinStore : IDisposable
         new Dictionary<string, WebPinEntry>(StringComparer.OrdinalIgnoreCase);
     private readonly AutoResetEvent _writeSignal = new AutoResetEvent(false);
     private readonly ManualResetEvent _stopSignal = new ManualResetEvent(false);
+    private readonly Dictionary<string, string> _editors =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     private readonly RandomNumberGenerator _random = RandomNumberGenerator.Create();
     private readonly string _path;
+    private readonly string _editorsPath;
     private readonly ModLogger _log;
     private readonly Thread _writerThread;
     private long _revision;
@@ -120,7 +131,9 @@ public sealed class WebPinStore : IDisposable
 
         _log = log ?? throw new ArgumentNullException(nameof(log));
         _path = Path.Combine(dataDirectory, "webpins.json");
+        _editorsPath = Path.Combine(dataDirectory, EditorsFileName);
         Load();
+        LoadEditors();
 
         _writerThread = new Thread(RunWriter)
         {
@@ -170,6 +183,21 @@ public sealed class WebPinStore : IDisposable
         string icon,
         string label,
         string author,
+        out WebPinEntry? pin,
+        out string error)
+    {
+        return TryCreate(x, z, icon, label, author, null, out pin, out error);
+    }
+
+    // editorKeyHash: the shared-link caller's key hash (EditorKeyHash), or null for an admin pin, which no shared
+    // caller can ever change.
+    public bool TryCreate(
+        float x,
+        float z,
+        string icon,
+        string label,
+        string author,
+        string? editorKeyHash,
         out WebPinEntry? pin,
         out string error)
     {
@@ -226,6 +254,11 @@ public sealed class WebPinStore : IDisposable
                 nowUnixMs,
                 nowUnixMs);
             _pins.Add(pin.Id, pin);
+            if (IsEditorKeyHash(editorKeyHash))
+            {
+                _editors[pin.Id] = editorKeyHash!;
+            }
+
             MarkMutationLocked();
             return true;
         }
@@ -238,7 +271,7 @@ public sealed class WebPinStore : IDisposable
         string? icon,
         string? label,
         bool? isChecked,
-        string requesterAuthor,
+        string? editorKeyHash,
         bool isAdmin,
         out WebPinEntry? pin,
         out string error)
@@ -259,10 +292,7 @@ public sealed class WebPinStore : IDisposable
                 return false;
             }
 
-            if (!isAdmin && !string.Equals(
-                    existing.Author,
-                    requesterAuthor,
-                    StringComparison.OrdinalIgnoreCase))
+            if (!isAdmin && !IsEditorLocked(existing.Id, editorKeyHash))
             {
                 error = ErrorForbidden;
                 return false;
@@ -316,7 +346,7 @@ public sealed class WebPinStore : IDisposable
 
     public bool TryDelete(
         string id,
-        string requesterAuthor,
+        string? editorKeyHash,
         bool isAdmin,
         out string error)
     {
@@ -335,16 +365,14 @@ public sealed class WebPinStore : IDisposable
                 return false;
             }
 
-            if (!isAdmin && !string.Equals(
-                    existing.Author,
-                    requesterAuthor,
-                    StringComparison.OrdinalIgnoreCase))
+            if (!isAdmin && !IsEditorLocked(existing.Id, editorKeyHash))
             {
                 error = ErrorForbidden;
                 return false;
             }
 
             _pins.Remove(existing.Id);
+            _editors.Remove(existing.Id);
             MarkMutationLocked();
             return true;
         }
@@ -359,6 +387,71 @@ public sealed class WebPinStore : IDisposable
             Array.Sort(snapshot, ComparePins);
             return snapshot;
         }
+    }
+
+    // The pins and, in the same moment, which of them the caller with this key hash may change (empty for no key).
+    public WebPinEntry[] Snapshot(string? editorKeyHash, out HashSet<string> editable)
+    {
+        lock (_lock)
+        {
+            editable = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            WebPinEntry[] snapshot = new WebPinEntry[_pins.Count];
+            _pins.Values.CopyTo(snapshot, 0);
+            Array.Sort(snapshot, ComparePins);
+            if (IsEditorKeyHash(editorKeyHash))
+            {
+                for (int index = 0; index < snapshot.Length; index++)
+                {
+                    if (IsEditorLocked(snapshot[index].Id, editorKeyHash))
+                    {
+                        editable.Add(snapshot[index].Id);
+                    }
+                }
+            }
+
+            return snapshot;
+        }
+    }
+
+    public bool IsEditor(string id, string? editorKeyHash)
+    {
+        lock (_lock)
+        {
+            return IsEditorLocked(id ?? string.Empty, editorKeyHash);
+        }
+    }
+
+    // The hash the store keeps for a shared-link editor key: exactly 32 lowercase hex characters (the page's random
+    // 128 bits), else null, which can change no pin.
+    public static string? EditorKeyHash(string? key)
+    {
+        if (key == null || key.Length != 32)
+        {
+            return null;
+        }
+
+        for (int index = 0; index < key.Length; index++)
+        {
+            char character = key[index];
+            if ((character < '0' || character > '9') && (character < 'a' || character > 'f'))
+            {
+                return null;
+            }
+        }
+
+        byte[] digest;
+        using (SHA256 sha = SHA256.Create())
+        {
+            digest = sha.ComputeHash(Encoding.ASCII.GetBytes(key));
+        }
+
+        var hex = new StringBuilder(EditorKeyHashLength);
+        for (int index = 0; index < digest.Length; index++)
+        {
+            hex.Append(digest[index].ToString("x2", CultureInfo.InvariantCulture));
+        }
+
+        return hex.ToString();
     }
 
     public void Dispose()
@@ -425,6 +518,41 @@ public sealed class WebPinStore : IDisposable
         }
     }
 
+    // Entries for pins that are gone (deleted while an older ValheimOne ran, say) are dropped. A file that cannot be
+    // read costs no pin: the shared link just cannot change any until a new pin is made there.
+    private void LoadEditors()
+    {
+        if (!File.Exists(_editorsPath))
+        {
+            return;
+        }
+
+        try
+        {
+            if (new FileInfo(_editorsPath).Length > PersistedFileMaximumBytes)
+            {
+                throw new FormatException("Web-pin editor JSON is too large.");
+            }
+
+            Dictionary<string, string> loaded =
+                EditorJsonParser.Parse(File.ReadAllText(_editorsPath, Encoding.UTF8));
+            foreach (KeyValuePair<string, string> entry in loaded)
+            {
+                if (_pins.ContainsKey(entry.Key))
+                {
+                    _editors[entry.Key] = entry.Value;
+                }
+            }
+        }
+        catch (Exception exception)
+        {
+            _editors.Clear();
+            _log.Warning(
+                $"[LiveMap] web pin editor keys could not be loaded ({exception.GetType().Name}); " +
+                "pins made from the shared link can be changed from the admin view only.");
+        }
+    }
+
     private void RunWriter()
     {
         WaitHandle[] signals = { _writeSignal, _stopSignal };
@@ -481,11 +609,14 @@ public sealed class WebPinStore : IDisposable
     {
         WebPinEntry[] snapshot;
         long revision;
+        KeyValuePair<string, string>[] editors;
         lock (_lock)
         {
             snapshot = new WebPinEntry[_pins.Count];
             _pins.Values.CopyTo(snapshot, 0);
             revision = _revision;
+            editors = new KeyValuePair<string, string>[_editors.Count];
+            ((ICollection<KeyValuePair<string, string>>)_editors).CopyTo(editors, 0);
         }
 
         Array.Sort(snapshot, ComparePins);
@@ -518,19 +649,91 @@ public sealed class WebPinStore : IDisposable
 
         json.Append("]}");
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-        string temporaryPath = _path + ".tmp";
+        WriteAtomically(_path, json.ToString());
+
+        // After the pins: a stop between the two writes leaves a new pin without its key (admin view only) or a key
+        // for a pin that is gone (dropped at the next load), never a key on someone else's pin. A server that never
+        // had a shared-link pin gets no file.
+        if (editors.Length == 0 && !File.Exists(_editorsPath))
+        {
+            return;
+        }
+
+        Array.Sort(editors, (left, right) => string.CompareOrdinal(left.Key, right.Key));
+        var editorJson = new StringBuilder(32 + (editors.Length * 88));
+        editorJson.Append("{\"version\":1,\"editors\":{");
+        for (int index = 0; index < editors.Length; index++)
+        {
+            if (index > 0)
+            {
+                editorJson.Append(',');
+            }
+
+            editorJson.Append(JsonWriter.Quote(editors[index].Key)).Append(':')
+                .Append(JsonWriter.Quote(editors[index].Value));
+        }
+
+        editorJson.Append("}}");
+        WriteAtomically(_editorsPath, editorJson.ToString());
+    }
+
+    private static void WriteAtomically(string path, string text)
+    {
+        string temporaryPath = path + ".tmp";
         File.WriteAllText(
             temporaryPath,
-            json.ToString(),
+            text,
             new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-        if (File.Exists(_path))
+        if (File.Exists(path))
         {
-            File.Replace(temporaryPath, _path, null);
+            File.Replace(temporaryPath, path, null);
         }
         else
         {
-            File.Move(temporaryPath, _path);
+            File.Move(temporaryPath, path);
         }
+    }
+
+    private bool IsEditorLocked(string id, string? editorKeyHash)
+    {
+        return IsEditorKeyHash(editorKeyHash) &&
+               _editors.TryGetValue(id, out string? stored) &&
+               FixedTimeEquals(stored, editorKeyHash!);
+    }
+
+    private static bool IsEditorKeyHash(string? value)
+    {
+        if (value == null || value.Length != EditorKeyHashLength)
+        {
+            return false;
+        }
+
+        for (int index = 0; index < value.Length; index++)
+        {
+            char character = value[index];
+            if ((character < '0' || character > '9') && (character < 'a' || character > 'f'))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool FixedTimeEquals(string left, string right)
+    {
+        if (left.Length != right.Length)
+        {
+            return false;
+        }
+
+        int difference = 0;
+        for (int index = 0; index < left.Length; index++)
+        {
+            difference |= left[index] ^ right[index];
+        }
+
+        return difference == 0;
     }
 
     private void MarkMutationLocked()
@@ -580,6 +783,7 @@ public sealed class WebPinStore : IDisposable
         if (oldest != null)
         {
             _pins.Remove(oldest.Id);
+            _editors.Remove(oldest.Id);
         }
     }
 
@@ -1042,6 +1246,118 @@ public sealed class WebPinStore : IDisposable
                 {
                     throw new FormatException("Web-pin JSON contains trailing data.");
                 }
+            }
+        }
+    }
+
+    // webpins-editors.json: {"version":1,"editors":{"<pin id>":"<sha256 hex>",...}}. Ids and hashes are plain hex, so
+    // nothing in it is escaped; anything else is refused.
+    private static class EditorJsonParser
+    {
+        public static Dictionary<string, string> Parse(string json)
+        {
+            var editors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            int index = 0;
+            Expect(json, ref index, '{');
+            ExpectHexString(json, ref index, "version");
+            Expect(json, ref index, ':');
+            Expect(json, ref index, '1');
+            Expect(json, ref index, ',');
+            ExpectHexString(json, ref index, "editors");
+            Expect(json, ref index, ':');
+            Expect(json, ref index, '{');
+            if (!TryConsume(json, ref index, '}'))
+            {
+                while (true)
+                {
+                    string id = ReadHexString(json, ref index);
+                    Expect(json, ref index, ':');
+                    string hash = ReadHexString(json, ref index);
+                    if (!IsValidId(id) || !IsEditorKeyHash(hash) || editors.ContainsKey(id) ||
+                        editors.Count >= MaximumPins)
+                    {
+                        throw new FormatException("Web-pin editor JSON contains an invalid entry.");
+                    }
+
+                    editors.Add(id, hash);
+                    if (TryConsume(json, ref index, '}'))
+                    {
+                        break;
+                    }
+
+                    Expect(json, ref index, ',');
+                }
+            }
+
+            Expect(json, ref index, '}');
+            SkipWhitespace(json, ref index);
+            if (index != json.Length)
+            {
+                throw new FormatException("Web-pin editor JSON contains trailing data.");
+            }
+
+            return editors;
+        }
+
+        private static void ExpectHexString(string json, ref int index, string expected)
+        {
+            if (!string.Equals(ReadHexString(json, ref index), expected, StringComparison.Ordinal))
+            {
+                throw new FormatException("Web-pin editor JSON has an unexpected property.");
+            }
+        }
+
+        // a quoted run of letters and digits only (the two property names, the ids, the hashes)
+        private static string ReadHexString(string json, ref int index)
+        {
+            Expect(json, ref index, '"');
+            int start = index;
+            while (index < json.Length && json[index] != '"')
+            {
+                char character = json[index];
+                if (!((character >= '0' && character <= '9') || (character >= 'a' && character <= 'z')))
+                {
+                    throw new FormatException("Web-pin editor JSON contains an unexpected character.");
+                }
+
+                index++;
+            }
+
+            if (index >= json.Length || index - start > EditorKeyHashLength)
+            {
+                throw new FormatException("Web-pin editor JSON is malformed.");
+            }
+
+            string value = json.Substring(start, index - start);
+            index++;
+            return value;
+        }
+
+        private static void Expect(string json, ref int index, char expected)
+        {
+            if (!TryConsume(json, ref index, expected))
+            {
+                throw new FormatException("Web-pin editor JSON is malformed.");
+            }
+        }
+
+        private static bool TryConsume(string json, ref int index, char expected)
+        {
+            SkipWhitespace(json, ref index);
+            if (index < json.Length && json[index] == expected)
+            {
+                index++;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static void SkipWhitespace(string json, ref int index)
+        {
+            while (index < json.Length && char.IsWhiteSpace(json[index]))
+            {
+                index++;
             }
         }
     }

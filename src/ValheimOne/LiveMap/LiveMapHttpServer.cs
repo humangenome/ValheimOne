@@ -659,7 +659,7 @@ internal sealed class LiveMapHttpServer
             }
             else if (isGet && path == "/api/webpins")
             {
-                ServeWebPins(response, viewLevel);
+                ServeWebPins(request, response, viewLevel);
             }
             else if (isPost && path == "/api/webpins")
             {
@@ -1475,14 +1475,17 @@ internal sealed class LiveMapHttpServer
                         activityCursor,
                         EventStreamActivityBatchSize,
                         pendingActivity,
+                        viewLevel,
                         out long nextActivityCursor,
                         out int activityCount);
                     if (activityCount > 0)
                     {
                         WriteEventStreamEvent(output, "activity", activityJson);
-                        activityCursor = nextActivityCursor;
                         sentEvent = true;
                     }
+
+                    // past entries the shared link does not get too, so they are not read again every tick
+                    activityCursor = nextActivityCursor;
                 }
 
                 if (sendLogs)
@@ -1695,23 +1698,59 @@ internal sealed class LiveMapHttpServer
             cursor,
             EventStreamActivityBatchSize,
             entries,
+            viewLevel,
             out _,
             out _);
         WriteJson(response, HttpStatusCode.OK, json);
+    }
+
+    // The shared link gets no admin entries (0.13.32): admin.command and admin.action carry the operator, the panel
+    // account or staff member who acted (X-Operator), and their targets and reasons can name people too. The map's
+    // own feed never showed them. A join there also loses its Steam ID: the shared view carries no platform IDs.
+    internal static bool ActivityHiddenFromSharedView(string type)
+    {
+        return type.StartsWith("admin.", StringComparison.Ordinal);
+    }
+
+    internal static string ActivityDataForView(string type, string dataJson, bool admin)
+    {
+        const string steamIdField = ",\"steamId\":\"";
+        if (admin || !string.Equals(type, "player.join", StringComparison.Ordinal))
+        {
+            return dataJson;
+        }
+
+        // the join's data is {"name":"...","steamId":"<digits>"}; a quote inside the name is escaped, so this
+        // sequence only ever starts the field itself
+        int start = dataJson.IndexOf(steamIdField, StringComparison.Ordinal);
+        if (start < 0)
+        {
+            return dataJson;
+        }
+
+        int end = dataJson.IndexOf('"', start + steamIdField.Length);
+        return end < 0 ? dataJson : dataJson.Remove(start, end + 1 - start);
     }
 
     private string BuildActivityJson(
         long cursor,
         int maximum,
         List<ActivityFeedEntry> entries,
+        ViewLevel viewLevel,
         out long latestCursor,
         out int eventCount)
     {
         bool enabled = _activityLog.ActivityFeedEnabled;
+        bool admin = viewLevel == ViewLevel.Admin;
         entries.Clear();
         latestCursor = enabled
             ? _activityLog.CopyActivityAfter(cursor, maximum, entries)
             : _activityLog.LatestActivityCursor;
+        if (!admin)
+        {
+            entries.RemoveAll(entry => ActivityHiddenFromSharedView(entry.Type));
+        }
+
         eventCount = entries.Count;
 
         var json = new StringBuilder(48 + (entries.Count * 128));
@@ -1733,7 +1772,7 @@ internal sealed class LiveMapHttpServer
             json.Append(",\"unixMs\":").Append(
                 entry.UnixMs.ToString(CultureInfo.InvariantCulture));
             json.Append(",\"type\":").Append(JsonWriter.Quote(entry.Type));
-            json.Append(",\"data\":").Append(entry.DataJson);
+            json.Append(",\"data\":").Append(ActivityDataForView(entry.Type, entry.DataJson, admin));
             json.Append('}');
         }
 
@@ -4414,7 +4453,19 @@ internal sealed class LiveMapHttpServer
                candidate.StartsWith("NSA_", StringComparison.OrdinalIgnoreCase);
     }
 
-    private void ServeWebPins(HttpListenerResponse response, ViewLevel viewLevel)
+    // The shared link's own pins (0.13.32): its page sends a random per-browser key in this header with its pin
+    // reads and writes, and a shared caller may change only the pins made with that key. Only the shared view reads
+    // it: an admin can change every pin and the public view none, and an admin pin never gets a key.
+    internal const string PinEditorHeader = "X-Pin-Editor";
+
+    private static string? SharedPinEditorHash(HttpListenerRequest request, ViewLevel viewLevel)
+    {
+        return viewLevel == ViewLevel.Shared
+            ? WebPinStore.EditorKeyHash(request.Headers[PinEditorHeader])
+            : null;
+    }
+
+    private void ServeWebPins(HttpListenerRequest request, HttpListenerResponse response, ViewLevel viewLevel)
     {
         if (!CanReadWebPins(viewLevel))
         {
@@ -4429,17 +4480,21 @@ internal sealed class LiveMapHttpServer
             return;
         }
 
-        WriteJson(response, HttpStatusCode.OK, BuildWebPinsJson(store, viewLevel));
+        WriteJson(
+            response,
+            HttpStatusCode.OK,
+            BuildWebPinsJson(store, viewLevel, SharedPinEditorHash(request, viewLevel)));
     }
 
-    private string BuildWebPinsJson(WebPinStore store, ViewLevel viewLevel)
+    private string BuildWebPinsJson(WebPinStore store, ViewLevel viewLevel, string? editorKeyHash)
     {
         WebPinEntry[] pins;
+        HashSet<string> editable;
         long revision;
         do
         {
             revision = store.Revision;
-            pins = store.Snapshot();
+            pins = store.Snapshot(editorKeyHash, out editable);
         }
         while (revision != store.Revision);
 
@@ -4455,9 +4510,14 @@ internal sealed class LiveMapHttpServer
                 json.Append(',');
             }
 
-            // the public view never gets an author: for a pin set from the host's panel it is the
-            // panel's operator name, which can be a login name or an email address (0.13.32)
-            AppendWebPinJson(json, pins[index], includeAuthor: viewLevel != ViewLevel.Public);
+            // only the admin view gets an author: for a pin set from the host's panel it is the panel's
+            // operator name, which can be a login name or an email address (0.13.32; the shared link
+            // knows its own pins by "own" instead)
+            AppendWebPinJson(
+                json,
+                pins[index],
+                includeAuthor: viewLevel == ViewLevel.Admin,
+                own: editable.Contains(pins[index].Id));
         }
 
         json.Append("]}");
@@ -4527,7 +4587,9 @@ internal sealed class LiveMapHttpServer
             author = "Admin";
         }
 
-        if (!store.TryCreate(x, z, icon, label, author, out WebPinEntry? pin, out string error))
+        // a shared caller without a key still adds the pin, which then changes from the admin view only
+        string? editorKeyHash = SharedPinEditorHash(request, viewLevel);
+        if (!store.TryCreate(x, z, icon, label, author, editorKeyHash, out WebPinEntry? pin, out string error))
         {
             WriteWebPinError(response, HttpStatusCode.BadRequest, error);
             return;
@@ -4535,7 +4597,11 @@ internal sealed class LiveMapHttpServer
 
         var responseJson = new StringBuilder(256);
         responseJson.Append("{\"ok\":true,\"pin\":");
-        AppendWebPinJson(responseJson, pin!);
+        AppendWebPinJson(
+            responseJson,
+            pin!,
+            includeAuthor: viewLevel == ViewLevel.Admin,
+            own: editorKeyHash != null);
         responseJson.Append(",\"revision\":").Append(
             store.Revision.ToString(CultureInfo.InvariantCulture));
         responseJson.Append('}');
@@ -4626,7 +4692,9 @@ internal sealed class LiveMapHttpServer
             isChecked = parsedChecked;
         }
 
-        string requesterAuthor = WebPinStore.SanitizeAuthor(request.Headers["X-Operator"]);
+        // until 0.13.32 a shared caller matched pins by the name it typed, so typing the owner's panel name
+        // opened the owner's pins too; now only the key a pin was made with does
+        string? editorKeyHash = SharedPinEditorHash(request, viewLevel);
         bool isAdmin = viewLevel == ViewLevel.Admin;
         if (!store.TryUpdate(
                 id,
@@ -4635,7 +4703,7 @@ internal sealed class LiveMapHttpServer
                 icon,
                 label,
                 isChecked,
-                requesterAuthor,
+                editorKeyHash,
                 isAdmin,
                 out WebPinEntry? pin,
                 out string error))
@@ -4646,7 +4714,11 @@ internal sealed class LiveMapHttpServer
 
         var responseJson = new StringBuilder(256);
         responseJson.Append("{\"ok\":true,\"pin\":");
-        AppendWebPinJson(responseJson, pin!);
+        AppendWebPinJson(
+            responseJson,
+            pin!,
+            includeAuthor: isAdmin,
+            own: !isAdmin && store.IsEditor(pin!.Id, editorKeyHash));
         responseJson.Append(",\"revision\":").Append(
             store.Revision.ToString(CultureInfo.InvariantCulture));
         responseJson.Append('}');
@@ -4672,10 +4744,9 @@ internal sealed class LiveMapHttpServer
             return;
         }
 
-        string requesterAuthor = WebPinStore.SanitizeAuthor(request.Headers["X-Operator"]);
         if (!store.TryDelete(
                 id,
-                requesterAuthor,
+                SharedPinEditorHash(request, viewLevel),
                 viewLevel == ViewLevel.Admin,
                 out string error))
         {
@@ -4787,7 +4858,11 @@ internal sealed class LiveMapHttpServer
         return id.IndexOf('/') < 0;
     }
 
-    private static void AppendWebPinJson(StringBuilder json, WebPinEntry pin, bool includeAuthor = true)
+    private static void AppendWebPinJson(
+        StringBuilder json,
+        WebPinEntry pin,
+        bool includeAuthor,
+        bool own)
     {
         json.Append('{');
         json.Append("\"id\":").Append(JsonWriter.Quote(pin.Id));
@@ -4801,6 +4876,7 @@ internal sealed class LiveMapHttpServer
             pin.CreatedUnixMs.ToString(CultureInfo.InvariantCulture));
         json.Append(",\"updatedUnixMs\":").Append(
             pin.UpdatedUnixMs.ToString(CultureInfo.InvariantCulture));
+        json.Append(",\"own\":").Append(own ? "true" : "false");
         json.Append('}');
     }
 
