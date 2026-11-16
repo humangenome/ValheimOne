@@ -19,6 +19,8 @@ namespace ValheimOne.LiveMap;
 //   WalkBudgetMs = 2        # entity walk time per frame, 0.05..50
 //   CensusBudgetMs = 2      # object census time per frame, 0.05..50
 //   CensusCache = off       # every POST starts a new census instead of returning one under 5 minutes old
+//   ListenerDeath = now     # close the map's web listener under its listen loop once, each time the file is saved
+//                           # with this line (0.13.32: proves on the real game that the map binds again by itself)
 internal static class LabSwitches
 {
     private const float PollSeconds = 5f;
@@ -26,10 +28,19 @@ internal static class LabSwitches
     private static float _nextPoll;
     private static DateTime _lastWrite = DateTime.MinValue;
     private static bool _announced;
+    private static bool _listenerDeathPending;
 
     internal static bool? EntityLayer { get; private set; }
 
     public static string FilePath => Path.Combine(Paths.ConfigPath, "valheimone-lab.txt");
+
+    // True once after the file was saved with "ListenerDeath = now".
+    public static bool TakeListenerDeath()
+    {
+        bool pending = _listenerDeathPending;
+        _listenerDeathPending = false;
+        return pending;
+    }
 
     public static void Poll(ModLogger log)
     {
@@ -82,6 +93,7 @@ internal static class LabSwitches
         double walkBudget = ZdoWorldWalker.DefaultBudgetMilliseconds;
         double censusBudget = ZdoWorldWalker.DefaultBudgetMilliseconds;
         bool censusCache = true;
+        bool listenerDeath = false;
         foreach (string raw in lines)
         {
             string line = raw;
@@ -120,6 +132,9 @@ internal static class LabSwitches
                 case "censuscache":
                     censusCache = !(value == "off" || value == "false");
                     break;
+                case "listenerdeath":
+                    listenerDeath = value == "now";
+                    break;
                 default:
                     log.Warning("[Lab] unknown switch '" + key + "' ignored");
                     break;
@@ -132,6 +147,7 @@ internal static class LabSwitches
         EntityTracker.WalkBudgetMilliseconds = walkBudget;
         ObjectCensus.BudgetMilliseconds = censusBudget;
         ObjectCensus.CacheResults = censusCache;
+        _listenerDeathPending = listenerDeath;
         log.Info(
             "[Lab] switches: EntityLayer=" + (entityLayer == null ? "config" : entityLayer.Value ? "on" : "off") +
             " EntityScan=" + (legacy ? "legacy" : "walk") +
@@ -139,6 +155,7 @@ internal static class LabSwitches
             " WalkBudgetMs=" + walkBudget.ToString("0.##", CultureInfo.InvariantCulture) +
             " CensusBudgetMs=" + censusBudget.ToString("0.##", CultureInfo.InvariantCulture) +
             " CensusCache=" + (censusCache ? "on" : "off") +
+            " ListenerDeath=" + (listenerDeath ? "now" : "off") +
             (lines.Length == 0 ? " (no switch file: defaults)" : string.Empty));
     }
 

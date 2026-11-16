@@ -165,6 +165,12 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
 
 #if VALHEIMONE_LAB
         LabSwitches.Poll(_log);
+        // waits for a running map, so a switch file saved before the start is used once the map listens
+        if (_httpServer != null && _httpServer.IsRunning && LabSwitches.TakeListenerDeath())
+        {
+            _log.Info("[Lab] ListenerDeath: closing the map's web listener under its listen loop.");
+            _httpServer.LabCloseListener();
+        }
 #endif
         VoCommands.PumpSessionTimes();
         _consoleBridge?.Pump();

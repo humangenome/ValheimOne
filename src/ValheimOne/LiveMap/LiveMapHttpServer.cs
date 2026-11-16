@@ -251,6 +251,11 @@ internal sealed class LiveMapHttpServer
 
     public bool IsRunning => _listener?.IsListening == true;
 
+#if VALHEIMONE_LAB
+    // Lab builds only: the listener closed under its own listen loop, as one that dies by itself is (0.13.32 canary).
+    internal void LabCloseListener() => Volatile.Read(ref _listener)?.Close();
+#endif
+
     // A port that was busy when the map started (a neighbour, or the old process still letting go)
     // used to leave the map dead until the next server restart. Called every frame; tries the bind
     // again every BindRetrySeconds until it holds, and logs only the first failure and the success.
