@@ -84,7 +84,9 @@ internal sealed class LiveMapPlayerSnapshot
         float maxHealth,
         bool dead,
         bool pvp,
-        bool inBed)
+        bool inBed,
+        string platformId,
+        float facingDeg)
     {
         Name = name;
         X = x;
@@ -102,6 +104,8 @@ internal sealed class LiveMapPlayerSnapshot
         Dead = dead;
         Pvp = pvp;
         InBed = inBed;
+        PlatformId = platformId;
+        FacingDeg = facingDeg;
     }
 
     public string Name { get; }
@@ -135,4 +139,11 @@ internal sealed class LiveMapPlayerSnapshot
     public bool Pvp { get; }
 
     public bool InBed { get; }
+
+    // "Steam_<SteamID64>" or the crossplay platform's own form; stays the same across visits and server restarts.
+    // Empty when unknown. Admin view only (PlayerIdentity.PlatformId).
+    public string PlatformId { get; }
+
+    // Compass degrees the character's body faces (0 = +z, 90 = +x); NaN when the server has no rotation for it.
+    public float FacingDeg { get; }
 }

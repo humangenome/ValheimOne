@@ -850,6 +850,7 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
             bool dead = playerZdo?.GetBool(ZDOVars.s_dead, false) ?? false;
             bool pvp = playerZdo?.GetBool(ZDOVars.s_pvp, false) ?? false;
             bool inBed = playerZdo?.GetBool(ZDOVars.s_inBed, false) ?? false;
+            float facingDeg = PlayerIdentity.TryFacingDeg(playerZdo, out float facing) ? facing : float.NaN;
             players.Add(new LiveMapPlayerSnapshot(
                 peer.m_playerName ?? string.Empty,
                 position.x,
@@ -866,7 +867,9 @@ internal sealed class LiveMapBehaviour : MonoBehaviour
                 maxHealth,
                 dead,
                 pvp,
-                inBed));
+                inBed,
+                PlayerIdentity.PlatformId(peer.m_socket),
+                facingDeg));
         }
 
         var departedIds = new List<long>();

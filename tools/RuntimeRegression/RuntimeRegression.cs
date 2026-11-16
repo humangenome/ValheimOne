@@ -46,6 +46,10 @@ public sealed class RuntimeRegression : BaseUnityPlugin
     private Thread? _liveCheck;
     private volatile bool _liveDone;
     private bool _resultWritten;
+    // The live checks run on their own thread; a step that touches game objects is handed to the main thread here and
+    // runs at the start of the next frame (OnMainThread).
+    private readonly object _mainWorkLock = new();
+    private Action? _mainWork;
     private float _liveDeadline;
 
     private void Awake()
@@ -106,6 +110,14 @@ public sealed class RuntimeRegression : BaseUnityPlugin
     {
         if (_ran)
         {
+            Action? work;
+            lock (_mainWorkLock)
+            {
+                work = _mainWork;
+                _mainWork = null;
+            }
+
+            work?.Invoke();
             PollLiveChecks();
             return;
         }
@@ -161,6 +173,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestDiscordRateLimitAndGoneWebhook();
             TestWebPinEditorKeys();
             TestSharedActivityFilter();
+            TestPlayerIdentity();
             TestNewWorldSeed();
             // Last: it edits valheimone.cfg on disk for the hot reload to pick up a frame later. A test after it that
             // sets any setting (NewWorldSeed clears itself) makes BepInEx rewrite the whole file from memory, which
@@ -3059,6 +3072,304 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             "shared activity: a join without a Steam ID and other entries pass unchanged");
     }
 
+    // 0.13.32, for a map that follows players over time: `platformId` (admin view only) names the player's account the way
+    // the game's own ban list does, and stays when they rejoin or the server restarts, unlike `id` (their game session);
+    // `facingDeg` is the way the body faces, from the rotation the player's game sends, so it turns with a player who
+    // turns on the spot, unlike headingDeg (from movement). The checks reach PlayerIdentity and the new snapshot members
+    // by name and record results instead of throwing, so this runner also builds and runs against a build without them
+    // and shows which checks that build fails.
+    private void TestPlayerIdentity()
+    {
+        Type? identity = typeof(ValheimOnePlugin).Assembly.GetType("ValheimOne.LiveMap.PlayerIdentity");
+        MethodInfo? platformIdOf = identity == null ? null : AccessTools.Method(identity, "PlatformId");
+        MethodInfo? compassOf = identity == null ? null : AccessTools.Method(identity, "TryCompassDeg");
+        MethodInfo? facingOf = identity == null ? null : AccessTools.Method(identity, "TryFacingDeg");
+        IdentityResult(platformIdOf != null && compassOf != null && facingOf != null, "player identity: the build reads platform IDs and facing");
+        if (platformIdOf == null || compassOf == null || facingOf == null) return;
+        string Id(ISocket? socket) => (string)platformIdOf.Invoke(null, new object?[] { socket });
+
+        // a real Steam connection gives the bare SteamID64; the game's own player list writes it "Steam_<id>"
+        ZSteamSocket steam = SteamSocketFor(76561190000098765UL);
+        IdentityResult(steam.GetHostName() == "76561190000098765" && Id(steam) == "Steam_76561190000098765",
+            "player identity: a Steam connection is named Steam_<SteamID64> (" + steam.GetHostName() + " -> " + Id(steam) + ")");
+        IdentityResult(Id(SteamSocketFor(0UL)) == "", "player identity: a Steam connection with no SteamID gets no key");
+        // a real crossplay connection already gives "<Platform>_<id>"
+        ZPlayFabSocket crossplay = PlayFabSocketFor("Xbox", "2535412345678901");
+        IdentityResult(crossplay.GetHostName() == "Xbox_2535412345678901" && Id(crossplay) == "Xbox_2535412345678901" &&
+                       Id(PlayFabSocketFor("Steam", "76561190000098765")) == "Steam_76561190000098765",
+            "player identity: a crossplay connection keeps its platform form, and a Steam player gets the same key on both kinds of server");
+        var odd = new[] { "recording", "", "Steam_", "Steam_0", "_123", "1Steam_5", "Steam_12 34", "Steam_12\"34", "10.0.0.5:2456",
+            "Steam_" + new string('7', 65), new string('A', 33) + "_1" };
+        string oddKeys = string.Join("|", odd.Select(host => Id(new StandInSocket(host))));
+        IdentityResult(oddKeys == string.Join("|", odd.Select(_ => "")) && Id(null) == "" && Id(new StandInSocket(null)) == "",
+            "player identity: an address, an empty or zero id, odd characters, a too-long value, no connection or a connection that throws give no key (" + oddKeys + ")");
+        IdentityResult(Id(new StandInSocket("PlayStation_1234567890")) == "PlayStation_1234567890" &&
+                       Id(new StandInSocket("Nintendo_ab12-cd.34")) == "Nintendo_ab12-cd.34",
+            "player identity: other platforms' ids pass as the connection gives them");
+
+        float? Compass(float x, float z)
+        {
+            object[] args = { x, z, 0f };
+            return (bool)compassOf.Invoke(null, args) ? (float)args[2] : null;
+        }
+
+        IdentityResult(Compass(0f, 1f) == 0f && Compass(1f, 0f) == 90f && Compass(0f, -1f) == 180f && Compass(-1f, 0f) == 270f &&
+                       Compass(-0.0001f, 1f) == 0f && Compass(0f, 0f) == null && Compass(float.NaN, 1f) == null,
+            "player identity: compass degrees on the map's scale (0 = +z, 90 = +x), 359.99 is north, no ground direction gives none");
+
+        float? Facing(ZDO? zdo)
+        {
+            object?[] args = { zdo, 0f };
+            return (bool)facingOf.Invoke(null, args) ? (float)args[1]! : null;
+        }
+
+        ZDO body = ZDOMan.instance.CreateNewZDO(new Vector3(3100f, 30f, -2700f), 0);
+        try
+        {
+            body.SetRotation(Quaternion.Euler(0f, 90f, 0f));
+            float? east = Facing(body);
+            // a body tilted on a ship or a slope still faces the way its yaw says
+            body.SetRotation(Quaternion.Euler(12f, 225f, -7f));
+            float? tilted = Facing(body);
+            IdentityResult(east == 90f && tilted == 225f && Facing(null) == null,
+                "player identity: facing comes from the player object's rotation (" + east + ", tilted " + tilted + "), none without one");
+        }
+        finally
+        {
+            ZDOMan.instance.DestroyZDO(body);
+        }
+    }
+
+    private void IdentityResult(bool ok, string name)
+    {
+        LiveResult(ok, name);
+        Logger.LogInfo((ok ? "IDENTITY PASS " : "IDENTITY FAIL ") + name);
+    }
+
+    private static ZSteamSocket SteamSocketFor(ulong steamId)
+    {
+        var socket = (ZSteamSocket)FormatterServices.GetUninitializedObject(typeof(ZSteamSocket));
+        var identity = new SteamNetworkingIdentity();
+        identity.SetSteamID64(steamId);
+        AccessTools.Field(typeof(ZSteamSocket), "m_peerID").SetValue(socket, identity);
+        return socket;
+    }
+
+    private static ZPlayFabSocket PlayFabSocketFor(string platform, string userId)
+    {
+        var socket = (ZPlayFabSocket)FormatterServices.GetUninitializedObject(typeof(ZPlayFabSocket));
+        FieldInfo field = AccessTools.Field(typeof(ZPlayFabSocket), "m_platformPlayerId");
+        field.SetValue(socket, Activator.CreateInstance(field.FieldType, platform, userId));
+        return socket;
+    }
+
+    // The live map's own player loop, fed three made-up players for one snapshot: a Steam player, a crossplay player
+    // and one whose connection gives nothing usable and whose player object is missing. The players are put into the
+    // game's peer list and taken out again inside one main-thread step, so the game itself never sees them. Their
+    // player objects sit 4 km from the world's centre, where nothing loads them, and are removed at the end.
+    private void CheckLivePlayerIdentity(string root, string token)
+    {
+        object? server = RunningHttpServer();
+        Type behaviourType = typeof(ValheimOnePlugin).Assembly.GetType("ValheimOne.LiveMap.LiveMapBehaviour", true)!;
+        object? behaviour = AccessTools.Property(behaviourType, "Instance").GetValue(null, null);
+        string shareToken = server == null ? "" : AccessTools.Property(server.GetType(), "ShareToken").GetValue(server, null) as string ?? "";
+        if (server == null || behaviour == null || shareToken.Length == 0 || token.Length == 0)
+        {
+            IdentityResult(false, "player identity live: the running map and its admin and share tokens are readable");
+            return;
+        }
+
+        const string steamName = "Regression Steady";
+        const string crossName = "Regression Cross";
+        const string blankName = "Regression Blank";
+        var bodies = new List<ZDO>();
+        MethodInfo createZdo = AccessTools.Method(typeof(ZDOMan), "CreateNewZDO", new[] { typeof(ZDOID), typeof(Vector3), typeof(int) });
+        ZDO Body(long session, Vector3 position, float yaw)
+        {
+            var zdo = (ZDO)createZdo.Invoke(ZDOMan.instance, new object[] { new ZDOID(session, 1u), position, 0 });
+            zdo.SetRotation(Quaternion.Euler(0f, yaw, 0f));
+            bodies.Add(zdo);
+            return zdo;
+        }
+
+        ZNetPeer Peer(ISocket socket, long uid, ZDOID character, string name, Vector3 position) =>
+            new(socket, server: false)
+            {
+                m_uid = uid,
+                m_characterID = character,
+                m_playerName = name,
+                m_refPos = position,
+                m_publicRefPos = true,
+            };
+
+        // one snapshot of the live map's own player loop with these players connected; held for two minutes so the
+        // HTTP reads below see it, then let go
+        void Snapshot(params ZNetPeer[] players)
+        {
+            var peers = (List<ZNetPeer>)AccessTools.Field(typeof(ZNet), "m_peers").GetValue(ZNet.instance);
+            peers.AddRange(players);
+            try
+            {
+                AccessTools.Method(behaviourType, "RefreshSnapshot").Invoke(behaviour, null);
+            }
+            finally
+            {
+                foreach (ZNetPeer player in players) peers.Remove(player);
+            }
+
+            AccessTools.Field(behaviourType, "_nextPlayerUpdate").SetValue(behaviour, Time.realtimeSinceStartup + 120f);
+        }
+
+        string PlayerIn(string json, string name)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(json, "\\{\"name\":\"" + name + "\"[^{}]*\\}");
+            return match.Success ? match.Value : "";
+        }
+
+        bool Has(string player, string field) => System.Text.RegularExpressions.Regex.IsMatch(player, "\"" + field + "[,}]");
+        var steamAt = new Vector3(4000f, 31f, 900f);
+        var crossAt = new Vector3(-3900f, 44f, 1200f);
+        var blankAt = new Vector3(3800f, 28f, -1800f);
+        FieldInfo publicViewField = AccessTools.Field(server.GetType(), "_publicView");
+        bool publicViewBefore = (bool)publicViewField.GetValue(server);
+        try
+        {
+            // 1. three players connect: the Steam player faces east, the crossplay player south-west
+            ZDO steamBody = null!;
+            bool placed = OnMainThread(() =>
+            {
+                steamBody = Body(424201L, steamAt, 90f);
+                ZDO crossBody = Body(424202L, crossAt, 225f);
+                Snapshot(
+                    Peer(SteamSocketFor(76561190000098765UL), 9001L, steamBody.m_uid, steamName, steamAt),
+                    Peer(PlayFabSocketFor("Xbox", "2535412345678901"), 9002L, crossBody.m_uid, crossName, crossAt),
+                    Peer(new StandInSocket("recording"), 9003L, new ZDOID(424203L, 1u), blankName, blankAt));
+            }, 10000);
+            string admin = HttpSend(root, token, "GET", "/api/players", null, null, 5000, out int adminCode);
+            string steamPlayer = PlayerIn(admin, steamName), crossPlayer = PlayerIn(admin, crossName), blankPlayer = PlayerIn(admin, blankName);
+            IdentityResult(placed && adminCode == 200 && steamPlayer.Length > 0 && crossPlayer.Length > 0 && blankPlayer.Length > 0,
+                "player identity live: the admin view lists the three players (HTTP " + adminCode + ")");
+            IdentityResult(steamPlayer.Contains("\"platformId\":\"Steam_76561190000098765\"") &&
+                           crossPlayer.Contains("\"platformId\":\"Xbox_2535412345678901\"") && blankPlayer.Contains("\"platformId\":\"\""),
+                "player identity live: the admin view names each player's account by platformId, empty when the connection gives none (" + steamPlayer + ")");
+            IdentityResult(Has(steamPlayer, "facingDeg\":90") && Has(crossPlayer, "facingDeg\":225") && !blankPlayer.Contains("facingDeg") &&
+                           Has(steamPlayer, "headingDeg\":0") && steamPlayer.Contains("\"id\":\"424201\""),
+                "player identity live: facingDeg is the way each body faces (none without a player object) while headingDeg stays 0 for a player who has not moved");
+
+            // 2. the Steam player turns on the spot to face west: facing follows, heading and speed do not move
+            bool turned = OnMainThread(() =>
+            {
+                steamBody.SetRotation(Quaternion.Euler(0f, 270f, 0f));
+                Snapshot(Peer(SteamSocketFor(76561190000098765UL), 9001L, steamBody.m_uid, steamName, steamAt));
+            }, 10000);
+            string afterTurn = PlayerIn(HttpSend(root, token, "GET", "/api/players", null, null, 5000, out _), steamName);
+            IdentityResult(turned && Has(afterTurn, "facingDeg\":270") && Has(afterTurn, "headingDeg\":0") && Has(afterTurn, "speedMps\":0"),
+                "player identity live: a player who turns on the spot is drawn facing the new way (" + afterTurn + ")");
+
+            // 3. the shared link and the public map never get the account, in any form; the shared link gets the facing
+            string shared = HttpSend(root, shareToken, "GET", "/api/players", null, null, 5000, out int sharedCode);
+            publicViewField.SetValue(server, true);
+            string open = HttpSend(root, "", "GET", "/api/players", null, null, 5000, out int publicCode);
+            publicViewField.SetValue(server, publicViewBefore);
+            bool Clean(string json) => json.IndexOf("platformId", StringComparison.Ordinal) < 0 &&
+                                       json.IndexOf("76561190000098765", StringComparison.Ordinal) < 0 &&
+                                       json.IndexOf("2535412345678901", StringComparison.Ordinal) < 0;
+            IdentityResult(sharedCode == 200 && PlayerIn(shared, steamName).Length > 0 && Clean(shared) && Has(PlayerIn(shared, steamName), "facingDeg\":270"),
+                "player identity live: the shared link lists the players with their facing and without any account id");
+            IdentityResult(publicCode == 200 && open.Contains("\"players\":[{") && Clean(open) && open.IndexOf("facingDeg", StringComparison.Ordinal) < 0,
+                "player identity live: the public map lists positions only, no account id and no facing (" + open.Length + " bytes)");
+
+            // 4. the Steam player leaves and joins again: a new game session (a new `id`), the same platformId
+            bool rejoined = OnMainThread(() =>
+            {
+                ZDO again = Body(424204L, steamAt, 180f);
+                Snapshot(Peer(SteamSocketFor(76561190000098765UL), 9004L, again.m_uid, steamName, steamAt));
+            }, 10000);
+            string afterRejoin = PlayerIn(HttpSend(root, token, "GET", "/api/players", null, null, 5000, out _), steamName);
+            IdentityResult(rejoined && afterRejoin.Contains("\"id\":\"424204\"") && afterRejoin.Contains("\"platformId\":\"Steam_76561190000098765\"") &&
+                           Has(afterRejoin, "facingDeg\":180"),
+                "player identity live: after a rejoin `id` is new (424201 -> 424204) and platformId is the same (" + afterRejoin + ")");
+        }
+        catch (Exception exception)
+        {
+            IdentityResult(false, "player identity live: " + exception.GetType().Name + ": " + exception.Message);
+        }
+        finally
+        {
+            publicViewField.SetValue(server, publicViewBefore);
+            // let the map take its next snapshot from the real (empty) peer list, and take the player objects away
+            OnMainThread(() =>
+            {
+                AccessTools.Field(behaviourType, "_nextPlayerUpdate").SetValue(behaviour, 0f);
+                foreach (ZDO zdo in bodies) ZDOMan.instance.DestroyZDO(zdo);
+            }, 10000);
+            DateTime until = DateTime.UtcNow.AddSeconds(15);
+            string left = "";
+            while (DateTime.UtcNow < until)
+            {
+                left = HttpSend(root, token, "GET", "/api/players", null, null, 5000, out _);
+                if (left.IndexOf("Regression ", StringComparison.Ordinal) < 0) break;
+                Thread.Sleep(250);
+            }
+
+            IdentityResult(left.IndexOf("Regression ", StringComparison.Ordinal) < 0, "player identity live: the made-up players are gone from the map afterwards");
+        }
+    }
+
+    // Runs work on the main thread at the start of the next frame and waits for it; an exception there comes back here.
+    private bool OnMainThread(Action work, int timeoutMs)
+    {
+        var done = new ManualResetEvent(false);
+        Exception? failure = null;
+        lock (_mainWorkLock)
+        {
+            _mainWork = () =>
+            {
+                try
+                {
+                    work();
+                }
+                catch (Exception exception)
+                {
+                    failure = exception is TargetInvocationException { InnerException: { } inner } ? inner : exception;
+                }
+                finally
+                {
+                    done.Set();
+                }
+            };
+        }
+
+        if (!done.WaitOne(timeoutMs)) return false;
+        if (failure != null) throw new InvalidOperationException("main-thread step: " + failure.GetType().Name + ": " + failure.Message, failure);
+        return true;
+    }
+
+    // A connection that names its player by the given text, or throws when asked (null).
+    private sealed class StandInSocket : ISocket
+    {
+        private readonly string? _host;
+        public StandInSocket(string? host) => _host = host;
+        public bool IsConnected() => true;
+        public void Send(ZPackage pkg) { }
+        public ZPackage Recv() => null!;
+        public int GetSendQueueSize() => 0;
+        public int GetCurrentSendRate() => 0;
+        public bool IsHost() => false;
+        public void Dispose() { }
+        public bool GotNewData() => false;
+        public void Close() { }
+        public string GetEndPointString() => "stand-in";
+        public void GetAndResetStats(out int totalSent, out int totalRecv) { totalSent = 0; totalRecv = 0; }
+        public void GetConnectionQuality(out float localQuality, out float remoteQuality, out int ping, out float outByteSec, out float inByteSec)
+        { localQuality = remoteQuality = 1f; ping = 0; outByteSec = inByteSec = 0f; }
+        public ISocket Accept() => null!;
+        public int GetHostPort() => 0;
+        public bool Flush() => true;
+        public string GetHostName() => _host ?? throw new ObjectDisposedException("stand-in socket");
+        public void VersionMatch() { }
+    }
+
     private static string NewHex(int bytes)
     {
         var data = new byte[bytes];
@@ -3744,6 +4055,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             CheckLiveCensus(root, token);
             CheckLiveSummary();
             CheckLivePublicPinAuthor();
+            CheckLivePlayerIdentity(root, token);
 
             int publicTaken = FillSlots(slots, EventStreamView.Public);
             int sharedTaken = FillSlots(slots, EventStreamView.Shared);

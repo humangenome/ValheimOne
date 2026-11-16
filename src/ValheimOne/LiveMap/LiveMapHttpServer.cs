@@ -2684,6 +2684,17 @@ internal sealed class LiveMapHttpServer
                     Math.Round(player.SpeedMps, 2)));
                 json.Append(",\"headingDeg\":").Append(JsonWriter.Number(
                     Math.Round(player.HeadingDeg, 1)));
+                if (!float.IsNaN(player.FacingDeg))
+                {
+                    json.Append(",\"facingDeg\":").Append(JsonWriter.Number(Math.Round((double)player.FacingDeg, 1)));
+                }
+
+                if (viewLevel == ViewLevel.Admin)
+                {
+                    // The player's account: the admin view only, like every other platform identifier.
+                    json.Append(",\"platformId\":").Append(JsonWriter.Quote(player.PlatformId));
+                }
+
                 json.Append(",\"sessionStartUnixMs\":").Append(
                     player.SessionStartUnixMs.ToString(CultureInfo.InvariantCulture));
                 json.Append(",\"distanceTodayM\":").Append(JsonWriter.Number(
