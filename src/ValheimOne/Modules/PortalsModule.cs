@@ -100,7 +100,7 @@ public sealed class PortalsModule : IFeatureModule
             return true;
         }
 
-        GameCompat.TryMessage(player, MessageHud.MessageType.Center, "Portals are disabled.");
+        GameCompat.TryMessage(player, MessageHud.MessageType.Center, "Portals are off on this server.");
         return false;
     }
 
@@ -117,7 +117,7 @@ public sealed class PortalsModule : IFeatureModule
             return;
         }
 
-        __result += "\n(portals disabled)";
+        __result += "\n(portals are off)";
     }
 
     private static void IsTeleportablePostfix(ref bool __result)

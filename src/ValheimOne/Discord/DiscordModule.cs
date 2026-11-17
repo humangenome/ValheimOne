@@ -190,7 +190,7 @@ public sealed class DiscordModule : IFeatureModule
     {
         Enqueue(
             "Player joined",
-            $"⚔️ {SafePlayerName(playerName)} has arrived",
+            $"⚔️ {SafePlayerName(playerName)} joined",
             JoinColor);
     }
 
@@ -198,7 +198,7 @@ public sealed class DiscordModule : IFeatureModule
     {
         Enqueue(
             "Player left",
-            $"👋 {SafePlayerName(playerName)} has departed",
+            $"👋 {SafePlayerName(playerName)} left",
             LeaveColor);
     }
 
@@ -212,16 +212,16 @@ public sealed class DiscordModule : IFeatureModule
         string name = SafePlayerName(playerName);
         string biome = TryGetBiomeName(lastPosition);
         string description = string.IsNullOrEmpty(biome)
-            ? $"💀 {name} fell"
-            : $"💀 {name} fell in the {biome}";
+            ? $"💀 {name} died"
+            : $"💀 {name} died in the {biome}";
         Enqueue("Player death", description, DeathColor);
     }
 
     internal void NotifyRaidStarted(string readableName)
     {
         Enqueue(
-            "Raid begun",
-            $"🔥 A raid has begun: {readableName}",
+            "Raid started",
+            $"🔥 Raid started: {readableName}",
             RaidStartColor);
     }
 
@@ -229,15 +229,15 @@ public sealed class DiscordModule : IFeatureModule
     {
         Enqueue(
             "Raid ended",
-            $"🕊️ The raid has ended: {readableName}",
+            $"🕊️ Raid ended: {readableName}",
             RaidEndColor);
     }
 
     internal void NotifyNewDay(int day)
     {
         Enqueue(
-            "A new day",
-            $"🌅 Day {day} has dawned",
+            "New day",
+            $"🌅 Day {day} started",
             DayChangeColor);
     }
 
@@ -304,7 +304,7 @@ public sealed class DiscordModule : IFeatureModule
             return;
         }
 
-        Enqueue("World save", "💾 World saved", WorldSaveColor);
+        Enqueue("World saved", "💾 World saved", WorldSaveColor);
     }
 
     private void OnEffectiveValuesChanged()
@@ -336,7 +336,7 @@ public sealed class DiscordModule : IFeatureModule
     private static string SafePlayerName(string? playerName)
     {
         string candidate = playerName ?? string.Empty;
-        return string.IsNullOrWhiteSpace(candidate) ? "A Viking" : candidate.Trim();
+        return string.IsNullOrWhiteSpace(candidate) ? "A player" : candidate.Trim();
     }
 
     private static string TryGetBiomeName(Vector3 position)

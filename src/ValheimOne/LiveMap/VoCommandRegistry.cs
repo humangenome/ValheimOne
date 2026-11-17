@@ -66,7 +66,7 @@ internal static class VoCommandRegistry
         new VoCommandDefinition(
             "shutdown",
             "vo shutdown <seconds> [message] | vo shutdown cancel",
-            "Schedule or cancel a save-first dedicated-server shutdown.",
+            "Shut down after a countdown that warns players and saves first, or cancel it.",
             "server",
             new[]
             {
@@ -76,20 +76,20 @@ internal static class VoCommandRegistry
         new VoCommandDefinition(
             "players",
             "vo players",
-            "List connected players, session times, host IDs, and public positions.",
+            "List online players with their time online, host IDs and public positions.",
             "players",
             new[] { "vo players" }),
         new VoCommandDefinition(
             "playerinfo",
             "vo playerinfo <player>",
-            "Show server-known details for one connected player.",
+            "Show details for one online player.",
             "players",
             new[] { "vo playerinfo Alice", "vo playerinfo Some Viking" },
             playerArg: true),
         new VoCommandDefinition(
             "playtime",
             "vo playtime",
-            "Show tracked session time for every player and server uptime.",
+            "Show time online for every player, and the server's uptime.",
             "players",
             new[] { "vo playtime" }),
         new VoCommandDefinition(
@@ -121,7 +121,7 @@ internal static class VoCommandRegistry
         new VoCommandDefinition(
             "weather",
             "vo weather",
-            "Show the current environment and wind conditions.",
+            "Show the current weather and wind.",
             "world",
             new[] { "vo weather" }),
         new VoCommandDefinition(
@@ -133,26 +133,26 @@ internal static class VoCommandRegistry
         new VoCommandDefinition(
             "entities",
             "vo entities",
-            "Show counts from the latest LiveMap entity scan and request a refresh.",
+            "Count the creatures, ships, carts and other objects on the live map, then refresh the count.",
             "world",
             new[] { "vo entities" }),
         new VoCommandDefinition(
             "item",
             "vo item <name>",
-            "Show catalog details, recipes, sources, drops, and recipe uses for an item.",
+            "Show an item's stats, recipes, where it comes from, what drops it and what it's used in.",
             "world",
             new[] { "vo item Iron", "vo item Black metal", "vo item SwordIron" },
             itemArg: true),
         new VoCommandDefinition(
             "stats",
             "vo stats",
-            "Show server uptime, population, object, memory, and frame statistics.",
+            "Show uptime, players online, world objects, memory and frame times.",
             "diagnostics",
             new[] { "vo stats" }),
         new VoCommandDefinition(
             "doctor",
             "vo doctor",
-            "Show plugin, module, configuration, and LiveMap health diagnostics.",
+            "Check that the mod, its modules, its settings and the live map are working.",
             "diagnostics",
             new[] { "vo doctor" }),
     };

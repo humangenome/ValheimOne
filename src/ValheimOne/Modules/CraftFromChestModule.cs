@@ -147,7 +147,7 @@ public sealed class CraftFromChestModule : IFeatureModule
         {
             ___m_craftTimer = -1f;
             active._craftWaitStarted = -1f;
-            GameCompat.TryMessage(player, MessageHud.MessageType.Center, "Nearby chest unavailable. Close open chests and try again.");
+            GameCompat.TryMessage(player, MessageHud.MessageType.Center, "Couldn't use a nearby chest. Close any open chests and try again.");
             return true;
         }
 
@@ -200,8 +200,8 @@ public sealed class CraftFromChestModule : IFeatureModule
         // have moved the cursor or selected another piece while waiting for its owner.
         GameCompat.TryMessage(__instance, MessageHud.MessageType.Center,
             result == ChestOwnership.Result.Pending
-                ? "Waiting for nearby chest. Try placing again in a moment."
-                : "Nearby chest unavailable. Close open chests and try again.");
+                ? "Waiting for a nearby chest. Place it again in a moment."
+                : "Couldn't use a nearby chest. Close any open chests and try again.");
         __result = false;
         return false;
     }

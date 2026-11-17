@@ -147,7 +147,7 @@ internal static class VoCommands
         // resolved by shape and filled by name instead of bound at compile time.
         Terminal.ConsoleCommand? command = GameCompat.TryCreateConsoleCommand(
             "vo",
-            "ValheimOne server administration; use 'vo help' for commands",
+            "ValheimOne admin commands. Type vo help for the list.",
             Run,
             onlyServer: true,
             VoCommandRegistry.GetSubcommandNames);
@@ -163,7 +163,7 @@ internal static class VoCommands
         {
             if (args.Length < 2 || string.IsNullOrWhiteSpace(args[1]))
             {
-                Write(args, "Missing vo command. Use 'vo help' for the command list.");
+                Write(args, "Type a command after vo. vo help lists them.");
                 return;
             }
 
@@ -219,7 +219,7 @@ internal static class VoCommands
                     RunItem(args);
                     break;
                 default:
-                    Write(args, $"Unknown vo command '{args[1]}'. Use 'vo help'.");
+                    Write(args, $"There's no vo command called '{args[1]}'. Type vo help for the list.");
                     break;
             }
         }
@@ -228,7 +228,7 @@ internal static class VoCommands
             LogWarning("vo command failed", exception);
             Write(
                 args,
-                $"Command failed: {exception.GetType().Name}: {GetExceptionMessage(exception)}");
+                $"That command didn't finish: {GetExceptionMessage(exception)}");
         }
     }
 
@@ -245,11 +245,11 @@ internal static class VoCommands
             if (!VoCommandRegistry.TryGet(requested, out VoCommandDefinition? command) ||
                 command == null)
             {
-                Write(args, $"Unknown vo command '{requested}'. Use 'vo help'.");
+                Write(args, $"There's no vo command called '{requested}'. Type vo help for the list.");
                 return;
             }
 
-            Write(args, $"{command.Usage} — {command.Description}");
+            Write(args, $"{command.Usage}: {command.Description}");
             Write(args, $"Category: {command.Category}");
             if (command.Examples.Length > 0)
             {
@@ -289,7 +289,7 @@ internal static class VoCommands
                     continue;
                 }
 
-                Write(args, $"  {command.Usage.PadRight(width)} — {command.Description}");
+                Write(args, $"  {command.Usage.PadRight(width)}  {command.Description}");
             }
         }
 
@@ -316,7 +316,7 @@ internal static class VoCommands
 
         if (peers.Count == 0)
         {
-            Write(args, "  No players connected.");
+            Write(args, "  No players online.");
         }
     }
 
@@ -332,13 +332,13 @@ internal static class VoCommands
         List<ZNetPeer> matches = FindPlayerMatches(target);
         if (matches.Count == 0)
         {
-            Write(args, $"No connected player matches '{target}'.");
+            Write(args, $"No online player called '{target}'.");
             return;
         }
 
         if (matches.Count > 1)
         {
-            Write(args, $"Ambiguous player '{target}'. Matches:");
+            Write(args, $"More than one player matches '{target}':");
             for (int index = 0; index < matches.Count; index++)
             {
                 Write(args, "  " + matches[index].m_playerName);
@@ -352,14 +352,14 @@ internal static class VoCommands
         Write(args, $"  Host ID: {GetHostId(peer)}");
         Write(
             args,
-            $"  Session: {FormatDuration(GetSessionSeconds(peer, Time.realtimeSinceStartup))}");
+            $"  Online for: {FormatDuration(GetSessionSeconds(peer, Time.realtimeSinceStartup))}");
         Write(args, $"  Position: {(peer.m_publicRefPos ? FormatPosition(peer.m_refPos) : "hidden")}");
 
         ZDOMan? manager = ZDOMan.instance;
         ZDO? zdo = manager?.GetZDO(peer.m_characterID);
         if (zdo == null)
         {
-            Write(args, "  Character state: unavailable (character ZDO not found)");
+            Write(args, "  Character state: unknown (character not found in the world)");
             return;
         }
 
@@ -384,10 +384,10 @@ internal static class VoCommands
             Write(
                 args,
                 $"  Stamina: {stamina.ToString("0.0", CultureInfo.InvariantCulture)} " +
-                "(current; maximum is not replicated)");
+                "(the server only knows the current value)");
         }
 
-        Write(args, $"  Character ZDO: {peer.m_characterID}");
+        Write(args, $"  Character ID: {peer.m_characterID}");
     }
 
     private static void RunPlaytime(Terminal.ConsoleEventArgs args)
@@ -402,7 +402,7 @@ internal static class VoCommands
         });
 
         Write(args, $"Server uptime: {FormatDuration(now)}");
-        Write(args, $"Player sessions ({peers.Count}, longest first):");
+        Write(args, $"Time online ({peers.Count} players, longest first):");
         for (int index = 0; index < peers.Count; index++)
         {
             ZNetPeer peer = peers[index];
@@ -413,7 +413,7 @@ internal static class VoCommands
 
         if (peers.Count == 0)
         {
-            Write(args, "  No players connected.");
+            Write(args, "  No players online.");
         }
     }
 
@@ -422,15 +422,15 @@ internal static class VoCommands
         ConsoleSaveResult result = ConsoleBridge.SaveOnMainThread(_log);
         if (!result.Ok)
         {
-            Write(args, "Save failed: " + result.Error);
+            Write(args, "The world didn't save. " + DescribeReason(result.Error));
             return;
         }
 
         Write(
             args,
             result.AlreadySaving
-                ? "A save was already in progress; another save was requested."
-                : "World and player profile save requested.");
+                ? "A save was already running. Another one will follow."
+                : "Saving the world and player profiles.");
     }
 
     private static void RunShutdown(Terminal.ConsoleEventArgs args)
@@ -438,7 +438,7 @@ internal static class VoCommands
         ConsoleBridge? bridge = LiveMapBehaviour.Instance?.ConsoleBridge;
         if (bridge == null)
         {
-            Write(args, "Shutdown scheduler unavailable.");
+            Write(args, "Shutdown isn't available while the live map is off.");
             return;
         }
 
@@ -448,15 +448,15 @@ internal static class VoCommands
             ShutdownActionResult cancelResult = bridge.CancelShutdown();
             if (!cancelResult.Ok)
             {
-                Write(args, "Shutdown cancellation failed: " + cancelResult.Error);
+                Write(args, "Couldn't cancel the shutdown. " + DescribeReason(cancelResult.Error));
                 return;
             }
 
             Write(
                 args,
                 cancelResult.Changed
-                    ? "Pending server shutdown cancelled."
-                    : "No server shutdown was pending.");
+                    ? "Shutdown cancelled."
+                    : "No shutdown was scheduled.");
             return;
         }
 
@@ -474,7 +474,7 @@ internal static class VoCommands
         ShutdownActionResult armResult = bridge.ArmShutdown(requestedSeconds, message);
         if (!armResult.Ok)
         {
-            Write(args, "Shutdown scheduling failed: " + armResult.Error);
+            Write(args, "Couldn't schedule the shutdown. " + DescribeReason(armResult.Error));
             return;
         }
 
@@ -515,8 +515,45 @@ internal static class VoCommands
         Write(
             args,
             result.Ok
-                ? $"{UppercaseFirst(actionName)} requested for {target}."
-                : $"{UppercaseFirst(actionName)} failed: {result.Error}");
+                ? $"{ActionProgressWord(actionName)} {target}."
+                : $"Couldn't {actionName} {target}. {DescribeReason(result.Error)}");
+    }
+
+    // Reasons stay as the API sends them (docs/query.md; the panel's Stop log quotes them); the console shows these words.
+    private static readonly Dictionary<string, string> ReasonWords = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["timed out waiting for main thread"] = "The server is busy. Try again in a moment.",
+        ["console bridge stopped"] = "The server is shutting down.",
+        ["command is empty"] = "Type a command first.",
+        ["unknown command"] = "There's no command with that name.",
+        ["console unavailable"] = "The console isn't ready yet. Try again in a moment.",
+        ["server unavailable"] = "The server isn't ready yet. Try again in a moment.",
+        ["target is empty"] = "Type a player name or ID.",
+        ["world not loaded"] = "The world hasn't loaded yet. Try again in a moment.",
+        ["not enough disk space to save"] = "The server's disk is full, so the world didn't save. Free up space and try again.",
+        ["the game skipped the save"] = "The game skipped this save. Try again in a moment.",
+        ["target height unavailable"] = "Couldn't find the ground there. Pick another spot.",
+    };
+
+    internal static string DescribeReason(string? reason)
+    {
+        string text = reason ?? string.Empty;
+        return ReasonWords.TryGetValue(text, out string? words) ? words : text;
+    }
+
+    private static string ActionProgressWord(string actionName)
+    {
+        switch (actionName)
+        {
+            case "kick":
+                return "Kicking";
+            case "ban":
+                return "Banning";
+            case "unban":
+                return "Unbanning";
+            default:
+                return UppercaseFirst(actionName);
+        }
     }
 
     private static void RunBanList(Terminal.ConsoleEventArgs args)
@@ -524,12 +561,12 @@ internal static class VoCommands
         ConsoleBanListResult result = ConsoleBridge.GetBanListOnMainThread(_log);
         if (!result.Ok)
         {
-            Write(args, "Could not read ban list: " + result.Error);
+            Write(args, "Couldn't load the ban list. " + DescribeReason(result.Error));
             return;
         }
 
         result.Banned.Sort(StringComparer.OrdinalIgnoreCase);
-        Write(args, $"Banned targets ({result.Banned.Count}):");
+        Write(args, $"Banned ({result.Banned.Count}):");
         for (int index = 0; index < result.Banned.Count; index++)
         {
             Write(args, "  " + result.Banned[index]);
@@ -537,7 +574,7 @@ internal static class VoCommands
 
         if (result.Banned.Count == 0)
         {
-            Write(args, "  Ban list is empty.");
+            Write(args, "  No one is banned.");
         }
     }
 
@@ -561,7 +598,7 @@ internal static class VoCommands
 
     private static void RunDoctor(Terminal.ConsoleEventArgs args)
     {
-        Write(args, $"ValheimOne doctor — plugin {ValheimOnePlugin.PluginVersion}");
+        Write(args, $"ValheimOne doctor, version {ValheimOnePlugin.PluginVersion}");
         string gameVersion = _log == null
             ? "unavailable"
             : GameVersionDetector.TryDetect(_log) ?? "unavailable";
@@ -681,7 +718,7 @@ internal static class VoCommands
         EnvMan? environmentManager = EnvMan.instance;
         if (environmentManager == null)
         {
-            Write(args, "Weather unavailable: EnvMan is not ready.");
+            Write(args, "Weather isn't available until the world has loaded.");
             return;
         }
 
@@ -699,7 +736,7 @@ internal static class VoCommands
 
         string compass = GetCompassDirection(degrees);
         float intensity = environmentManager.GetWindIntensity();
-        Write(args, $"Environment: {environmentName}");
+        Write(args, $"Weather: {environmentName}");
         Write(
             args,
             $"Wind: {compass} {degrees.ToString("0", CultureInfo.InvariantCulture)}° | " +
@@ -708,14 +745,14 @@ internal static class VoCommands
             ForceEnvironmentField.Value.GetValue(environmentManager) as string;
         if (!string.IsNullOrWhiteSpace(forcedEnvironment))
         {
-            Write(args, "Forced environment: " + forcedEnvironment);
+            Write(args, "Forced weather: " + forcedEnvironment);
         }
 
         EnvSetup? upcoming =
             NextEnvironmentField.Value.GetValue(environmentManager) as EnvSetup;
         if (upcoming != null && !string.IsNullOrWhiteSpace(upcoming.m_name))
         {
-            Write(args, "Upcoming environment: " + upcoming.m_name);
+            Write(args, "Next weather: " + upcoming.m_name);
         }
     }
 
@@ -724,7 +761,7 @@ internal static class VoCommands
         ZoneSystem? zoneSystem = ZoneSystem.instance;
         if (zoneSystem == null)
         {
-            Write(args, "Boss keys unavailable: ZoneSystem is not ready.");
+            Write(args, "Boss progress isn't available until the world has loaded.");
             return;
         }
 
@@ -776,14 +813,14 @@ internal static class VoCommands
         LiveMapBehaviour? behaviour = LiveMapBehaviour.Instance;
         if (behaviour == null)
         {
-            Write(args, "Entity scan unavailable: LiveMap behaviour is not initialized.");
+            Write(args, "The live map hasn't started yet, so there's nothing to count.");
             return;
         }
 
         behaviour.NoteEntitiesRequested();
         if (_config == null || !_config.EntityLayer)
         {
-            Write(args, "Entity scanning is disabled; enable [LiveMap] EntityLayer.");
+            Write(args, "Ships, carts and portals are off. Set EntityLayer = true in [LiveMap] to turn them on.");
             return;
         }
 
@@ -791,14 +828,14 @@ internal static class VoCommands
         {
             Write(
                 args,
-                "Entity scan unavailable: LiveMap is not running, so a refresh cannot start yet.");
+                "The live map isn't running, so there's nothing to count yet.");
             return;
         }
 
         EntityMapSnapshot snapshot = behaviour.EntitySnapshot;
         if (snapshot.EntitiesUnixMs == 0L)
         {
-            Write(args, "No entity scan has completed yet; a fresh scan was requested.");
+            Write(args, "No count yet. A new one has started.");
             return;
         }
 
@@ -807,8 +844,8 @@ internal static class VoCommands
             DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - snapshot.EntitiesUnixMs);
         Write(
             args,
-            $"Tracked entities: {snapshot.Entities.Length} " +
-            $"(scanned {FormatAge(ageMilliseconds)} ago; refresh requested)");
+            $"On the live map: {snapshot.Entities.Length} " +
+            $"(counted {FormatAge(ageMilliseconds)} ago, refreshing now)");
 
         var groups = new SortedDictionary<string, SortedDictionary<string, int>>(
             StringComparer.OrdinalIgnoreCase);
@@ -844,7 +881,7 @@ internal static class VoCommands
 
         if (snapshot.Entities.Length == 0)
         {
-            Write(args, "  The last completed scan found no tracked ships, carts, or portals.");
+            Write(args, "  The last count found no ships, carts or portals.");
         }
     }
 
@@ -860,7 +897,7 @@ internal static class VoCommands
         ItemCatalog? catalog = ItemCatalog.Current;
         if (catalog == null)
         {
-            Write(args, "Item catalog unavailable: LiveMap has not finished starting.");
+            Write(args, "The item list isn't ready until the live map has started.");
             return;
         }
 
@@ -872,11 +909,11 @@ internal static class VoCommands
         {
             if (candidates.Count == 0)
             {
-                Write(args, $"No catalog item matches '{query}'.");
+                Write(args, $"No item called '{query}'.");
                 return;
             }
 
-            Write(args, $"Ambiguous item '{query}'. Matches:");
+            Write(args, $"More than one item matches '{query}':");
             int maximum = Math.Min(8, candidates.Count);
             for (int index = 0; index < maximum; index++)
             {
@@ -896,7 +933,7 @@ internal static class VoCommands
         Write(
             args,
             $"  Type: {item.Type} | Weight: {FormatCatalogNumber(item.Weight)} | " +
-            $"Stack: {item.MaxStackSize} | Teleportable: {(item.Teleportable ? "yes" : "no")}");
+            $"Stack: {item.MaxStackSize} | Portal: {(item.Teleportable ? "yes" : "no")}");
         Write(args, $"  Max quality: {item.MaxQuality} | Tool tier: {item.ToolTier}");
 
         if (item.Damage != null)

@@ -371,7 +371,7 @@
     var POI_CATEGORIES = [
         {
             key: "bosses",
-            label: "Bosses & Trader",
+            label: "Bosses & traders",
             groups: ["spawn", "boss", "trader"]
         },
         {
@@ -405,7 +405,7 @@
         },
         {
             key: "ores",
-            label: "Ores & Deposits",
+            label: "Ores & deposits",
             minimumZoom: 4,
             groups: [
                 "ore_copper",
@@ -469,7 +469,7 @@
         dungeon_mine: {
             label: "Infested Mines", glyph: "⛏", category: "dungeons", dungeonEntrance: true
         },
-        dungeon_ashlands: { label: "Ashlands Ruins", glyph: "♨", category: "dungeons" },
+        dungeon_ashlands: { label: "Ashlands ruins", glyph: "♨", category: "dungeons" },
         dungeon_bearcave: {
             label: "Bear Caves", glyph: "◓", category: "dungeons", dungeonEntrance: true
         },
@@ -480,26 +480,26 @@
             label: "Winding Tunnels", glyph: "∿", category: "dungeons", dungeonEntrance: true
         },
         spawner_greydwarf: {
-            label: "Greydwarf Nests", glyph: "♣", category: "spawners", resource: true
+            label: "Greydwarf nests", glyph: "♣", category: "spawners", resource: true
         },
         spawner_bonepile: {
-            label: "Skeleton Spawners", glyph: "☠", category: "spawners", resource: true
+            label: "Skeleton spawners", glyph: "☠", category: "spawners", resource: true
         },
         spawner_draugrpile: {
-            label: "Draugr Spawners", glyph: "⚔", category: "spawners", resource: true
+            label: "Draugr spawners", glyph: "⚔", category: "spawners", resource: true
         },
-        spawner_firehole: { label: "Surtling Geysers", glyph: "♨", category: "spawners" },
-        spawner_charred: { label: "Charred Spawners", glyph: "✦", category: "spawners" },
-        spawner_other: { label: "Other Spawners", glyph: "•", category: "spawners" },
+        spawner_firehole: { label: "Surtling geysers", glyph: "♨", category: "spawners" },
+        spawner_charred: { label: "Charred spawners", glyph: "✦", category: "spawners" },
+        spawner_other: { label: "Other spawners", glyph: "•", category: "spawners" },
         ore_copper: { label: "Copper", glyph: "Cu", category: "ores", resource: true },
         ore_tin: { label: "Tin", glyph: "Sn", category: "ores", resource: true },
-        ore_iron: { label: "Muddy Scrap Piles", glyph: "Fe", category: "ores", resource: true },
-        ore_silver: { label: "Silver Veins", glyph: "Ag", category: "ores", resource: true },
+        ore_iron: { label: "Muddy scrap piles", glyph: "Fe", category: "ores", resource: true },
+        ore_silver: { label: "Silver veins", glyph: "Ag", category: "ores", resource: true },
         ore_obsidian: { label: "Obsidian", glyph: "◆", category: "ores", resource: true },
         ore_meteorite: { label: "Meteorite", glyph: "✦", category: "ores", resource: true },
         ore_leviathan: { label: "Leviathans", glyph: "◉", category: "ores", resource: true },
         forage_berries: {
-            label: "Berry Bushes", glyph: "●", category: "forage", resource: true,
+            label: "Berry bushes", glyph: "●", category: "forage", resource: true,
             searchGroupOnly: true
         },
         forage_thistle: {
@@ -511,32 +511,32 @@
             searchGroupOnly: true
         },
         forage_seeds: {
-            label: "Wild Seeds", glyph: "⁙", category: "forage", resource: true,
+            label: "Wild seeds", glyph: "⁙", category: "forage", resource: true,
             searchGroupOnly: true
         },
         forage_crops: {
-            label: "Barley & Flax", glyph: "≋", category: "forage", resource: true,
+            label: "Barley & flax", glyph: "≋", category: "forage", resource: true,
             searchGroupOnly: true
         },
         forage_dragonegg: {
-            label: "Dragon Eggs", glyph: "◍", category: "forage", resource: true,
+            label: "Dragon eggs", glyph: "◍", category: "forage", resource: true,
             searchGroupOnly: true
         },
         forage_blackcore: {
-            label: "Black Cores", glyph: "◆", category: "forage", resource: true,
+            label: "Black cores", glyph: "◆", category: "forage", resource: true,
             searchGroupOnly: true
         },
-        structure_camp: { label: "Enemy Camps", glyph: "⚔", category: "structures" },
+        structure_camp: { label: "Enemy camps", glyph: "⚔", category: "structures" },
         bases: {
             label: "Bases", glyph: "⌂", category: "structures", resource: true, base: true
         },
-        structure_tarpit: { label: "Tar Pits", glyph: "≋", category: "structures" },
+        structure_tarpit: { label: "Tar pits", glyph: "≋", category: "structures" },
         structure_shipwreck: { label: "Shipwrecks", glyph: "⚓", category: "structures" },
-        structure_ruins: { label: "Ruins & Villages", glyph: "▥", category: "structures" },
-        structure_mistlands: { label: "Mistlands Remains", glyph: "†", category: "structures" },
+        structure_ruins: { label: "Ruins & villages", glyph: "▥", category: "structures" },
+        structure_mistlands: { label: "Mistlands remains", glyph: "†", category: "structures" },
         structure_deepnorth: { label: "Deep North Villages", glyph: "❅", category: "structures" },
         structure_forge: { label: "Forge of Potential", glyph: "⚒", category: "structures" },
-        structure_runestone: { label: "Runestones & Lore", glyph: "ᚱ", category: "structures" },
+        structure_runestone: { label: "Runestones & lore", glyph: "ᚱ", category: "structures" },
         misc: { label: "Misc", glyph: "◇", category: "structures" },
         ghosts: { label: "Last seen", glyph: "♙", category: "live", dynamic: true }
     };
@@ -1286,7 +1286,7 @@
     }
 
     function mapStyleName(style) {
-        return style === "topo" ? "Topographic" : style === "chart" ? "Old Chart" : "Default";
+        return style === "topo" ? "Topographic" : style === "chart" ? "Old chart" : "Default";
     }
 
     function mapStyleRenderLabel(style) {
@@ -1313,8 +1313,8 @@
         clearMapStyleFailureMessage();
         elements.mapStatus.hidden = false;
         elements.mapStatus.querySelector(".spinner").hidden = true;
-        elements.mapStatusText.textContent = mapStyleName(style) +
-            " map rendering failed — reverted to Default";
+        elements.mapStatusText.textContent = "Couldn't draw the " +
+            mapStyleName(style).toLowerCase() + " map. Showing Default.";
         renderStatusFailureTimer = window.setTimeout(function () {
             renderStatusFailureTimer = 0;
             updateRenderStatus(latestMapStatus);
@@ -1399,6 +1399,53 @@
         updateRenderStatus(latestMapStatus);
     }
 
+    // The server's error values stay as they are (other clients read them); people see these words.
+    var FRIENDLY_ERRORS = {
+        "not ready": "The map is still starting. Try again in a moment.",
+        "rate limited": "Too many at once. Wait a few seconds and try again.",
+        "forbidden": "This map link can't do that.",
+        "not found": "That isn't there anymore. Reload the page.",
+        "unauthorized": "This map link doesn't work anymore. Ask the server owner for a new one.",
+        "author required": "Add your name first.",
+        "label too long": "Keep the label to 32 characters.",
+        "too many pending pings": "Too many pings at once. Wait a few seconds.",
+        "chat unavailable": "Chat isn't available right now. Try again in a moment.",
+        "text is required": "Type a message first.",
+        "text must be 256 characters or fewer": "Keep the message to 256 characters.",
+        "command not whitelisted": "That command isn't on the whitelist. Add it to ConsoleWhitelist in [LiveMap].",
+        "command is required": "Type a command first.",
+        "no changes": "Nothing changed.",
+        "store disposed": "The server is shutting down.",
+        "internal server error": "Something went wrong on the server. Reload the page and try again.",
+        "bad request": "The server couldn't read that. Reload the page and try again.",
+        "invalid request": "The server couldn't read that. Reload the page and try again.",
+        "payload too large": "That's too much to send at once.",
+        "invalid coordinates": "That spot is outside the world.",
+        "Ship not found": "That ship isn't there anymore. Reload the map.",
+        "timed out waiting for main thread": "The server is busy. Try again in a moment.",
+        "console bridge stopped": "The server is shutting down.",
+        "command is empty": "Type a command first.",
+        "unknown command": "There's no command with that name.",
+        "console unavailable": "The console isn't ready yet. Try again in a moment.",
+        "server unavailable": "The server isn't ready yet. Try again in a moment.",
+        "target is empty": "Type a player name or ID.",
+        "world not loaded": "The world hasn't loaded yet. Try again in a moment.",
+        "not enough disk space to save": "The server's disk is full, so the world didn't save. Free up space and try again.",
+        "the game skipped the save": "The game skipped this save. Try again in a moment.",
+        "target height unavailable": "Couldn't find the ground there. Pick another spot."
+    };
+
+    function friendlyError(text) {
+        if (typeof text !== "string") {
+            return text;
+        }
+        return Object.prototype.hasOwnProperty.call(FRIENDLY_ERRORS, text) ? FRIENDLY_ERRORS[text] : text;
+    }
+
+    function errorText(error, fallback) {
+        return error && error.message ? friendlyError(error.message) : fallback;
+    }
+
     async function fetchJson(path, options) {
         var requestOptions = {};
         Object.keys(options || {}).forEach(function (key) {
@@ -1412,13 +1459,13 @@
             payload = await response.json();
         } catch (error) {
             if (response.ok) {
-                throw new Error("Invalid server response");
+                throw new Error("The server sent back something unexpected. Reload the page and try again.");
             }
         }
         if (!response.ok) {
             var message = payload && typeof payload.error === "string"
-                ? payload.error
-                : "HTTP " + response.status;
+                ? friendlyError(payload.error)
+                : "The server couldn't do that. Reload the page and try again.";
             var requestError = new Error(message);
             requestError.status = response.status;
             throw requestError;
@@ -1655,16 +1702,16 @@
         elements.codexState.hidden = false;
         if (kind === "loading") {
             elements.codexState.appendChild(codexElement("span", "spinner"));
-            elements.codexState.appendChild(codexElement("span", "", "Unrolling the item catalog…"));
+            elements.codexState.appendChild(codexElement("span", "", "Loading items…"));
             return;
         }
 
         var copy = codexElement("div", "codex-state-copy");
-        copy.appendChild(codexElement("strong", "", "The Codex could not be opened"));
+        copy.appendChild(codexElement("strong", "", "Couldn't load the Codex"));
         copy.appendChild(codexElement(
             "span",
             "",
-            detail || "The catalog request failed. Check the connection and try again."
+            detail || "Check your connection and try again."
         ));
         var retry = codexElement("button", "console-primary-button", "Retry");
         retry.type = "button";
@@ -1719,9 +1766,6 @@
         if (version.mod) {
             versionParts.push("ValheimOne " + version.mod);
         }
-        if (version.schema !== undefined) {
-            versionParts.push("schema " + version.schema);
-        }
         elements.codexVersion.textContent = versionParts.length > 0
             ? versionParts.join(" · ")
             : "Valheim item & recipe catalog";
@@ -1755,7 +1799,7 @@
                     credentials: "same-origin"
                 });
                 if (!response.ok) {
-                    throw new Error("HTTP " + response.status);
+                    throw new Error("The server couldn't do that. Reload the page and try again.");
                 }
                 var payload = await response.json();
                 if (!payload || !Array.isArray(payload.items)) {
@@ -2080,7 +2124,7 @@
             });
             if (reverseUses.length > 0) {
                 var reverse = codexElement("div", "codex-reverse-uses");
-                reverse.appendChild(codexElement("strong", "codex-reverse-label", "Used to craft:"));
+                reverse.appendChild(codexElement("strong", "codex-reverse-label", "Used to craft"));
                 var visibleUses = codexShowAllReverseUses
                     ? reverseUses
                     : reverseUses.slice(0, CODEX_REVERSE_USE_LIMIT);
@@ -2189,7 +2233,7 @@
             elements.codexList.appendChild(codexElement(
                 "p",
                 "codex-empty",
-                "No items match those runes."
+                "No matching items"
             ));
             return;
         }
@@ -2287,7 +2331,7 @@
         }
         var item = catalogItemsByToken.get(String(tokenValue || "").toLocaleLowerCase());
         if (!item) {
-            showNoticeToast("That item is not present in this Codex");
+            showNoticeToast("That item isn't in the Codex");
             return;
         }
 
@@ -2417,12 +2461,14 @@
             payload = await response.json();
         } catch (error) {
             if (response.ok) {
-                throw new Error("Invalid server response");
+                throw new Error("The server sent back something unexpected. Reload the page and try again.");
             }
         }
 
         if (!response.ok) {
-            var message = payload && typeof payload.error === "string" ? payload.error : "HTTP " + response.status;
+            var message = payload && typeof payload.error === "string"
+                ? friendlyError(payload.error)
+                : "The server couldn't do that. Reload the page and try again.";
             var requestError = new Error(message);
             requestError.reason = payload && typeof payload.reason === "string" ? payload.reason : "";
             requestError.status = response.status;
@@ -2606,8 +2652,8 @@
     }
 
     function reportConsoleFailure(feed, label, error) {
-        var detail = error && error.message ? error.message : "Request failed";
-        var message = label + " failed (" + detail + ")";
+        var detail = errorText(error, "No answer from the server.");
+        var message = "Couldn't " + label + ". " + detail;
         if (consoleFailures[feed] === message) {
             return;
         }
@@ -3180,7 +3226,7 @@
                     buildCommandReference();
                 }
             } catch (error) {
-                reportConsoleFailure("meta", "Command metadata", error);
+                reportConsoleFailure("meta", "load the command list", error);
             } finally {
                 consoleMetaRequestPending = false;
                 consoleMetaPromise = null;
@@ -3196,8 +3242,8 @@
             var empty = document.createElement("p");
             empty.className = "console-reference-empty";
             empty.textContent = consoleMetaRequestPending
-                ? "Loading command metadata…"
-                : "No command metadata available.";
+                ? "Loading commands…"
+                : "Couldn't load the commands. Open Commands again to retry.";
             elements.commandReferenceBody.appendChild(empty);
             return;
         }
@@ -3250,7 +3296,7 @@
         if (consoleCommands.length === 0) {
             appendConsoleEntries([{
                 kind: "output",
-                text: "No command metadata available. Try again in a moment."
+                text: "Couldn't load the commands. Try again in a moment."
             }]);
             return;
         }
@@ -3275,7 +3321,7 @@
         entries.push({ kind: "help-separator" });
         entries.push({
             kind: "help-hint",
-            text: "click a command above the input while typing to autocomplete"
+            text: "Start typing for suggestions. Tab or a click fills one in."
         });
         appendConsoleEntries(entries);
     }
@@ -3398,7 +3444,7 @@
                 renderConsoleHistory(payload);
                 clearConsoleFailure("history");
             } catch (error) {
-                reportConsoleFailure("history", "Console history", error);
+                reportConsoleFailure("history", "load the console history", error);
             } finally {
                 appendConsoleEntries([{ kind: "live-divider", text: "--- live ---" }]);
                 consoleFollowLog = true;
@@ -3437,7 +3483,7 @@
             recordPollSuccess("console-log");
         } catch (error) {
             recordPollFailure("console-log");
-            reportConsoleFailure("log", "Console log", error);
+            reportConsoleFailure("log", "load the server log", error);
         } finally {
             consoleLogRequestPending = false;
         }
@@ -3544,7 +3590,7 @@
         } catch (error) {
             recordPollFailure("stats");
             if (reportFailure) {
-                reportConsoleFailure("stats", "Server stats", error);
+                reportConsoleFailure("stats", "load server stats", error);
             }
         } finally {
             statsRequestPending = false;
@@ -3662,12 +3708,12 @@
         try {
             var payload = await fetchConsoleJson("api/admin/banlist");
             if (!payload || !Array.isArray(payload.banned)) {
-                throw new Error(payload && payload.error ? payload.error : "Invalid server response");
+                throw new Error(payload && payload.error ? payload.error : "The server sent back something unexpected. Reload the page and try again.");
             }
             renderBannedPlayers(normalizeBannedPlayers(payload));
             clearConsoleFailure("banlist");
         } catch (error) {
-            reportConsoleFailure("banlist", "Ban list", error);
+            reportConsoleFailure("banlist", "load the ban list", error);
         } finally {
             consoleBanRequestPending = false;
             if (consoleBanRefreshQueued) {
@@ -3683,7 +3729,7 @@
         if (latestPlayers.length === 0) {
             var empty = document.createElement("li");
             empty.className = "console-empty-list";
-            empty.textContent = "No vikings ashore";
+            empty.textContent = "No players online";
             elements.consolePlayerList.appendChild(empty);
             return;
         }
@@ -3718,16 +3764,13 @@
         if (action === "kick") {
             elements.confirmMessage.textContent = "Kick " + player + "? The player can rejoin.";
         } else if (action === "ban") {
-            var undoTarget = playerId == null || String(playerId).trim() === ""
-                ? "<id>"
-                : String(playerId).trim();
             elements.confirmMessage.textContent = "Ban " + player +
-                "? Banned players can be restored with vo unban " + undoTarget + ".";
+                "? You can undo it with Unban in the Banned list.";
         } else {
             elements.confirmMessage.textContent = action.charAt(0).toUpperCase() +
                 action.slice(1) + " " + player + "?";
         }
-        elements.confirmSubmit.textContent = "Confirm";
+        elements.confirmSubmit.textContent = action.charAt(0).toUpperCase() + action.slice(1);
         elements.confirmSubmit.classList.add("is-danger");
         elements.confirmBackdrop.hidden = false;
         elements.confirmCancel.focus();
@@ -3753,9 +3796,9 @@
     function openShutdownConfirmDialog(command, details) {
         confirmAction = { action: "console-command", command: command };
         elements.confirmMessage.textContent = "Shut down the server in " + details.seconds +
-            "s? Everyone will disconnect after the world saves. Cancel with " +
-            "vo shutdown cancel.";
-        elements.confirmSubmit.textContent = "Confirm";
+            " seconds? The world saves first, then everyone is disconnected. Type " +
+            "vo shutdown cancel to stop it.";
+        elements.confirmSubmit.textContent = "Shut down";
         elements.confirmSubmit.classList.add("is-danger");
         elements.confirmBackdrop.hidden = false;
         elements.confirmCancel.focus();
@@ -3787,19 +3830,20 @@
         try {
             var payload = await postConsoleJson("api/admin/" + action, { player: player });
             if (!payload || payload.ok !== true) {
-                throw new Error(payload && payload.error ? payload.error : "Request rejected");
+                throw new Error(payload && payload.error ? payload.error : "The server didn't do that. Try again.");
             }
             appendConsoleEntries([{
                 kind: "output",
-                text: action.charAt(0).toUpperCase() + action.slice(1) + " completed for " + player + "."
+                text: (action === "kick" ? "Kicked " : action === "ban" ? "Banned " : "Unbanned ") +
+                    player + "."
             }]);
             if (action === "ban" || action === "unban") {
                 await loadBanList(true);
             }
         } catch (error) {
             appendConsoleError(
-                action.charAt(0).toUpperCase() + action.slice(1) + " failed (" +
-                (error && error.message ? error.message : "Request failed") + ")"
+                "Couldn't " + action + " " + player + ". " +
+                errorText(error, "No answer from the server.")
             );
         }
     }
@@ -3815,13 +3859,13 @@
         try {
             var payload = await postConsoleJson("api/admin/save", {});
             if (!payload || payload.ok !== true) {
-                throw new Error(payload && payload.error ? payload.error : "Request rejected");
+                throw new Error(payload && payload.error ? payload.error : "The server didn't do that. Try again.");
             }
             clearConsoleFailure("save");
             elements.saveStatus.textContent = payload.alreadySaving ? "Already saving" : "Save requested";
         } catch (error) {
-            elements.saveStatus.textContent = "Save failed";
-            reportConsoleFailure("save", "World save", error);
+            elements.saveStatus.textContent = "Couldn't save";
+            reportConsoleFailure("save", "save the world", error);
         }
     }
 
@@ -3860,7 +3904,7 @@
         try {
             var payload = await postConsoleJson("api/console/exec", { command: command });
             if (!payload || payload.ok !== true) {
-                throw new Error(payload && payload.error ? payload.error : "Command rejected");
+                throw new Error(payload && payload.error ? payload.error : "The server didn't run that command.");
             }
 
             var output = Array.isArray(payload.output) ? payload.output : [];
@@ -3869,8 +3913,8 @@
                 return { kind: "output", text: line == null ? "" : String(line) };
             }));
         } catch (error) {
-            appendConsoleError("Command failed (" +
-                (error && error.message ? error.message : "Request failed") + ")");
+            appendConsoleError("That command didn't run. " +
+                errorText(error, "No answer from the server."));
         }
     }
 
@@ -4021,8 +4065,8 @@
     function showConnectionLostState() {
         elements.mapStatus.hidden = false;
         elements.mapStatus.querySelector(".spinner").hidden = true;
-        elements.mapStatusText.textContent = "Connection lost — reload to reconnect";
-        elements.offlineBadge.textContent = "Connection lost — reload to reconnect";
+        elements.mapStatusText.textContent = "Lost connection to the server. Reload the page.";
+        elements.offlineBadge.textContent = "Lost connection to the server. Reload the page.";
         elements.offlineBadge.hidden = false;
     }
 
@@ -4085,7 +4129,7 @@
         showConnectionLostState();
         updateMapMetricStatus();
         updateFeedStalenessDots();
-        appendConsoleError("Connection lost — reload to reconnect");
+        appendConsoleError("Lost connection to the server. Reload the page.");
     }
 
     function setFeedState(feed, isOnline) {
@@ -4137,7 +4181,7 @@
         } catch (error) {
             if (!storageWriteWarningShown) {
                 storageWriteWarningShown = true;
-                showNoticeToast("Settings can't be saved — browser storage is unavailable");
+                showNoticeToast("This browser won't save your map settings, so they reset when you reload.");
             }
             return false;
         }
@@ -4787,7 +4831,7 @@
             } else if (action === "webpin-delete") {
                 if (actionButton.dataset.confirming !== "true") {
                     actionButton.dataset.confirming = "true";
-                    actionButton.textContent = "Confirm?";
+                    actionButton.textContent = "Delete pin?";
                     actionButton.classList.add("is-confirming");
                     window.clearTimeout(actionButton._voConfirmTimer);
                     actionButton._voConfirmTimer = window.setTimeout(function () {
@@ -5480,13 +5524,13 @@
             followPill.textContent = "";
         } else if (followTarget.kind === "player") {
             followPill.textContent =
-                "Following " + record.player.displayName + " — click to release";
+                "Following " + record.player.displayName + " · click to stop";
         } else {
             followPill.textContent = "Following " +
                 (record.entity.group === "ship"
                     ? shipDisplayName(record.entity.prefab)
                     : "Cart") +
-                " — click to release";
+                " · click to stop";
         }
     }
 
@@ -5561,7 +5605,7 @@
             var chip = document.createElement("span");
             chip.className = "boss-progress-chip" + (defeated ? " is-defeated" : "");
             chip.innerHTML = iconMarkup(boss.iconKey, "◆");
-            chip.title = boss.name + " — " + (defeated ? "Defeated" : "Not yet defeated");
+            chip.title = boss.name + ": " + (defeated ? "defeated" : "not defeated yet");
             chip.setAttribute("role", "img");
             chip.setAttribute("aria-label", chip.title);
             elements.bossProgression.appendChild(chip);
@@ -5574,7 +5618,7 @@
 
     function showDayToast(day) {
         window.clearTimeout(dayToastTimer);
-        elements.dayToast.textContent = "Day " + day + " dawns";
+        elements.dayToast.textContent = "Day " + day + " started";
         elements.dayToast.hidden = false;
         elements.dayToast.classList.remove("is-visible");
         void elements.dayToast.offsetWidth;
@@ -5755,7 +5799,7 @@
         if (initialMapLoadingTimedOut && !initialMapLoadingComplete) {
             elements.mapStatus.hidden = false;
             elements.mapStatus.querySelector(".spinner").hidden = true;
-            elements.mapStatusText.textContent = "World map loading timed out — reload to retry";
+            elements.mapStatusText.textContent = "The world map is taking too long. Reload the page.";
             return;
         }
         if (mapStatus && mapStatus.state === "ready") {
@@ -5774,8 +5818,8 @@
             var stylePercentage = Number.isFinite(styleProgress)
                 ? Math.round(Math.max(0, Math.min(1, styleProgress)) * 100)
                 : 0;
-            elements.mapStatusText.textContent = "Rendering " +
-                mapStyleRenderLabel(requestedStyle) + " — " + stylePercentage + "%";
+            elements.mapStatusText.textContent = "Drawing the " +
+                mapStyleRenderLabel(requestedStyle) + "… " + stylePercentage + "%";
             return;
         }
 
@@ -5784,7 +5828,7 @@
         var failed = mapStatus && mapStatus.state === "failed";
         spinner.hidden = failed;
         if (failed) {
-            elements.mapStatusText.textContent = "World map rendering failed";
+            elements.mapStatusText.textContent = "Couldn't draw the world map";
             return;
         }
 
@@ -5792,7 +5836,7 @@
         var percentage = Number.isFinite(progress)
             ? Math.round(Math.max(0, Math.min(1, progress)) * 100)
             : 0;
-        elements.mapStatusText.textContent = "Rendering world map — " + percentage + "%";
+        elements.mapStatusText.textContent = "Drawing the world map… " + percentage + "%";
     }
 
     function startMapLoadingTimeout() {
@@ -7835,7 +7879,24 @@
         return total;
     }
 
+    // Pin icon names people read; a key not listed here is spelled out from the key.
+    var WEB_PIN_ICON_LABELS = {
+        dungeon_crypt: "Crypt",
+        dungeon_mine: "Mine",
+        ore_copper: "Copper",
+        ore_iron: "Iron",
+        ore_silver: "Silver",
+        forage_berries: "Berries",
+        forage_mushroom: "Mushroom",
+        structure_camp: "Camp",
+        structure_ruins: "Ruins",
+        spawner_greydwarf: "Greydwarf nest"
+    };
+
     function webPinIconLabel(icon) {
+        if (Object.prototype.hasOwnProperty.call(WEB_PIN_ICON_LABELS, icon)) {
+            return WEB_PIN_ICON_LABELS[icon];
+        }
         return icon.split("_").map(function (part) {
             return part.charAt(0).toUpperCase() + part.slice(1);
         }).join(" ");
@@ -7921,14 +7982,14 @@
         labelInput.name = "label";
         labelInput.type = "text";
         labelInput.maxLength = 60;
-        labelInput.placeholder = "What is here?";
+        labelInput.placeholder = "Copper deposit";
         labelInput.autocomplete = "off";
         authorField.className = "webpin-dialog-field webpin-author-field";
         authorText.textContent = "Your name";
         authorInput.name = "author";
         authorInput.type = "text";
         authorInput.maxLength = 32;
-        authorInput.placeholder = "Viking name";
+        authorInput.placeholder = "Ragnar";
         authorInput.autocomplete = "nickname";
         error.className = "webpin-dialog-error";
         error.setAttribute("role", "alert");
@@ -8070,7 +8131,7 @@
             webPinDialog.querySelector('input[name="author"]').value
         );
         if (!author) {
-            showWebPinDialogError("Your name is required.");
+            showWebPinDialogError("Add your name first.");
             webPinDialog.querySelector('input[name="author"]').focus();
             return;
         }
@@ -8103,7 +8164,7 @@
             webPinDialogState = state;
             webPinDialog.hidden = false;
             showWebPinDialogError(
-                error && error.message ? error.message : "The pin could not be saved."
+                errorText(error, "Couldn't save the pin. Try again.")
             );
         } finally {
             submit.disabled = false;
@@ -8150,7 +8211,7 @@
         appRoot.classList.add("is-dropping-webpin");
         webPinButton.classList.add("is-active");
         webPinButton.title = "Click the map to drop a pin · Esc cancels";
-        webPinButton.setAttribute("aria-label", "Click the map to drop a pin; Escape cancels");
+        webPinButton.setAttribute("aria-label", "Click the map to drop a pin. Escape cancels.");
         webPinButton.setAttribute("aria-pressed", "true");
     }
 
@@ -8313,7 +8374,7 @@
         measureHud.hidden = true;
         measureHud.innerHTML = '<div class="measure-instruction"></div>' +
             '<div class="measure-total"></div>' +
-            '<div class="measure-footnote">sail time varies with wind (longship 3.6-9.4 m/s)</div>';
+            '<div class="measure-footnote">Sail time depends on the wind (longship 3.6 to 9.4 m/s)</div>';
         elements.mapPane.appendChild(measureHud);
         new MeasureControl().addTo(map);
 
@@ -8458,12 +8519,12 @@
 
     function shipTowRefusalMessage(error) {
         if (error && error.reason === "players_aboard") {
-            return "Players are aboard or nearby";
+            return "Can't tow while players are on board or nearby";
         }
         if (error && error.reason === "too_far") {
-            return "Too far — 5 km limit";
+            return "Too far. Ships can be towed up to 5 km.";
         }
-        return error && error.message ? error.message : "Tow request failed";
+        return errorText(error, "Couldn't tow the ship. Try again.");
     }
 
     async function submitShipTow(action) {
@@ -8488,7 +8549,7 @@
             if (!payload || payload.ok !== true) {
                 var rejection = new Error(payload && payload.message
                     ? payload.message
-                    : "Tow request rejected");
+                    : "The server didn't tow the ship. Try again.");
                 rejection.reason = payload && payload.reason ? payload.reason : "";
                 throw rejection;
             }
@@ -8560,8 +8621,8 @@
         pingArmed = true;
         appRoot.classList.add("is-pinging");
         pingButton.classList.add("is-active");
-        pingButton.title = "Click the map to send ping · Esc cancels";
-        pingButton.setAttribute("aria-label", "Click the map to send ping; Escape cancels");
+        pingButton.title = "Click the map to send a ping · Esc cancels";
+        pingButton.setAttribute("aria-label", "Click the map to send a ping. Escape cancels.");
         pingButton.setAttribute("aria-pressed", "true");
     }
 
@@ -8590,13 +8651,13 @@
                 body: JSON.stringify({ x: world.x, z: world.z })
             });
             if (!payload || payload.ok !== true) {
-                throw new Error(payload && payload.error ? payload.error : "Request rejected");
+                throw new Error(payload && payload.error ? payload.error : "The server didn't do that. Try again.");
             }
             flashMapPingResult(true, "Ping sent to in-game maps");
         } catch (error) {
             flashMapPingResult(
                 false,
-                "Ping failed: " + (error && error.message ? error.message : "request failed")
+                "Couldn't send the ping. " + errorText(error, "No answer from the server.")
             );
         } finally {
             pingRequestPending = false;
@@ -8876,7 +8937,7 @@
         }
 
         return {
-            playerName: playerName || "A viking",
+            playerName: playerName || "A player",
             receivedAt: Date.now(),
             sequence: Math.floor(sequence),
             shout: payload.shout === true,
@@ -9039,12 +9100,12 @@
                 body: JSON.stringify({ text: text })
             });
             if (!payload || payload.ok !== true) {
-                throw new Error(payload && payload.error ? payload.error : "Message rejected");
+                throw new Error(payload && payload.error ? payload.error : "The server didn't send it. Try again.");
             }
             elements.chatInput.value = "";
         } catch (error) {
             setChatSendNotice(
-                error && error.message ? error.message : "Message could not be sent"
+                errorText(error, "Couldn't send the message. Try again.")
             );
         } finally {
             chatSendPending = false;
@@ -9390,7 +9451,7 @@
                 items.push({
                     glyph: definition.glyph,
                     groupOnly: true,
-                    kind: "POI layer",
+                    kind: "Map layer",
                     layerKey: group,
                     name: definition.label,
                     searchText: definition.label
@@ -10100,10 +10161,10 @@
                 );
             });
             if (entityAvailability === "unknown") {
-                appendLayerStatus(liveBody, "Entity data: no data yet");
+                appendLayerStatus(liveBody, "Loading creatures, ships and more…");
             }
         } else if (hasLiveAccess()) {
-            appendLayerStatus(liveBody, "Entity data unavailable");
+            appendLayerStatus(liveBody, "Creatures, ships and carts are off on this server");
         }
         if (currentRaidEvent) {
             appendDisplayLayerRow(liveBody, "Raid area", "◯", "raid", "1");
@@ -10139,10 +10200,10 @@
             });
         });
         if (feedLastUpdated.pins === 0) {
-            appendLayerStatus(placesBody, "Pins: no save yet");
+            appendLayerStatus(placesBody, "Loading pins…");
         }
         if (feedLastUpdated.pois === 0 || poiLoadPending) {
-            appendLayerStatus(placesBody, "POIs: no data yet");
+            appendLayerStatus(placesBody, "Loading places…");
         }
 
         var overlayFeeds = hasLiveAccess()
@@ -10158,7 +10219,7 @@
             appendLayerRow(
                 overlaysBody,
                 "heatmap",
-                "Activity Heatmap",
+                "Activity heatmap",
                 "▦",
                 "heatmap",
                 { counted: false }
@@ -10169,7 +10230,7 @@
             appendLayerRow(
                 overlaysBody,
                 "timelapse",
-                "World Timelapse",
+                "World timelapse",
                 "◷",
                 "timelapse",
                 { counted: false, rowClass: "timelapse-layer-row" }
@@ -10245,14 +10306,14 @@
         count.dataset.sectionCount = key;
         allButton.type = "button";
         allButton.className = "layer-section-mini";
-        allButton.textContent = "all";
+        allButton.textContent = "All";
         allButton.setAttribute("aria-label", "Show all " + labelText.toLowerCase() + " layers");
         addAppListener(allButton, "click", function () {
             setSectionLayers(section, true);
         });
         noneButton.type = "button";
         noneButton.className = "layer-section-mini";
-        noneButton.textContent = "none";
+        noneButton.textContent = "None";
         noneButton.setAttribute("aria-label", "Hide all " + labelText.toLowerCase() + " layers");
         addAppListener(noneButton, "click", function () {
             setSectionLayers(section, false);
@@ -10282,7 +10343,7 @@
         segments.className = "layer-map-style-segments";
         segments.setAttribute("role", "group");
         segments.setAttribute("aria-label", "Map style");
-        [["default", "Default"], ["topo", "Topographic"], ["chart", "Old Chart"]]
+        [["default", "Default"], ["topo", "Topographic"], ["chart", "Old chart"]]
             .forEach(function (choice) {
                 var button = document.createElement("button");
                 var isSelected = layerSettings.mapStyle === choice[0];
@@ -10418,7 +10479,7 @@
         count.dataset.poiCategoryCount = category.key;
         allButton.type = "button";
         allButton.className = "poi-category-mini";
-        allButton.textContent = "all";
+        allButton.textContent = "All";
         allButton.setAttribute("aria-label", "Show all " + category.label.toLowerCase());
         addAppListener(allButton, "click", function (event) {
             event.stopPropagation();
@@ -10426,7 +10487,7 @@
         });
         noneButton.type = "button";
         noneButton.className = "poi-category-mini";
-        noneButton.textContent = "none";
+        noneButton.textContent = "None";
         noneButton.setAttribute("aria-label", "Hide all " + category.label.toLowerCase());
         addAppListener(noneButton, "click", function (event) {
             event.stopPropagation();
@@ -10688,11 +10749,11 @@
             var piecesTruncated = metadata && metadata.piecesTruncated === true;
             note.hidden = !truncated && !piecesTruncated;
             if (truncated) {
-                note.textContent = "Showing first " + formatInteger(metadata.cap) +
-                    " — world has more";
+                note.textContent = "Showing the first " + formatInteger(metadata.cap) +
+                    ". The world has more.";
             } else if (piecesTruncated) {
-                note.textContent = "Survey capped at " + formatInteger(metadata.pieceCap) +
-                    " structures — results may be incomplete";
+                note.textContent = "Only the first " + formatInteger(metadata.pieceCap) +
+                    " structures were checked, so some may be missing.";
             } else {
                 note.textContent = "";
             }
@@ -10725,34 +10786,34 @@
 
     function feedAgeText(updatedAt) {
         if (!updatedAt) {
-            return "not loaded";
+            return "Not loaded";
         }
         var seconds = Math.max(0, Math.floor((Date.now() - updatedAt) / 1000));
-        return "updated " + seconds + "s ago";
+        return "Updated " + seconds + "s ago";
     }
 
     function feedStaleness(feed) {
         if (feed === "fog") {
             if (!fogLayerIsEnabled()) {
-                return { state: "grey", title: "fog off" };
+                return { state: "grey", title: "Fog off" };
             }
             if (fogOverlay && fogDisplayedRevision !== null && map && map.hasLayer(fogOverlay)) {
                 return { state: "green", title: feedAgeText(feedLastUpdated.fog) };
             }
-            return { state: "amber", title: "fog loading" };
+            return { state: "amber", title: "Fog loading" };
         }
         if (feed === "heatmap") {
             if (!heatmapIsEnabled()) {
-                return { state: "grey", title: "heatmap off" };
+                return { state: "grey", title: "Heatmap off" };
             }
             if (!feedLastUpdated.heatmap) {
-                return { state: "amber", title: "heatmap loading" };
+                return { state: "amber", title: "Heatmap loading" };
             }
         }
 
         var updatedAt = feedLastUpdated[feed] || 0;
         if (!updatedAt) {
-            return { state: "grey", title: "not loaded" };
+            return { state: "grey", title: "Not loaded" };
         }
         if (feed === "pois") {
             return { state: "green", title: feedAgeText(updatedAt) };
@@ -10762,7 +10823,7 @@
                 return { state: "red", title: feedAgeText(updatedAt) };
             }
             if (latestStatusSnapshotStale === null) {
-                return { state: "grey", title: "not loaded" };
+                return { state: "grey", title: "Not loaded" };
             }
             return {
                 state: latestStatusSnapshotStale ? "red" : "green",
@@ -11136,7 +11197,7 @@
                 button.appendChild(icon);
                 button.appendChild(label);
                 if (bossGroup.instances.length > 1) {
-                    button.title = "click again for next altar";
+                    button.title = "Click again for the next altar";
                 }
                 addAppListener(button, "click", function () {
                     setOpen(false, false);
@@ -11497,7 +11558,7 @@
                 anonymous: !rawName,
                 biome: typeof player.biome === "string" ? player.biome.trim() : "",
                 dead: typeof player.dead === "boolean" ? player.dead : null,
-                displayName: rawName || "Explorer",
+                displayName: rawName || "Player",
                 distanceTodayM: finiteNumberOrNull(player.distanceTodayM),
                 headingDeg: finiteNumberOrNull(player.headingDeg),
                 health: finiteNumberOrNull(player.health),
@@ -11540,7 +11601,7 @@
         if (dungeonBadge) {
             dungeonBadge.hidden = !record.player.inDungeon;
             dungeonBadge.title = record.player.inDungeon
-                ? "In: " + record.player.inDungeon.label
+                ? "In " + record.player.inDungeon.label
                 : "";
         }
         markerElement.classList.toggle("is-in-dungeon", Boolean(record.player.inDungeon));
@@ -12304,7 +12365,7 @@
             var player = record.player;
             var motion = playerMotion(player);
             elements.cinemaPlayerName.textContent = player.displayName;
-            elements.cinemaPlayerBiome.textContent = player.biome || "Unknown wilds";
+            elements.cinemaPlayerBiome.textContent = player.biome || "Unknown biome";
             elements.cinemaPlayerSpeed.textContent = motion && Number.isFinite(motion.speedMps)
                 ? motion.speedMps.toFixed(1) + " m/s · " + playerMovementMode(player, motion)
                 : "— m/s · unknown";
@@ -12323,7 +12384,7 @@
         var showStayButton = false;
         var isIdle = latestPlayers.length === 0;
         if (isIdle) {
-            primary = "No vikings ashore — touring the world until someone joins";
+            primary = "No players online. Touring the map until someone joins.";
             if (cinemaState.raidJumpActive && currentRaidEvent) {
                 secondary = "Raid · " + currentRaidEvent.name;
                 showStayButton = true;
@@ -12338,7 +12399,7 @@
                 ? "Waiting for " + cinemaState.locked.name + " to return…"
                 : "Locked on " + cinemaState.locked.name;
         } else {
-            primary = "Auto-cycling · click a player to lock";
+            primary = "Switching between players · click one to stay on them";
         }
         elements.cinemaModeChip.textContent = primary;
         elements.cinemaModeChip.classList.toggle("is-idle", isIdle);
@@ -12360,13 +12421,13 @@
             ? playerFeed
             : statusFeed;
         if (failedFeeds.has("players") || failedFeeds.has("status")) {
-            worst = { state: "red", title: "feed reconnecting" };
+            worst = { state: "red", title: "Reconnecting…" };
         }
         var labels = {
-            amber: "Feed delayed",
+            amber: "Updates delayed",
             green: "Live",
-            grey: "Waiting for feeds",
-            red: "Feed stale"
+            grey: "Connecting…",
+            red: "Not updating"
         };
         elements.cinemaStaleness.className = "cinema-staleness is-" + worst.state;
         elements.cinemaStaleness.textContent = labels[worst.state];
@@ -12573,7 +12634,7 @@
         if (players.length === 0) {
             var empty = document.createElement("li");
             empty.className = "empty-player-list";
-            empty.textContent = "No vikings ashore";
+            empty.textContent = "No players online";
             elements.playerList.appendChild(empty);
             return;
         }
@@ -12625,8 +12686,8 @@
                 var dungeonTag = document.createElement("button");
                 dungeonTag.type = "button";
                 dungeonTag.className = "player-dungeon-roster-tag";
-                dungeonTag.textContent = "In: " + player.inDungeon.label;
-                dungeonTag.title = "View " + player.inDungeon.label + " interior";
+                dungeonTag.textContent = "In " + player.inDungeon.label;
+                dungeonTag.title = "Open the " + player.inDungeon.label + " map";
                 addAppListener(dungeonTag, "click", function (event) {
                     event.preventDefault();
                     event.stopPropagation();
@@ -12666,8 +12727,8 @@
             var dungeonTag = document.createElement("button");
             dungeonTag.type = "button";
             dungeonTag.className = "player-dungeon-tag";
-            dungeonTag.textContent = "In: " + player.inDungeon.label;
-            dungeonTag.title = "View dungeon interior";
+            dungeonTag.textContent = "In " + player.inDungeon.label;
+            dungeonTag.title = "Open the dungeon map";
             addAppListener(dungeonTag, "click", function (event) {
                 event.preventDefault();
                 event.stopPropagation();
@@ -13021,7 +13082,7 @@
             return "aboard ship";
         }
         if (motion.speedMps < 0.2) {
-            return "rest";
+            return "standing";
         }
         if (motion.speedMps < 2.6) {
             return "walking";
@@ -13076,7 +13137,7 @@
         }
         if (Number.isFinite(player.sessionStartUnixMs) && player.sessionStartUnixMs > 0) {
             rows.push({
-                label: "Session",
+                label: "Online for",
                 value: formatSessionDuration(player.sessionStartUnixMs)
             });
         }
@@ -13120,7 +13181,7 @@
                 action: "watch",
                 kind: "player",
                 key: player.key,
-                label: "Cinema"
+                label: "Watch"
             });
         }
         actions.push({
@@ -13128,7 +13189,7 @@
             active: trailSelected,
             key: player.trailKey,
             kind: "player",
-            label: trailSelected ? "Hide trail" : "Trail 15m"
+            label: trailSelected ? "Hide trail" : "Show trail"
         });
         return popupShell({
             actions: actions,
@@ -13211,7 +13272,7 @@
         }
         if (record.group.indexOf("forage_") === 0) {
             if (record.state === "respawning" || record.available === 0) {
-                return "Picked — respawning";
+                return "Picked, growing back";
             }
             if (record.available !== null) {
                 return record.available + " of " + record.memberCount + " available";
@@ -13396,12 +13457,12 @@
             ? {
                 action: "dungeon-open",
                 key: dungeon.id,
-                label: "View Interior"
+                label: "View map"
             }
             : {
                 action: "dungeon-open",
                 disabled: true,
-                label: "Interior unavailable"
+                label: "No map available"
             };
     }
 
@@ -13434,7 +13495,7 @@
             rows.push({ label: "Cluster", value: "×" + record.memberCount });
         }
         if (dungeonPlayerCount > 0) {
-            rows.push({ label: "Vikings inside", value: String(dungeonPlayerCount) });
+            rows.push({ label: "Players inside", value: String(dungeonPlayerCount) });
         }
         rows.push(positionPopupRow(record.x, record.z));
         var actions = [];
@@ -13490,7 +13551,7 @@
         elements.dungeonTitle.textContent =
             typeof dungeon.label === "string" && dungeon.label
                 ? dungeon.label
-                : "Dungeon interior";
+                : "Dungeon map";
         var dungeonType = typeof dungeon.type === "string"
             ? dungeon.type.trim()
             : "";
@@ -13499,7 +13560,7 @@
             dungeonType
         ) ? POI_GROUPS[dungeonType] : null;
         elements.dungeonType.textContent = loading
-            ? "Surveying"
+            ? "Loading…"
             : dungeonTypeDefinition && dungeonTypeDefinition.label
                 ? dungeonTypeDefinition.label
                 : dungeonType ? prettifyEntityName(dungeonType) : "—";
@@ -13509,8 +13570,8 @@
             ? "— rooms"
             : roomCount + (roomCount === 1 ? " room" : " rooms");
         elements.dungeonGenerated.textContent = loading
-            ? "Surveying"
-            : dungeon.generated === true ? "Generated" : "Unvisited";
+            ? ""
+            : dungeon.generated === true ? "Visited" : "Unvisited";
         elements.dungeonGenerated.classList.toggle(
             "is-unvisited",
             !loading && dungeon.generated !== true
@@ -13521,10 +13582,10 @@
             Math.floor(Number(dungeon.playersInside) || 0)
         );
         elements.dungeonLiveStatus.textContent = loading
-            ? "Reading the runes…"
+            ? "Loading…"
             : playersInside + (playersInside === 1
-                ? " viking inside"
-                : " vikings inside");
+                ? " player inside"
+                : " players inside");
     }
 
     function dungeonEntranceText(entrance) {
@@ -13870,7 +13931,7 @@
         if (dungeon.generated !== true) {
             setDungeonStage("empty");
             elements.dungeonEmptyCopy.textContent =
-                "Interior not yet generated — no viking has been here";
+                "No one has visited yet, so there's no map";
             elements.dungeonEntranceInfo.textContent =
                 dungeonEntranceText(dungeon.entrance);
             return;
@@ -13880,7 +13941,7 @@
         if (!dungeon.interior || rooms.length === 0) {
             setDungeonStage("empty");
             elements.dungeonEmptyCopy.textContent =
-                "The entrance is known, but no interior rooms were found";
+                "No rooms found inside";
             elements.dungeonEntranceInfo.textContent =
                 dungeonEntranceText(dungeon.entrance);
             return;
@@ -13902,8 +13963,8 @@
 
     function renderDungeonError(message) {
         elements.dungeonError.textContent =
-            message || "The dungeon survey could not be loaded";
-        elements.dungeonLiveStatus.textContent = "Survey unavailable";
+            message || "Couldn't load this dungeon map. Try again in a moment.";
+        elements.dungeonLiveStatus.textContent = "Map not available";
         setDungeonStage("error");
     }
 
@@ -13944,7 +14005,7 @@
             }
             if (!dungeon || typeof dungeon !== "object" ||
                 typeof dungeon.id !== "string") {
-                throw new Error("Invalid dungeon survey");
+                throw new Error("Couldn't read this dungeon map. Try again in a moment.");
             }
             dungeonDetailCache.set(dungeonId, dungeon);
             renderDungeonPayload(dungeon);
@@ -13952,7 +14013,7 @@
             if (dungeonId === activeDungeonId &&
                 requestSequence === dungeonDetailRequestSequence &&
                 !dungeonDetailCache.has(dungeonId)) {
-                renderDungeonError(error && error.message);
+                renderDungeonError(error && error.message ? friendlyError(error.message) : "");
             } else if (dungeonId === activeDungeonId &&
                 requestSequence === dungeonDetailRequestSequence) {
                 elements.dungeonLiveStatus.textContent = "Live update delayed";
@@ -14058,16 +14119,16 @@
         var rows = [];
         var author = typeof pin.author === "string" ? pin.author.trim() : "";
         if (pin.checked) {
-            rows.push({ label: "Status", value: "✓ charted-off" });
+            rows.push({ label: "Status", value: "✓ Checked off" });
         }
         if (author) {
-            rows.push({ label: "Charted by", value: author });
+            rows.push({ label: "Added by", value: author });
         }
         rows.push(positionPopupRow(pin.x, pin.z));
         return popupShell({
             feed: "pins",
             glyph: "⌖",
-            kicker: "CHARTED PIN",
+            kicker: "IN-GAME PIN",
             rows: rows,
             title: pin.name
         });
@@ -14079,7 +14140,7 @@
             actions.push({
                 action: "webpin-toggle",
                 key: pin.id,
-                label: pin.checked ? "Restore" : "Check off"
+                label: pin.checked ? "Uncheck" : "Check off"
             });
             actions.push({ action: "webpin-edit", key: pin.id, label: "Edit" });
             actions.push({
@@ -14091,9 +14152,9 @@
         }
         // the public view gets no author (0.13.32), so the row is left out when there is none
         var author = typeof pin.author === "string" ? pin.author.trim() : "";
-        var rows = [{ label: "Status", value: pin.checked ? "✓ charted-off" : "Open" }];
+        var rows = [{ label: "Status", value: pin.checked ? "✓ Checked off" : "Open" }];
         if (author) {
-            rows.push({ label: "Charted by", value: author });
+            rows.push({ label: "Added by", value: author });
         }
         rows.push(positionPopupRow(pin.x, pin.z));
         var popup = popupShell({
@@ -14191,7 +14252,7 @@
             active: trailSelected,
             key: entity.trailKey,
             kind: "ship",
-            label: trailSelected ? "Hide trail" : "Trail 15m"
+            label: trailSelected ? "Hide trail" : "Show trail"
         }];
         if (currentView === "admin" && entity.id) {
             actions.push({
@@ -14231,7 +14292,7 @@
                 active: trailSelected,
                 key: entity.trailKey,
                 kind: "cart",
-                label: trailSelected ? "Hide trail" : "Trail 15m"
+                label: trailSelected ? "Hide trail" : "Show trail"
             }],
             feed: "entities",
             glyph: ENTITY_GROUPS.cart.glyph,
@@ -14266,7 +14327,7 @@
         } else if (pair.kind === "conflict") {
             rows.push({
                 label: "Status",
-                value: "Tag conflict (" + pair.count + " portals)"
+                value: pair.count + " portals share this tag"
             });
         } else {
             rows.push({ label: "Status", value: "Unpaired" });
@@ -14473,7 +14534,7 @@
             label: "Radius",
             value: Math.round(event.radius) + " m"
         }, {
-            label: "Vikings inside",
+            label: "Players inside",
             value: String(nearbyPlayers(event.x, event.z, event.radius).length)
         }];
         if (progress) {
@@ -14575,7 +14636,7 @@
             title: group === "ghosts"
                 ? (typeof poi.name === "string" && poi.name.trim()
                     ? poi.name.trim()
-                    : "Unknown viking")
+                    : "Unknown player")
                 : resource ? resourcePoiTitle(group) : prettifyPoiName(poi.name),
             totalPlaySeconds: totalPlaySeconds,
             x: Number(poi.x),
@@ -15107,8 +15168,8 @@
                     !resourceSurveyToastGroups.has(group)) {
                     resourceSurveyToastGroups.add(group);
                     showNoticeToast(
-                        "Surveying the world for " + POI_GROUPS[group].label +
-                        " — first results in a few minutes"
+                        "Searching the world for " + POI_GROUPS[group].label +
+                        ". First results show up in a few minutes."
                     );
                 }
                 nextDelay = state.scanning
@@ -15706,7 +15767,7 @@
                 return;
             }
             if (!response.ok) {
-                throw new Error("HTTP " + response.status);
+                throw new Error("The server couldn't do that. Reload the page and try again.");
             }
 
             var payload = await response.json();
@@ -15982,7 +16043,7 @@
         name.textContent = pin.label || "Web pin";
         author.className = "webpin-tooltip-author";
         var authorName = typeof pin.author === "string" ? pin.author.trim() : "";
-        author.textContent = "Charted by " + authorName;
+        author.textContent = "Added by " + authorName;
         tooltip.appendChild(name);
         if (authorName) {
             tooltip.appendChild(document.createTextNode(" "));
@@ -16057,8 +16118,8 @@
                         requestWebPinsFetch();
                     } catch (error) {
                         marker.setLatLng(originalLatLng);
-                        showNoticeToast("Pin move failed: " +
-                            (error && error.message ? error.message : "request failed"));
+                        showNoticeToast("Couldn't move the pin. " +
+                            errorText(error, "No answer from the server."));
                     } finally {
                         if (marker._map && marker.dragging && canEditWebPin(pin)) {
                             marker.dragging.enable();
@@ -16086,8 +16147,8 @@
             requestWebPinsFetch();
         } catch (error) {
             button.disabled = false;
-            showNoticeToast("Pin update failed: " +
-                (error && error.message ? error.message : "request failed"));
+            showNoticeToast("Couldn't change the pin. " +
+                errorText(error, "No answer from the server."));
         }
     }
 
@@ -16111,8 +16172,8 @@
             button.dataset.confirming = "false";
             button.textContent = "Delete";
             button.classList.remove("is-confirming");
-            showNoticeToast("Pin delete failed: " +
-                (error && error.message ? error.message : "request failed"));
+            showNoticeToast("Couldn't delete the pin. " +
+                errorText(error, "No answer from the server."));
         }
     }
 
@@ -16418,11 +16479,11 @@
         elements.leaderboardList.textContent = "";
         var note = "";
         if (!leaderboardLoaded) {
-            note = "Reading the runes…";
+            note = "Loading…";
         } else if (leaderboardLoadFailed) {
-            note = "Leaderboard unavailable";
+            note = "Couldn't load the leaderboard";
         } else if (leaderboardPlayers.length === 0) {
-            note = "No sagas recorded this wipe";
+            note = "No players yet";
         }
 
         elements.leaderboardNote.hidden = !note;
@@ -16576,7 +16637,7 @@
         if (data && typeof data.name === "string" && data.name.trim()) {
             return data.name.trim();
         }
-        return "A viking";
+        return "A player";
     }
 
     function sagaPresentation(event) {
@@ -16587,21 +16648,21 @@
                     className: "is-join",
                     fallbackGlyph: "✦",
                     iconKey: "player",
-                    text: sagaName(data) + " arrived"
+                    text: sagaName(data) + " joined"
                 };
             case "player.leave":
                 return {
                     className: "is-leave",
                     fallbackGlyph: "↠",
                     iconKey: "ship",
-                    text: sagaName(data) + " departed"
+                    text: sagaName(data) + " left"
                 };
             case "player.death":
                 return {
                     className: "is-death",
                     fallbackGlyph: "☠",
                     iconKey: "tombstone",
-                    text: sagaName(data) + " fell"
+                    text: sagaName(data) + " died"
                 };
             case "raid.start":
                 return {
@@ -16631,8 +16692,8 @@
                     fallbackGlyph: "☀",
                     iconKey: "saga_day",
                     text: Number.isFinite(day)
-                        ? "Day " + Math.floor(day) + " dawns"
-                        : "A new day dawns"
+                        ? "Day " + Math.floor(day) + " started"
+                        : "A new day started"
                 };
             case "chat":
                 var speaker = sagaName(data);
@@ -16644,8 +16705,8 @@
                     className: "is-chat" + (data.shout === true ? " is-shout" : ""),
                     fallbackGlyph: data.shout === true ? "📯" : "❝",
                     iconKey: "saga_chat",
-                    text: "“" + message + "” — " +
-                        (data.shout === true ? speaker.toUpperCase() : speaker)
+                    text: (data.shout === true ? speaker.toUpperCase() : speaker) +
+                        ": “" + message + "”"
                 };
             default:
                 return null;
@@ -16712,13 +16773,13 @@
         if (feedEvents.length > 0) {
             note = "";
         } else if (sagaEnabled === false) {
-            note = "Activity log disabled";
+            note = "Turned off on this server";
         } else if (!sagaLoaded) {
-            note = "Reading the runes…";
+            note = "Loading…";
         } else if (sagaLoadFailed) {
-            note = "Server events unavailable";
+            note = "Couldn't load server events";
         } else {
-            note = "No events recorded yet";
+            note = "No events yet";
         }
 
         elements.sagaNote.hidden = !note;
@@ -17308,7 +17369,7 @@
             return;
         }
         if (storageWrite(MOTD_VERSION_STORAGE_KEY, pluginVersion)) {
-            showNoticeToast("Map updated — v" + pluginVersion);
+            showNoticeToast("Map updated to version " + pluginVersion);
         }
     }
 

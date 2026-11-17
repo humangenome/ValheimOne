@@ -159,7 +159,7 @@ manifest = {
     "name": "ValheimOne",
     "version_number": version,
     "website_url": "https://github.com/HumanGenome/ValheimOne",
-    "description": "Server plugin: live browser map, dungeon viewer, item codex, admin console, Discord alerts and opt-in gameplay modules. Map and console work with vanilla clients.",
+    "description": "Adds a live web map, a browser admin console, item and recipe search, Discord alerts and up to 127 players to a Valheim dedicated server. Players join with the normal game.",
     "dependencies": [dependency],
 }
 if len(manifest["description"]) > 250:
@@ -171,7 +171,7 @@ PY
 
 # ------------ text gate: nothing on the Thunderstore page promotes a service
 
-gate_pattern='survivalservers|utm_|official hosting|recommended host|server hosting by|coupon|promo code|% off|affiliate'
+gate_pattern='survivalservers|utm_|official hosting|recommended host|server hosting by|coupon|promo code|% off|\baffiliates?\b'
 if grep -n -i -E "${gate_pattern}" "${stage}/manifest.json" "${stage}/README.md" "${stage}/CHANGELOG.md"; then
     fail "promotional text in the Thunderstore page files (lines above); Thunderstore rejects listings that advertise an outside service"
 fi

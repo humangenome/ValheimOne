@@ -3600,6 +3600,10 @@ body.is-dropping-webpin #map .leaflet-overlay-pane path {
     text-transform: uppercase;
 }
 
+.dungeon-meta span:empty {
+    display: none;
+}
+
 .dungeon-meta #dungeon-type {
     border-color: rgba(180, 154, 203, 0.36);
     color: #cdb9dd;
@@ -6186,8 +6190,7 @@ button.codex-use-chip {
     gap: 10px;
 }
 
-.console-header-button,
-.console-reference-close {
+.console-header-button {
     padding: 5px 8px;
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -6204,9 +6207,7 @@ button.codex-use-chip {
 
 .console-header-button:hover,
 .console-header-button:focus-visible,
-.console-header-button.is-active,
-.console-reference-close:hover,
-.console-reference-close:focus-visible {
+.console-header-button.is-active {
     border-color: var(--border-strong);
     outline: none;
     box-shadow: 0 0 0 1px var(--border);
@@ -6858,6 +6859,7 @@ button.codex-use-chip {
 }
 
 .console-confirm-dialog {
+    position: relative;
     width: min(330px, 100%);
     padding: 18px;
     border: 1px solid var(--border-strong);
@@ -6868,9 +6870,42 @@ button.codex-use-chip {
 
 .console-confirm-dialog p {
     margin: 0 0 17px;
+    padding-right: 30px;
     color: var(--text);
     font-size: 13px;
     font-weight: 600;
+}
+
+.console-confirm-close {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+}
+
+.console-confirm-close,
+.console-reference-close {
+    display: grid;
+    width: 26px;
+    height: 26px;
+    padding: 0 0 2px;
+    place-items: center;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: rgba(18, 14, 10, 0.55);
+    color: var(--secondary);
+    cursor: pointer;
+    font-family: Georgia, serif;
+    font-size: 18px;
+    line-height: 1;
+}
+
+.console-confirm-close:hover,
+.console-confirm-close:focus-visible,
+.console-reference-close:hover,
+.console-reference-close:focus-visible {
+    border-color: var(--border-strong);
+    outline: none;
+    color: var(--accent);
 }
 
 .console-confirm-actions {

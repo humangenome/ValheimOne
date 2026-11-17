@@ -52,7 +52,7 @@ curl http://<server-ip>:8790/api/status
 
 ## GET /api/catalog
 
-`GET /api/catalog` returns the startup-built Codex of Items payload to every view tier, including tokenless callers when `PublicView = false`. It contains no world, player, seed, position, or ZDO data. The server reuses `catalog.json` from the LiveMap sidecar directory when its game, mod, and schema versions match.
+`GET /api/catalog` returns the startup-built Codex payload to every view tier, including tokenless callers when `PublicView = false`. It contains no world, player, seed, position, or ZDO data. The server reuses `catalog.json` from the LiveMap sidecar directory when its game, mod, and schema versions match.
 
 ```json
 {
@@ -124,7 +124,7 @@ With a non-empty `AccessToken`, the same port serves admin actions; console-spec
 | `/api/timelapse/frame` | GET `?t=<unix-ms>` | Uses the same access rules as the timelapse index. Returns one aggregate history frame with explored fog, bases, movement, world day and boss progression, plus portal, bed, and ward positions when captured. |
 | `/api/leaderboard` | GET | Admin/shared only; public returns `404`. Returns per-wipe playtime, deaths, and distance traveled for up to 50 display names; no platform identifiers are exposed. |
 | `/api/dungeons` | GET | Admin/shared only; public returns `404`. Returns discovered dungeon entrances with generation and interior state, room counts, and live-player counts. |
-| `/api/dungeons/{id}` | GET | Admin/shared only; public returns `404`. Returns one dungeon's generated room layout and live players inside for the View Interior schematic; unknown IDs return `404`. |
+| `/api/dungeons/{id}` | GET | Admin/shared only; public returns `404`. Returns one dungeon's generated room layout and live players inside for the dungeon map (View map); unknown IDs return `404`. |
 | `/api/entities` | GET | Admin and shared views + `EntityLayer = true` only (public `404`). Ships, carts, portals, tombstones, wards, beds and creatures (refreshed every 30 s, creatures every 10 s, while a map asks for them; per-kind caps from 150 to 500 with a `truncated` flag) plus the active raid `event` object. The scan reads the world once for every tracked kind together, at most 2 ms of each frame. |
 
 Admins also get an `"event"` raid object (`{name,x,z,radius,elapsed,duration}` or `null`) on `/api/status` regardless of `EntityLayer`.

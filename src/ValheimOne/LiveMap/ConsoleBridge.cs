@@ -558,7 +558,7 @@ internal sealed class ConsoleBridge
                     {
                         return ShipTowResult.Conflict(
                             "players_aboard",
-                            "Players are aboard or nearby");
+                            "Can't tow while players are on board or nearby");
                     }
                 }
             }
@@ -570,7 +570,7 @@ internal sealed class ConsoleBridge
             {
                 return ShipTowResult.Conflict(
                     "too_far",
-                    "Too far — 5 km limit");
+                    "Too far. Ships can be towed up to 5 km.");
             }
 
             if (!LiveMapBehaviour.TryGetGroundHeight(x, z, out float groundHeight) ||

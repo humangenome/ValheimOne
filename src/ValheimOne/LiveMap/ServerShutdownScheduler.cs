@@ -181,7 +181,7 @@ internal sealed class ServerShutdownScheduler
             LogFailure(
                 $"forced save failed; shutdown aborted: " +
                 $"{exception.GetType().Name}: {exception.Message}");
-            BroadcastShout("Server shutdown aborted because the world save failed");
+            BroadcastShout("The world didn't save, so the server is staying up");
         }
     }
 

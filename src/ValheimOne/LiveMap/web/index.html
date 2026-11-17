@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>ValheimOne — Longhouse</title>
+    <title>ValheimOne live map</title>
     <link rel="icon" href="/favicon.ico{{TOKEN_QUERY}}" sizes="32x32">
     <link rel="icon" type="image/png" href="/assets/icon-192.png{{TOKEN_QUERY}}" sizes="192x192">
     <link rel="apple-touch-icon" href="/assets/icon-192.png{{TOKEN_QUERY}}">
@@ -84,7 +84,7 @@
             </div>
             <div class="brand-copy">
                 <div class="brand-name">VALHEIM<span class="accent">ONE</span></div>
-                <div class="brand-subtitle">World Chart</div>
+                <div class="brand-subtitle">Live map</div>
             </div>
             <button id="watch-button" class="watch-button" type="button"
                     aria-label="Cinema mode" title="Cinema mode" hidden>
@@ -101,7 +101,7 @@
 
         <nav id="view-tabs" class="view-tabs" aria-label="Views" role="tablist">
             <button id="map-tab" class="view-tab is-active" type="button" role="tab"
-                    aria-controls="map" aria-selected="true">World Chart</button>
+                    aria-controls="map" aria-selected="true">Live map</button>
             <button id="console-tab" class="view-tab" type="button" role="tab"
                     aria-controls="console-pane" aria-selected="false" tabindex="-1" hidden>Console</button>
             <button id="codex-tab" class="view-tab" type="button" role="tab"
@@ -136,7 +136,7 @@
                 </span>
             </div>
             <div class="detail-line join-code-line" id="join-code-line" hidden>
-                <span class="detail-label">Join Code</span>
+                <span class="detail-label">Join code</span>
                 <span class="detail-value-wrap">
                     <code class="join-code-value" id="join-code"></code>
                     <button class="vo-copy meta-copy" id="join-code-copy" type="button"
@@ -189,7 +189,7 @@
         </section>
 
         <section class="boss-progression-panel" aria-label="Boss progression">
-            <span class="sidebar-section-label">Boss Progression</span>
+            <span class="sidebar-section-label">Boss progression</span>
             <div class="boss-progression" id="boss-progression"
                  aria-label="Boss progression"></div>
         </section>
@@ -200,26 +200,26 @@
                 <span class="player-count" id="player-count">0 online</span>
             </div>
             <ul class="player-list" id="player-list">
-                <li class="empty-player-list">No vikings ashore</li>
+                <li class="empty-player-list">No players online</li>
             </ul>
         </section>
 
         <section id="chat-panel" class="saga-panel chat-panel is-collapsed"
                  aria-labelledby="chat-heading" hidden>
             <button id="chat-toggle" class="saga-toggle" type="button"
-                    aria-label="Toggle Chat" aria-controls="chat-content"
+                    aria-label="Toggle chat" aria-controls="chat-content"
                     aria-expanded="false">
                 <span id="chat-heading" class="saga-heading-copy">Chat</span>
                 <span id="chat-chevron" class="saga-chevron" aria-hidden="true">›</span>
             </button>
             <div id="chat-content" class="saga-content chat-content" hidden>
-                <p id="chat-note" class="saga-note">No chat received yet</p>
+                <p id="chat-note" class="saga-note">No messages yet</p>
                 <ol id="chat-list" class="chat-list" role="log" aria-live="polite"></ol>
                 <form id="chat-form" class="chat-form" hidden>
                     <div class="chat-compose">
                         <input id="chat-input" type="text" maxlength="256"
                                autocomplete="off" aria-label="Server chat message"
-                               placeholder="Message the server…">
+                               placeholder="Restarting in 10 minutes">
                         <button id="chat-send" class="console-primary-button"
                                 type="submit">Send</button>
                     </div>
@@ -232,16 +232,16 @@
         <section id="leaderboard-panel" class="saga-panel leaderboard-panel is-collapsed"
                  aria-labelledby="leaderboard-heading" hidden>
             <button id="leaderboard-toggle" class="saga-toggle" type="button"
-                    aria-label="Toggle Leaderboard" aria-controls="leaderboard-content"
+                    aria-label="Toggle leaderboard" aria-controls="leaderboard-content"
                     aria-expanded="false">
                 <span id="leaderboard-heading" class="saga-heading-copy">Leaderboard</span>
                 <span id="leaderboard-chevron" class="saga-chevron" aria-hidden="true">›</span>
             </button>
             <div id="leaderboard-content" class="saga-content leaderboard-content" hidden>
-                <p id="leaderboard-note" class="saga-note">Open to read the standings</p>
+                <p id="leaderboard-note" class="saga-note">Loading…</p>
                 <div id="leaderboard-table" class="leaderboard-table" hidden>
                     <div class="leaderboard-header" aria-hidden="true">
-                        <span>#</span><span>Viking</span><span>Time</span><span>Deaths</span><span>Distance</span>
+                        <span>#</span><span>Player</span><span>Time</span><span>Deaths</span><span>Distance</span>
                     </div>
                     <ol id="leaderboard-list" class="leaderboard-list"
                         aria-label="Player leaderboard"></ol>
@@ -251,13 +251,13 @@
 
         <section id="saga-panel" class="saga-panel is-collapsed" aria-labelledby="saga-heading" hidden>
             <button id="saga-toggle" class="saga-toggle" type="button"
-                    aria-label="Toggle Server Events" aria-controls="saga-content"
+                    aria-label="Toggle server events" aria-controls="saga-content"
                     aria-expanded="false">
-                <span id="saga-heading" class="saga-heading-copy">Server Events</span>
+                <span id="saga-heading" class="saga-heading-copy">Server events</span>
                 <span id="saga-chevron" class="saga-chevron" aria-hidden="true">›</span>
             </button>
             <div id="saga-content" class="saga-content" hidden>
-                <p id="saga-note" class="saga-note">No events recorded yet</p>
+                <p id="saga-note" class="saga-note">No events yet</p>
                 <ol id="saga-list" class="saga-list" role="log" aria-live="polite"></ol>
             </div>
         </section>
@@ -277,7 +277,7 @@
             <strong id="map-metric-frame">—</strong>
         </span>
         <span id="map-metric-zdo-item" class="map-metric" hidden>
-            <span class="map-metric-label">ZDOs</span>
+            <span class="map-metric-label">Objects</span>
             <strong id="map-metric-zdo">—</strong>
         </span>
         <span id="map-metric-day-item" class="map-metric" hidden>
@@ -285,14 +285,14 @@
             <strong id="map-metric-day">—</strong>
         </span>
         <span id="map-metric-uptime-item" class="map-metric" hidden>
-            <span class="map-metric-label">Up</span>
+            <span class="map-metric-label">Uptime</span>
             <strong id="map-metric-uptime">—</strong>
         </span>
     </section>
 
     <main id="map" aria-label="Valheim world map" aria-labelledby="map-tab" role="tabpanel"></main>
 
-    <section id="cinema-hud" class="cinema-hud" aria-label="Cinema Mode display" hidden>
+    <section id="cinema-hud" class="cinema-hud" aria-label="Cinema mode display" hidden>
         <div class="cinema-topbar">
             <span id="cinema-server-name" class="cinema-chip cinema-server-chip">—</span>
             <span id="cinema-day" class="cinema-chip">Day —</span>
@@ -323,7 +323,7 @@
                 <span id="cinema-wind-label">—</span>
             </span>
             <span id="cinema-staleness" class="cinema-staleness is-grey" role="status">
-                Waiting for feeds
+                Connecting…
             </span>
         </div>
 
@@ -344,12 +344,12 @@
                 <div><dt>Biome</dt><dd id="cinema-player-biome">—</dd></div>
                 <div><dt>Speed</dt><dd id="cinema-player-speed">—</dd></div>
                 <div><dt>Heading</dt><dd id="cinema-player-heading">—</dd></div>
-                <div><dt>Session</dt><dd id="cinema-player-session">—</dd></div>
+                <div><dt>Online for</dt><dd id="cinema-player-session">—</dd></div>
             </dl>
         </article>
 
-        <button id="cinema-exit" class="cinema-exit" type="button" aria-label="Exit Cinema Mode"
-                title="Exit Cinema Mode (Esc)">×</button>
+        <button id="cinema-exit" class="cinema-exit" type="button" aria-label="Exit cinema mode"
+                title="Exit cinema mode (Esc)">×</button>
         <div class="cinema-raid-vignette" aria-hidden="true"></div>
     </section>
 
@@ -358,8 +358,7 @@
             <section class="console-terminal" aria-labelledby="console-heading">
                 <header class="console-terminal-header">
                     <div class="console-terminal-title">
-                        <h1 id="console-heading">Longhouse Console</h1>
-                        <span>Live log · streaming with polling fallback</span>
+                        <h1 id="console-heading">Server console</h1>
                     </div>
                     <div class="console-terminal-actions">
                         <button id="console-commands-toggle" class="console-header-button" type="button"
@@ -375,12 +374,12 @@
                         <header>
                             <h2 id="console-command-reference-heading">Commands</h2>
                             <button id="console-command-reference-close" class="console-reference-close"
-                                    type="button" aria-label="Close commands reference">Close</button>
+                                    type="button" aria-label="Close commands reference">×</button>
                         </header>
                         <div id="console-command-reference-body" class="console-command-reference-body"></div>
                     </section>
                     <button id="console-resume" class="console-resume" type="button" hidden>
-                        New lines · Resume
+                        Show new lines
                     </button>
                 </div>
 
@@ -393,7 +392,7 @@
                                role="combobox"
                                aria-autocomplete="list" aria-controls="console-suggestions"
                                aria-expanded="false"
-                               placeholder="Enter a server command">
+                               placeholder="vo players">
                     </label>
                 </form>
             </section>
@@ -402,15 +401,14 @@
                 <section class="console-side-section" aria-labelledby="stats-heading">
                     <div class="console-section-heading">
                         <h2 id="stats-heading">Stats</h2>
-                        <span>5s refresh</span>
                     </div>
                     <dl class="console-stats">
                         <div><dt>Uptime</dt><dd id="console-stat-uptime">—</dd></div>
                         <div><dt>Players</dt><dd id="console-stat-players">—</dd></div>
-                        <div><dt>ZDO count</dt><dd id="console-stat-zdo">—</dd></div>
-                        <div><dt>Mono heap</dt><dd id="console-stat-heap">—</dd></div>
-                        <div><dt>Frame avg</dt><dd id="console-stat-frame-avg">—</dd></div>
-                        <div><dt>Frame max</dt><dd id="console-stat-frame-max">—</dd></div>
+                        <div><dt>World objects</dt><dd id="console-stat-zdo">—</dd></div>
+                        <div><dt>Memory</dt><dd id="console-stat-heap">—</dd></div>
+                        <div><dt>Average frame</dt><dd id="console-stat-frame-avg">—</dd></div>
+                        <div><dt>Slowest frame</dt><dd id="console-stat-frame-max">—</dd></div>
                     </dl>
                     <div class="console-save-row">
                         <button id="console-save" class="console-primary-button" type="button">Save world</button>
@@ -424,7 +422,7 @@
                         <span id="console-player-count">0 online</span>
                     </div>
                     <ul id="console-player-list" class="console-admin-list">
-                        <li class="console-empty-list">No vikings ashore</li>
+                        <li class="console-empty-list">No players online</li>
                     </ul>
                 </section>
 
@@ -434,7 +432,7 @@
                         <span id="console-banned-count">—</span>
                     </div>
                     <ul id="console-banned-list" class="console-admin-list">
-                        <li class="console-empty-list">Open Console to load bans</li>
+                        <li class="console-empty-list">Loading bans…</li>
                     </ul>
                 </section>
             </aside>
@@ -443,10 +441,11 @@
         <div id="console-confirm-backdrop" class="console-confirm-backdrop" hidden>
             <div class="console-confirm-dialog" role="dialog" aria-modal="true"
                  aria-labelledby="console-confirm-message">
+                <button id="console-confirm-cancel" class="console-confirm-close" type="button"
+                        aria-label="Cancel">×</button>
                 <p id="console-confirm-message"></p>
                 <div class="console-confirm-actions">
-                    <button id="console-confirm-cancel" type="button">Cancel</button>
-                    <button id="console-confirm-submit" class="is-danger" type="button">Confirm</button>
+                    <button id="console-confirm-submit" class="is-danger" type="button">Kick</button>
                 </div>
             </div>
         </div>
@@ -456,7 +455,7 @@
         <div class="codex-shell">
             <header class="codex-toolbar">
                 <div class="codex-title">
-                    <h1>Codex of Items</h1>
+                    <h1>Items and recipes</h1>
                     <span id="codex-version">Valheim item &amp; recipe catalog</span>
                 </div>
                 <div class="codex-controls">
@@ -466,7 +465,7 @@
                             <path d="M16 16l4 4"></path>
                         </svg>
                         <input id="codex-search" type="search" autocomplete="off" spellcheck="false"
-                               placeholder="Search name, token, or lore…" disabled>
+                               placeholder="Search items" disabled>
                     </label>
                     <div class="codex-category-label" id="codex-category-control">
                         <span id="codex-category-caption">Category</span>
@@ -485,7 +484,7 @@
             </header>
             <div id="codex-state" class="codex-state" role="status" aria-live="polite">
                 <span class="spinner" aria-hidden="true"></span>
-                <span>Open the Codex to load its pages</span>
+                <span>Loading items…</span>
             </div>
             <div id="codex-scroll" class="codex-scroll" hidden>
                 <div class="codex-head" aria-hidden="true">
@@ -508,27 +507,26 @@
                  aria-labelledby="dungeon-title">
             <header class="dungeon-dialog-header">
                 <div class="dungeon-dialog-heading">
-                    <span class="dungeon-kicker">Dungeon Interior</span>
-                    <h2 id="dungeon-title">Dungeon interior</h2>
+                    <span class="dungeon-kicker">Dungeon map</span>
+                    <h2 id="dungeon-title">Dungeon map</h2>
                     <div class="dungeon-meta" aria-label="Dungeon details">
-                        <span id="dungeon-type">Surveying</span>
+                        <span id="dungeon-type">Loading…</span>
                         <span id="dungeon-rooms">— rooms</span>
-                        <span id="dungeon-generated">Surveying</span>
+                        <span id="dungeon-generated"></span>
                     </div>
                 </div>
                 <button id="dungeon-close" class="dungeon-close" type="button"
-                        aria-label="Close dungeon interior">×</button>
+                        aria-label="Close dungeon map">×</button>
             </header>
             <div class="dungeon-dialog-body">
                 <div id="dungeon-loading" class="dungeon-state" role="status">
                     <span class="spinner" aria-hidden="true"></span>
-                    <strong>Surveying the interior…</strong>
-                    <span>Reading rooms, levels, and vikings inside</span>
+                    <strong>Loading the dungeon map…</strong>
                 </div>
                 <div id="dungeon-empty" class="dungeon-state dungeon-empty" hidden>
                     <span class="dungeon-empty-glyph" aria-hidden="true">∩</span>
                     <strong id="dungeon-empty-copy">
-                        Interior not yet generated — no viking has been here
+                        No one has visited yet, so there's no map
                     </strong>
                     <span id="dungeon-entrance-info">Entrance coordinates unavailable</span>
                 </div>
@@ -543,8 +541,8 @@
                 <p id="dungeon-error" class="dungeon-error" role="alert" hidden></p>
             </div>
             <footer class="dungeon-dialog-footer">
-                <span id="dungeon-live-status">Reading the runes…</span>
-                <span>Live · refreshes with the map</span>
+                <span id="dungeon-live-status">Loading…</span>
+                <span>Live</span>
             </footer>
         </section>
     </div>
@@ -552,7 +550,7 @@
     <div id="render-status" class="render-status" role="status" aria-live="polite">
         <div class="render-card">
             <span class="spinner" aria-hidden="true"></span>
-            <span id="render-status-text">Rendering world map — 0%</span>
+            <span id="render-status-text">Drawing the world map… 0%</span>
         </div>
     </div>
 

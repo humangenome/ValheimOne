@@ -3600,6 +3600,10 @@
     text-transform: uppercase;
 }
 
+#valheimone-embed-root .dungeon-meta span:empty {
+    display: none;
+}
+
 #valheimone-embed-root .dungeon-meta #dungeon-type {
     border-color: rgba(180, 154, 203, 0.36);
     color: #cdb9dd;
@@ -6186,8 +6190,7 @@
     gap: 10px;
 }
 
-#valheimone-embed-root .console-header-button,
-#valheimone-embed-root .console-reference-close {
+#valheimone-embed-root .console-header-button {
     padding: 5px 8px;
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -6204,9 +6207,7 @@
 
 #valheimone-embed-root .console-header-button:hover,
 #valheimone-embed-root .console-header-button:focus-visible,
-#valheimone-embed-root .console-header-button.is-active,
-#valheimone-embed-root .console-reference-close:hover,
-#valheimone-embed-root .console-reference-close:focus-visible {
+#valheimone-embed-root .console-header-button.is-active {
     border-color: var(--border-strong);
     outline: none;
     box-shadow: 0 0 0 1px var(--border);
@@ -6858,6 +6859,7 @@
 }
 
 #valheimone-embed-root .console-confirm-dialog {
+    position: relative;
     width: min(330px, 100%);
     padding: 18px;
     border: 1px solid var(--border-strong);
@@ -6868,9 +6870,42 @@
 
 #valheimone-embed-root .console-confirm-dialog p {
     margin: 0 0 17px;
+    padding-right: 30px;
     color: var(--text);
     font-size: 13px;
     font-weight: 600;
+}
+
+#valheimone-embed-root .console-confirm-close {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+}
+
+#valheimone-embed-root .console-confirm-close,
+#valheimone-embed-root .console-reference-close {
+    display: grid;
+    width: 26px;
+    height: 26px;
+    padding: 0 0 2px;
+    place-items: center;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: rgba(18, 14, 10, 0.55);
+    color: var(--secondary);
+    cursor: pointer;
+    font-family: Georgia, serif;
+    font-size: 18px;
+    line-height: 1;
+}
+
+#valheimone-embed-root .console-confirm-close:hover,
+#valheimone-embed-root .console-confirm-close:focus-visible,
+#valheimone-embed-root .console-reference-close:hover,
+#valheimone-embed-root .console-reference-close:focus-visible {
+    border-color: var(--border-strong);
+    outline: none;
+    color: var(--accent);
 }
 
 #valheimone-embed-root .console-confirm-actions {
