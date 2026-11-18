@@ -166,7 +166,7 @@ jobs:
 
           # Plugin zip is exactly the plugin and its pristine config.
           plugin_entries="$(unzip -Z1 "${plugin_zip}" | LC_ALL=C sort | tr '\n' ' ')"
-          expected="BepInEx/config/valheimone.cfg BepInEx/plugins/ValheimOne.dll "
+          expected="BepInEx/config/valheimone.cfg BepInEx/plugins/ValheimOne-LICENSE.txt BepInEx/plugins/ValheimOne.dll "
           if [[ "${plugin_entries}" != "${expected}" ]]; then
             echo "::error::unexpected plugin zip contents: ${plugin_entries}"
             exit 1
@@ -203,6 +203,11 @@ jobs:
           else
             tools/ci/leak-gate.sh --require-named "${RUNNER_TEMP}/shipped.dll" "${RUNNER_TEMP}/shipped.cfg"
           fi
+
+          # Licence notices in both zips, and the complete source of each LGPL loader the full zip ships.
+          python3 tools/verify-release-notices.py plugin "${plugin_zip}"
+          python3 tools/verify-release-notices.py full "${full_zip}"
+          python3 tools/lgpl-source.py check "${out}"
 
           echo "ARTIFACTS OK"
           cat "${sums}"
@@ -269,6 +274,8 @@ jobs:
             "${out}/ValheimOne-${VERSION}.zip"
             "${out}/ValheimOne-full-${VERSION}.zip"
             "${out}/SHA256SUMS-${VERSION}.txt"
+            "${out}/UnityDoorstop-4.4.0-source.zip"
+            "${out}/UnityDoorstop-4.5.0-source.zip"
           )
 
           notes="${RUNNER_TEMP}/notes.md"
@@ -308,7 +315,7 @@ jobs:
             exit 1
           fi
 
-      - name: Verify the release is a draft with all three assets
+      - name: Verify the release is a draft with all its assets
         if: env.DRY_RUN != 'true'
         shell: bash
         env:
@@ -325,7 +332,8 @@ jobs:
 
           gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' | LC_ALL=C sort > "${RUNNER_TEMP}/assets.txt"
           cat "${RUNNER_TEMP}/assets.txt"
-          for f in "SHA256SUMS-${VERSION}.txt" "ValheimOne-${VERSION}.zip" "ValheimOne-full-${VERSION}.zip"; do
+          for f in "SHA256SUMS-${VERSION}.txt" "ValheimOne-${VERSION}.zip" "ValheimOne-full-${VERSION}.zip" \
+                   "UnityDoorstop-4.4.0-source.zip" "UnityDoorstop-4.5.0-source.zip"; do
             grep -Fxq "${f}" "${RUNNER_TEMP}/assets.txt" || {
               echo "::error::draft release ${RELEASE_TAG} is missing asset ${f}"
               exit 1

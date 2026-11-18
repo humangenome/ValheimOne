@@ -4,6 +4,12 @@
 #   ValheimOne-<version>.zip       plugin-only: drop onto an existing BepInEx server
 #   ValheimOne-full-<version>.zip  plugin + denikson BepInExPack_Valheim overlay for
 #                                  from-scratch installs (Windows and Linux servers)
+#   UnityDoorstop-<v>-source.zip   the complete source of each LGPL loader the full zip ships
+#                                  (tools/lgpl-source.py), for the release; not in SHA256SUMS
+#
+# Licence notices: both zips carry our MIT licence beside the plugin
+# (BepInEx/plugins/ValheimOne-LICENSE.txt); the full zip also carries THIRD-PARTY-NOTICES.txt
+# at its root for the BepInEx pack. tools/verify-release-notices.py refuses a zip without them.
 #
 # Version is read from src/ValheimOne/Networking/VersionInfo.cs (the single
 # source of truth). Outputs land in artifacts/release/. Zips are deterministic
@@ -96,6 +102,7 @@ overlay_plugin() {
     mkdir -p "${stage_dir}/BepInEx/plugins" "${stage_dir}/BepInEx/config"
     cp "${dll}" "${stage_dir}/BepInEx/plugins/ValheimOne.dll"
     cp "${ref_cfg}" "${stage_dir}/BepInEx/config/valheimone.cfg"
+    cp "${repo_root}/LICENSE" "${stage_dir}/BepInEx/plugins/ValheimOne-LICENSE.txt"
 }
 
 # ------------ plugin-only zip
@@ -105,6 +112,7 @@ mkdir -p "${plugin_stage}"
 overlay_plugin "${plugin_stage}"
 plugin_zip="${out_dir}/ValheimOne-${version}.zip"
 make_zip "${plugin_stage}" "${plugin_zip}"
+python3 "${repo_root}/tools/verify-release-notices.py" plugin "${plugin_zip}" || fail "plugin zip is missing a licence notice"
 
 # ------------ full zip (BepInExPack overlay)
 
@@ -127,8 +135,15 @@ unzip -q "${bepinex_pack_cache}" -d "${pack_extract}"
 cp -a "${pack_extract}/BepInExPack_Valheim/." "${full_stage}/"
 chmod +x "${full_stage}"/start_*_bepinex.sh 2>/dev/null || true
 overlay_plugin "${full_stage}"
+cp "${repo_root}/THIRD-PARTY-NOTICES.txt" "${full_stage}/THIRD-PARTY-NOTICES.txt"
 full_zip="${out_dir}/ValheimOne-full-${version}.zip"
 make_zip "${full_stage}" "${full_zip}"
+python3 "${repo_root}/tools/verify-release-notices.py" full "${full_zip}" || fail "full zip is missing a licence notice"
+# ------------ LGPL sources for the release
+# The full zip ships UnityDoorstop 4.4.0 and 4.5.0 (LGPL-2.1), so the release carries their complete
+# source: built from the pinned upstream commits and checked file by file.
+python3 "${repo_root}/tools/lgpl-source.py" build "${out_dir}" >/dev/null || fail "could not build the LGPL source archives"
+python3 "${repo_root}/tools/lgpl-source.py" check "${out_dir}" || fail "the release folder lacks an LGPL source archive"
 
 # ------------ summary
 
@@ -136,4 +151,4 @@ rm -rf "${stage_root}"
 (cd "${out_dir}" && sha256sum "$(basename "${plugin_zip}")" "$(basename "${full_zip}")" > "SHA256SUMS-${version}.txt")
 echo
 echo "Release artifacts:"
-ls -la "${plugin_zip}" "${full_zip}" "${out_dir}/SHA256SUMS-${version}.txt"
+ls -la "${plugin_zip}" "${full_zip}" "${out_dir}/SHA256SUMS-${version}.txt" "${out_dir}"/UnityDoorstop-*-source.zip

@@ -38,6 +38,11 @@ jobs:
       - name: Fog world-coordinate regression
         run: node tools/ci/test-fog-geometry.cjs
 
+      - name: Licence notices and the LGPL source archives
+        run: |
+          python3 tools/test-verify-release-notices.py
+          python3 tools/test-lgpl-source.py
+
       - name: Build ValheimOne
         shell: bash
         run: |
