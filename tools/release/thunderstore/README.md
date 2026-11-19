@@ -20,7 +20,7 @@ Keep the server and every PC on the same minor version, 0.13.x with 0.13.x.
 
 ### Live map
 
-The map draws the whole world from the server seed and updates in real time. Players, ships, carts, portals, tombstones, wards and beds all show on it. Fog of war follows where players have walked and what they shared through cartography tables. It also has a heatmap, a world timelapse and the Sagas leaderboard for playtime, deaths and distance.
+The map draws the whole world from the server seed and updates in real time. Players, ships, carts, portals, tombstones, wards and beds all show on it. Fog of war follows where players have walked and what they shared through cartography tables. It also has a heatmap, a world timelapse and a leaderboard for playtime, deaths and distance.
 
 ![Live map, admin view](https://github.com/HumanGenome/ValheimOne/raw/main/docs/screenshots/thunderstore/live-map-20261016.png)
 
