@@ -37,7 +37,7 @@ The map draws the whole world from the server seed and updates in real time. Pla
 
 ![ValheimOne Live Map, admin view](docs/screenshots/live-map-20261016.png)
 
-Turn on the heatmap to see where everyone has been over the last day or week, open the timelapse to scrub through explored fog and base growth, or open the leaderboard for playtime, deaths and distance travelled.
+Turn on the heatmap to see where everyone has been over the last day or week, open the timelapse to scrub through explored fog and base growth, or open the leaderboard for playtime, deaths and distance traveled.
 
 ### 🔗 Share the map with your players
 
