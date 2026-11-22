@@ -4,27 +4,16 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
-### Added
+## [0.13.32] - 2026-11-22
+
+### Server
 
 - The admin view's player list now names each player's account (platformId, for example Steam_7656...). It stays the same when a player leaves and joins again or the server restarts, so a map or tool can follow the same player. The shared link and the public map never get it.
 - The player list now says which way each player faces (facingDeg), so a player who turns on the spot is drawn facing the new way.
-
-### Security
-
-- The shared link and the public map no longer show who placed a web pin, and the shared link's activity feed leaves out admin actions (kick, ban, chat, save, ping and console commands) and the Steam ID of a joining player. A pin or action from a hosting panel carries that panel's account name, which can be a login name or an email address; only the admin view shows it now. Shared-link visitors now change only the web pins they made from the same browser: the map keeps a random key in the browser and the server keeps only its hash, in `webpins-editors.json` beside `webpins.json` (whose format is unchanged, so an older ValheimOne still reads it). Before, a visitor was matched by the name they typed, so typing another person's name opened that person's pins. Pins made before this version, and pins placed from the admin view, are changed from the admin view only.
-
-### Changed
-
 - The shared map link no longer shows who placed a web pin or who used the admin tools. Visitors with the shared link can still add pins, and now change only the pins they made in the same browser. Pins made before this update can be changed from the admin view.
-- When the game declines a world save asked for through `/api/admin/save` (after a world that did not load correctly, after the `location` test command, which turns saving off until a restart, or on a zone or dungeon error), the server log now says which. The API answer is unchanged.
-- `/api/health` `activityLog` gains `writeFailingSinceUnixMs` and `writeError` (the kind of error, no path), set while writes to disk keep failing, and `vo health` says so.
-
-### Fixed
-
-- The activity log no longer stops for the rest of the run after one failed write, for example while a backup or a virus scan holds its file. The events not yet written are kept and written once the file can be written again, retrying after 1, 2, 5, 10 and 30 seconds and then every minute, with one log line when it fails and one when it works again. Before, the first such error stopped the activity feed, the console history and the players' last-seen spots until a restart, while the health check still read "enabled".
-- One module that fails while taking a changed setting no longer stops the other modules from taking it. The failing one is logged once.
-- Discord notices: when Discord's rate limit answers (HTTP 429), the one retry now waits the time Discord asks for (at most 10 seconds) instead of asking again at once and dropping the notices. A webhook Discord says is gone (HTTP 401, 403 or 404, a deleted webhook or a wrong address) is no longer retried and is logged once, instead of a warning for every batch; nothing more is sent to it until `WebhookUrl` changes.
-- If a game update removes or renames one of the game methods ValheimOne's version check hooks, only the version check and the synced settings turn off. Nothing is left half-hooked, and the map, console, alerts, server-side modules and the config hot reload still start. Before, the rest of the startup after that point was skipped, the hot reload included.
+- The activity feed, console history and last-seen spots keep working after a failed disk write (for example while a backup holds the file). The events are kept and written once the file is free again.
+- Discord notices wait out Discord's rate limit before trying again, and a deleted webhook is reported once instead of on every notice.
+- If a game update moves something ValheimOne's version check needs, only that check turns off; the map, console and settings reload keep working.
 - The live map comes back on its own if its web listener stops while the server runs. Before, it stayed down until the next restart.
 - The server query (A2S) lets a broken network socket go and opens a new one, instead of keeping a processor core busy and staying silent until a restart.
 - If the game never finishes loading (for example when another mod breaks the start), the server log says after 3 minutes what the live map is still waiting for.
