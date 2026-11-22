@@ -9,11 +9,11 @@ All notable changes to ValheimOne will be documented in this file. This project 
 ### Server
 
 - The admin view's player list now names each player's account (platformId, for example Steam_7656...). It stays the same when a player leaves and joins again or the server restarts, so a map or tool can follow the same player. The shared link and the public map never get it.
-- The player list now says which way each player faces (facingDeg), so a player who turns on the spot is drawn facing the new way.
+- The player list now says which way each player's body faces (facingDeg), for maps and tools that read it.
 - The shared map link no longer shows who placed a web pin or who used the admin tools. Visitors with the shared link can still add pins, and now change only the pins they made in the same browser. Pins made before this update can be changed from the admin view.
 - The activity feed, console history and last-seen spots keep working after a failed disk write (for example while a backup holds the file). The events are kept and written once the file is free again.
-- Discord notices wait out Discord's rate limit before trying again, and a deleted webhook is reported once instead of on every notice.
-- If a game update moves something ValheimOne's version check needs, only that check turns off; the map, console and settings reload keep working.
+- When Discord limits notices, ValheimOne waits up to 10 seconds and tries once more. A deleted webhook is reported once instead of on every notice.
+- If a game update breaks ValheimOne's version check, the map, console and settings reload keep working. The version check, the settings sent to players and shared exploration stay off until ValheimOne is updated.
 - The live map comes back on its own if its web listener stops while the server runs. Before, it stayed down until the next restart.
 - The server query (A2S) lets a broken network socket go and opens a new one, instead of keeping a processor core busy and staying silent until a restart.
 - If the game never finishes loading (for example when another mod breaks the start), the server log says after 3 minutes what the live map is still waiting for.
