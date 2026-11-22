@@ -2775,6 +2775,21 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             WorldSavePatch.EndSavePostfix(true);
             WorldSavePatch.Pump();
             string written = WaitForFileChange(live, before, 5000);
+            // An earlier test's save writes its summary on the thread pool and can land after `before`: wait for this save's own.
+            string thisSave = "\"savedUnixMs\":" + WorldSavePatch.LastSavedUnixMs + ",";
+            WaitUntil(5, () =>
+            {
+                try
+                {
+                    written = ReadShared(live);
+                }
+                catch (IOException)
+                {
+                    return false; // between the replace's two steps
+                }
+
+                return written.Contains(thisSave) && written.Contains("\"defeated_bonemass\"");
+            });
             Check(written.Contains("\"worldName\":\"" + world.m_name + "\"") && written.Contains("\"seedName\":\"" + world.m_seedName + "\"") &&
                   written.Contains("\"bossesDefeated\":[") && written.Contains("\"defeated_bonemass\"") &&
                   written.Contains("\"playersSinceLastSave\":[]") && written.Contains("\"savedUnixMs\":" + WorldSavePatch.LastSavedUnixMs + ",") &&
