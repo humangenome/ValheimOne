@@ -51,6 +51,9 @@ internal sealed class ActivityLogWorker
     private int _stopping;
     private long _writeFailingSinceUnixMs;
     private string? _writeError;
+    // While lines are handed to the writer and not yet flushed: their file and where the first of them starts.
+    private string? _uncommittedPath;
+    private long _uncommittedLength;
 
     public ActivityLogWorker(
         string dataDirectory,
@@ -526,28 +529,54 @@ internal sealed class ActivityLogWorker
     private void ProcessPending()
     {
         List<ActivityEventRecord> records = DrainPending();
-        int written = 0;
+        int committed = 0;
         try
         {
-            for (; written < records.Count; written++)
+            RollBackFailedWrite();
+            for (int index = 0; index < records.Count; index++)
             {
-                WriteActivity(records[written]);
+                DateTime eventDateUtc = EventDateUtc(records[index]);
+                if (committed < index && eventDateUtc != _activityDateUtc)
+                {
+                    // The day changes inside the batch: the day before it has to be on disk first.
+                    CommitActivity(index - committed);
+                    committed = index;
+                }
+
+                EnsureActivityWriter(eventDateUtc);
+                if (_uncommittedPath == null)
+                {
+                    // The stream's own position, not Length: Length asks the handle, and a failing one can answer wrongly.
+                    _uncommittedLength = _activityWriter!.BaseStream.Position;
+                    _uncommittedPath = Path.Combine(DataDirectory, ActivityFileName(eventDateUtc));
+                }
+
+                WriteActivity(records[index]);
             }
 
-            if (written > 0 && _activityWriter != null)
+            if (committed < records.Count)
             {
-                _activityWriter.Flush();
-                Interlocked.Exchange(
-                    ref _lastWriteUnixMs,
-                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                CommitActivity(records.Count - committed);
+                committed = records.Count;
             }
         }
         catch
         {
-            // The record that failed and the ones after it are written on the next try. Lines
-            // already handed to the writer before the failure may be lost with its buffer; none
-            // is written twice.
-            Requeue(records, written);
+            // A line is written only once its flush worked: until then it can sit in the writer's buffer or be half on
+            // disk. So every record since the last flush is kept, the failed handle is closed now (left open, it blocks
+            // the next open and its buffer lands whenever the garbage collector gets to it) and the file is cut back to
+            // where they started, here or before the next write. None is lost with the buffer, none is written twice.
+            Requeue(records, committed);
+            DiscardActivityWriter();
+            try
+            {
+                RollBackFailedWrite();
+            }
+            catch
+            {
+                // The next try cuts it back before it writes; the first error is the one reported.
+            }
+
             throw;
         }
 
@@ -594,11 +623,6 @@ internal sealed class ActivityLogWorker
 
     private void WriteActivity(ActivityEventRecord record)
     {
-        DateTime eventDateUtc = DateTimeOffset
-            .FromUnixTimeMilliseconds(record.UnixMs)
-            .UtcDateTime
-            .Date;
-        EnsureActivityWriter(eventDateUtc);
         var json = new StringBuilder(64 + record.Type.Length + record.DataJson.Length);
         json.Append("{\"t\":");
         json.Append(record.UnixMs.ToString(CultureInfo.InvariantCulture));
@@ -606,7 +630,41 @@ internal sealed class ActivityLogWorker
         json.Append(",\"data\":").Append(record.DataJson);
         json.Append('}');
         _activityWriter!.WriteLine(json.ToString());
-        Interlocked.Increment(ref _eventsWrittenToday);
+    }
+
+    private static DateTime EventDateUtc(ActivityEventRecord record)
+    {
+        return DateTimeOffset.FromUnixTimeMilliseconds(record.UnixMs).UtcDateTime.Date;
+    }
+
+    private void CommitActivity(int count)
+    {
+        _activityWriter!.Flush();
+        _uncommittedPath = null;
+        Interlocked.Add(ref _eventsWrittenToday, count);
+        Interlocked.Exchange(
+            ref _lastWriteUnixMs,
+            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+    }
+
+    private void RollBackFailedWrite()
+    {
+        string? path = _uncommittedPath;
+        if (path == null)
+        {
+            return;
+        }
+
+        if (File.Exists(path))
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.Read);
+            if (stream.Length > _uncommittedLength)
+            {
+                stream.SetLength(_uncommittedLength);
+            }
+        }
+
+        _uncommittedPath = null;
     }
 
     private void EnsureActivityWriter(DateTime eventDateUtc)
@@ -628,8 +686,13 @@ internal sealed class ActivityLogWorker
         _activityWriter = new StreamWriter(
             stream,
             new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-        Volatile.Write(ref _currentFileName, fileName);
-        Interlocked.Exchange(ref _eventsWrittenToday, 0L);
+        // The same file opened again after a failed write keeps its count.
+        if (!string.Equals(Volatile.Read(ref _currentFileName), fileName, StringComparison.Ordinal))
+        {
+            Volatile.Write(ref _currentFileName, fileName);
+            Interlocked.Exchange(ref _eventsWrittenToday, 0L);
+        }
+
         PruneOldActivityFiles(eventDateUtc);
     }
 
@@ -652,8 +715,7 @@ internal sealed class ActivityLogWorker
     {
         try
         {
-            _activityWriter?.Flush();
-            _activityWriter?.Dispose();
+            ReleaseActivityWriter();
         }
         catch (Exception exception)
         {
@@ -661,9 +723,39 @@ internal sealed class ActivityLogWorker
                 $"[ActivityLog] could not close the current activity file " +
                 $"({exception.GetType().Name}).");
         }
+    }
+
+    // After a failed write: the close fails too and says nothing new (TryWriterStep logs the failure once).
+    private void DiscardActivityWriter()
+    {
+        try
+        {
+            ReleaseActivityWriter();
+        }
+        catch
+        {
+            // The handle is closed either way.
+        }
+    }
+
+    // Closes the file even when the last flush fails. A Flush before the Dispose used to skip the Dispose.
+    private void ReleaseActivityWriter()
+    {
+        StreamWriter? writer = _activityWriter;
+        _activityWriter = null;
+        if (writer == null)
+        {
+            return;
+        }
+
+        Stream stream = writer.BaseStream;
+        try
+        {
+            writer.Dispose();
+        }
         finally
         {
-            _activityWriter = null;
+            stream.Dispose();
         }
     }
 

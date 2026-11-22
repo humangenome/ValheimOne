@@ -167,6 +167,7 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             TestDirectSaveWithoutConsole();
             TestWorldSaveSummary();
             TestActivityWriterRetries();
+            TestActivityOpenFileWriteFailure();
             TestSettingsHandlerIsolation();
             TestHandshakeFindsEveryMethodFirst();
             TestSaveSkipReason();
@@ -2920,6 +2921,150 @@ public sealed class RuntimeRegression : BaseUnityPlugin
         {
             worker.StopAndFlush(2000);
         }
+    }
+
+    // 0.13.32: the write that fails on the file that is already open (a full disk), which the test above can't make.
+    // A real ENOSPC: the writer's own descriptor is pointed at /dev/full, so write(2) itself fails.
+    private void TestActivityOpenFileWriteFailure()
+    {
+        string dir = Path.Combine(_root, "activity-write-failure-" + DateTime.UtcNow.Ticks.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Directory.CreateDirectory(dir);
+        DateTime day = DateTime.UtcNow.Date;
+        string file = Path.Combine(dir, "activity-" + day.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture) + ".jsonl");
+        var worker = new ActivityLogWorker(dir, () => 7, new ModLogger(Logger));
+        worker.Start();
+        try
+        {
+            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            Action<int, long> put = (n, at) => worker.EnqueueActivity(new ActivityEventRecord(at, "regression.writefail", "{\"n\":" + n + "}"));
+            Func<bool> failing = () => worker.GetHealth(true).WriteFailingSinceUnixMs.HasValue;
+            put(1, now);
+            WaitUntil(5, () => File.Exists(file) && ReadShared(file).Contains("{\"n\":1}"));
+            int descriptor = FindDescriptor(file);
+            Check(descriptor >= 0, "disk full: the activity writer holds its file open");
+            if (descriptor < 0) return;
+
+            int full = NativeOpen("/dev/full", OpenWriteOnly);
+            Check(full >= 0 && NativeDup2(full, descriptor) == descriptor, "disk full: the open file's writes now fail with a real ENOSPC");
+            NativeClose(full);
+            int tail = NativeOpen(file, OpenWriteOnly | OpenAppend);
+            byte[] torn = System.Text.Encoding.UTF8.GetBytes("{\"t\":1,\"type\":\"torn");
+            NativeWrite(tail, torn, (IntPtr)torn.Length); // the part of a write that lands before the disk is full
+            NativeClose(tail);
+
+            put(2, now + 1);
+            put(3, now + 2);
+            put(4, now + 3);
+            WaitUntil(5, failing);
+            Check(failing(), "disk full: the failed write shows in health");
+            Check(DescriptorTarget(descriptor) != "/dev/full", "disk full: the failed file handle is released at once, not left to the garbage collector");
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            put(5, now + 4);
+            WaitUntil(20, () => !failing() && ReadShared(file).Contains("{\"n\":5}"));
+            string text = ReadShared(file);
+            int previous = -1;
+            bool complete = true;
+            for (int n = 1; n <= 5; n++)
+            {
+                string data = "{\"n\":" + n + "}";
+                int at = text.IndexOf(data, StringComparison.Ordinal);
+                complete &= at > previous && text.IndexOf(data, at + 1, StringComparison.Ordinal) < 0;
+                previous = at;
+            }
+
+            Check(complete, "disk full: every event of the failed write lands later, in order, once each");
+            Check(!text.Contains("torn") && text.EndsWith("\n", StringComparison.Ordinal) && text.Split('\n').Count(line => line.Length > 0) == 5,
+                "disk full: the part of the failed write that had landed is taken back, so every line is whole");
+            ActivityLogHealthSnapshot after = worker.GetHealth(true);
+            Check(!after.WriteFailingSinceUnixMs.HasValue && after.EventsWrittenToday == 5,
+                "disk full: health reads writing again only with all five events on disk and counted once");
+
+            // two days in one batch, the second day's file blocked: the first day's line is already written
+            DateTime earlier = day.AddDays(-1);
+            string earlierFile = Path.Combine(dir, "activity-" + earlier.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture) + ".jsonl");
+            Directory.CreateDirectory(earlierFile);
+            put(6, now + 5);
+            put(7, new DateTimeOffset(earlier.AddHours(12), TimeSpan.Zero).ToUnixTimeMilliseconds());
+            WaitUntil(5, failing);
+            Directory.Delete(earlierFile);
+            WaitUntil(20, () => !failing() && File.Exists(earlierFile) && ReadShared(earlierFile).Contains("{\"n\":7}"));
+            string today = ReadShared(file);
+            int six = today.IndexOf("{\"n\":6}", StringComparison.Ordinal);
+            Check(six >= 0 && today.IndexOf("{\"n\":6}", six + 1, StringComparison.Ordinal) < 0 &&
+                  File.Exists(earlierFile) && ReadShared(earlierFile).Contains("{\"n\":7}"),
+                "disk full: a batch over two days never writes the finished day's events twice and never loses them");
+
+            // the console history and last-seen spots, each with a real ENOSPC on its own write
+            string history = Path.Combine(dir, "console-history.json");
+            Check(NativeSymlink("/dev/full", history + ".tmp") == 0, "disk full: the console history's write now fails with a real ENOSPC");
+            worker.AppendConsoleHistory("regression", "vo writefail", "ok", "ok");
+            WaitUntil(5, failing);
+            Check(failing(), "disk full: a failed console history write shows in health");
+            File.Delete(history + ".tmp");
+            WaitUntil(20, () => !failing() && File.Exists(history));
+            Check(File.Exists(history) && ReadShared(history).Contains("vo writefail"), "disk full: the console history is written once the disk is free");
+
+            string ghosts = Path.Combine(dir, "ghosts.json");
+            Check(NativeSymlink("/dev/full", ghosts + ".tmp") == 0, "disk full: the last-seen spots' write now fails with a real ENOSPC");
+            worker.UpsertGhost("Writefail", 10f, 20f, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), 60L, true);
+            put(8, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            WaitUntil(5, failing);
+            Check(failing(), "disk full: a failed last-seen write shows in health");
+            File.Delete(ghosts + ".tmp");
+            WaitUntil(20, () => !failing() && File.Exists(ghosts));
+            Check(File.Exists(ghosts) && ReadShared(ghosts).Contains("Writefail") && ReadShared(file).Contains("{\"n\":8}"),
+                "disk full: the last-seen spots are written once the disk is free, and events keep landing");
+        }
+        finally
+        {
+            worker.StopAndFlush(2000);
+        }
+    }
+
+    private const int OpenWriteOnly = 1;
+    private const int OpenAppend = 1024;
+
+    [DllImport("libc.so.6", EntryPoint = "open")]
+    private static extern int NativeOpen(string path, int flags);
+
+    [DllImport("libc.so.6", EntryPoint = "dup2")]
+    private static extern int NativeDup2(int source, int target);
+
+    [DllImport("libc.so.6", EntryPoint = "close")]
+    private static extern int NativeClose(int descriptor);
+
+    [DllImport("libc.so.6", EntryPoint = "write")]
+    private static extern IntPtr NativeWrite(int descriptor, byte[] buffer, IntPtr count);
+
+    [DllImport("libc.so.6", EntryPoint = "symlink")]
+    private static extern int NativeSymlink(string target, string path);
+
+    [DllImport("libc.so.6", EntryPoint = "readlink")]
+    private static extern IntPtr NativeReadlink(string path, byte[] buffer, IntPtr size);
+
+    private static string DescriptorTarget(int descriptor)
+    {
+        var buffer = new byte[4096];
+        long length = NativeReadlink("/proc/self/fd/" + descriptor, buffer, (IntPtr)buffer.Length).ToInt64();
+        return length > 0 ? System.Text.Encoding.UTF8.GetString(buffer, 0, (int)length) : string.Empty;
+    }
+
+    private static int FindDescriptor(string path)
+    {
+        string full = Path.GetFullPath(path);
+        for (int descriptor = 3; descriptor < 4096; descriptor++)
+        {
+            if (DescriptorTarget(descriptor) == full) return descriptor;
+        }
+
+        return -1;
+    }
+
+    private static void WaitUntil(int seconds, Func<bool> condition)
+    {
+        DateTime until = DateTime.UtcNow.AddSeconds(seconds);
+        while (DateTime.UtcNow < until && !condition()) Thread.Sleep(20);
     }
 
     private static string ReadShared(string path)
