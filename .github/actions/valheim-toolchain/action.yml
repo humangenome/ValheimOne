@@ -26,7 +26,7 @@ runs:
     # SDK 10.0.302 produces IL and metadata heaps byte-identical to the published
     # v0.13.0 artifact, making this the smallest change to what is already shipped.
     - name: Set up the pinned .NET SDK
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
       with:
         global-json-file: global.json
 
@@ -93,7 +93,7 @@ runs:
 
     - name: Restore Valheim server and publicized assemblies
       id: game-cache
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: |
           ~/valheim-modding/server
@@ -102,7 +102,7 @@ runs:
 
     - name: Restore BepInEx pack
       id: bepinex-cache
-      uses: actions/cache@v4
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ~/valheim-modding/bepinex/BepInExPack_Valheim
         key: ${{ runner.os }}-bepinex-valheim-${{ inputs.bepinex-version }}

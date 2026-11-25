@@ -29,8 +29,9 @@ name: Release
         type: boolean
         default: true
 
+# Read-only by default; only the job that touches this repo's release may write contents.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
@@ -44,11 +45,13 @@ env:
 jobs:
   release:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     timeout-minutes: 60
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # Cheap gates first: a version or contract mistake should fail in seconds,
       # not after a 1.4 GB game install.
@@ -106,9 +109,11 @@ jobs:
 
       - name: Enabled map-sharing and chest runtime regressions from packaged DLL
         shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          VALHEIMONE_PLUGIN_ZIP="${PWD}/artifacts/release/ValheimOne-${{ steps.version.outputs.version }}.zip" \
+          VALHEIMONE_PLUGIN_ZIP="${PWD}/artifacts/release/ValheimOne-${VERSION}.zip" \
             tools/runtime-regression.sh
 
       - name: Assert deterministic packaging
@@ -235,7 +240,7 @@ jobs:
           VALHEIMONE_PLUGIN_DLL="${RUNNER_TEMP}/thunderstore.dll" tools/runtime-regression.sh
 
       - name: Upload workflow artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ValheimOne-release-${{ steps.version.outputs.version }}
           path: |
@@ -245,7 +250,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload the Thunderstore archive as a workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ValheimOne-thunderstore-${{ steps.version.outputs.version }}
           path: artifacts/release/ValheimOne-${{ steps.version.outputs.version }}-thunderstore.zip
@@ -255,11 +260,11 @@ jobs:
         if: env.DRY_RUN != 'true'
         shell: bash
         env:
-          # HUMANGENOME_PAT so the release object is authored by the account,
-          # not github-actions[bot]. Falls back to the workflow token if the
-          # secret is ever removed — the draft still lands, only the author
-          # byline degrades.
-          GH_TOKEN: ${{ secrets.HUMANGENOME_PAT || github.token }}
+          # The workflow's own token (Security 2026-11-25). A draft this step
+          # creates is authored github-actions[bot]; to keep humangenome as the
+          # author, make the draft by hand as humangenome before the tag, and
+          # this step only refreshes its three assets (the branch below).
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
