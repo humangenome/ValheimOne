@@ -4,6 +4,10 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
+### Fixed
+
+- The live map's dungeon view works on Valheim 1.0.30. That game update renamed a property ValheimOne used to read each room's name, so every dungeon interior showed as an empty outline and the server log said "dungeon scan failed" once a minute.
+
 ## [0.13.31] - 2026-11-09
 
 ### Added
