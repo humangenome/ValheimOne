@@ -18,6 +18,10 @@ All notable changes to ValheimOne will be documented in this file. This project 
 - The server query (A2S) lets a broken network socket go and opens a new one, instead of keeping a processor core busy and staying silent until a restart.
 - If the game never finishes loading (for example when another mod breaks the start), the server log says after 3 minutes what the live map is still waiting for.
 
+### Fixed
+
+- The live map's dungeon view works on Valheim 1.0.30. That game update renamed a property ValheimOne used to read each room's name, so every dungeon interior showed as an empty outline and the server log said "dungeon scan failed" once a minute.
+
 ## [0.13.31] - 2026-11-09
 
 ### Added
