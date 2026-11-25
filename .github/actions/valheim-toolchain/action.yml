@@ -221,9 +221,12 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        export DOTNET_ROLL_FORWARD=LatestMajor
 
+        # The SDK's own CLI runs on its own runtime: rolled forward to the newest one on the runner it
+        # failed ("The type initializer for 'Microsoft.DotNet.Cli.TransactionalAction' threw an exception").
+        # Only the publicizer, a net6.0 tool, needs the roll-forward.
         dotnet tool install --global BepInEx.AssemblyPublicizer.CLI --version 0.4.3
+        export DOTNET_ROLL_FORWARD=LatestMajor
         mkdir -p "${HOME}/valheim-modding/publicized"
         cd "${HOME}/valheim-modding/server/valheim_server_Data/Managed"
 
