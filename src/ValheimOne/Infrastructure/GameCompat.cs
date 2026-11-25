@@ -413,6 +413,39 @@ internal static class GameCompat
         }
     }
 
+    // ------------ SoftReference<GameObject>.Name
+    // Valheim 1.0.30 renamed the property to `name` (it now reads Runtime.GetAssetName; up to 1.0.21 it read the
+    // file name of Runtime.GetAssetPath). The getter is found by either spelling, so the binary names neither and
+    // binds on both builds; each build returns its own value. Null when neither is there or the read fails, and
+    // the caller falls back to the loaded prefab's own name.
+
+    private static readonly Lazy<MethodInfo?> SoftReferenceNameGetter = new(
+        () => TryResolve(() =>
+            (typeof(SoftReferenceableAssets.SoftReference<GameObject>).GetProperty(
+                 "name",
+                 BindingFlags.Public | BindingFlags.Instance) ??
+             typeof(SoftReferenceableAssets.SoftReference<GameObject>).GetProperty(
+                 "Name",
+                 BindingFlags.Public | BindingFlags.Instance))?.GetGetMethod()));
+
+    public static string? TryGetSoftReferenceName(SoftReferenceableAssets.SoftReference<GameObject> reference)
+    {
+        MethodInfo? getter = SoftReferenceNameGetter.Value;
+        if (getter == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return getter.Invoke(reference, null) as string;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
     // ------------ Terminal.ConsoleCommand constructor
     // 1.0 inserted `bool hideBehindDevCommands` before `optionsFetcher`. The
     // constructor is matched by its leading (string, string, ConsoleEvent) shape and

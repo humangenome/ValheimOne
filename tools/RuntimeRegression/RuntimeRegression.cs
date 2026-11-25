@@ -1384,6 +1384,23 @@ public sealed class RuntimeRegression : BaseUnityPlugin
             Check((string)Call(typeof(DungeonRegistry), "GetTypeLabel", dungeons[i], "")! == labels[i],
                 "dungeon viewer names " + dungeons[i] + " " + labels[i]);
 
+        // Each dungeon room's own name, read the way the dungeon viewer reads it. Valheim 1.0.30 renamed the room
+        // reference's Name to name: a build bound to the old spelling threw MissingMethodException in
+        // GetRoomDefinition, so every dungeon interior was drawn as an empty box (checked on Valheim 1.0.21 and 1.0.30).
+        List<DungeonDB.RoomData> rooms = DungeonDB.GetRooms();
+        Check(rooms != null && rooms.Count > 0, "the game's dungeon room list is loaded");
+        var dungeonRegistry = new DungeonRegistry(ZoneSystem.instance, new ModLogger(Logger));
+        int sampledRooms = Math.Min(25, rooms!.Count);
+        int namedRooms = 0;
+        foreach (DungeonDB.RoomData room in rooms.Take(sampledRooms))
+        {
+            object definition = Call(dungeonRegistry, "GetRoomDefinition", DungeonDB.instance, room.Hash)!;
+            string roomName = (string)AccessTools.Property(definition.GetType(), "Name").GetValue(definition, null);
+            if (!string.IsNullOrEmpty(roomName) && !roomName.StartsWith("room#", StringComparison.Ordinal)) namedRooms++;
+        }
+        Check(namedRooms == sampledRooms,
+            "the dungeon viewer reads each sampled room's own name (" + namedRooms + " of " + sampledRooms + ")");
+
         // The game's own map colours: swamp is a warm brown, Mistlands a cool mauve.
         MapColor swamp = BiomePalette.Get(Heightmap.Biome.Swamp, 40f);
         MapColor mist = BiomePalette.Get(Heightmap.Biome.Mistlands, 40f);

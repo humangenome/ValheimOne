@@ -446,8 +446,17 @@ internal sealed class DungeonRegistry
 
             GameObject? roomPrefab = roomData.m_prefab.Asset;
             Room? room = roomPrefab?.GetComponent<Room>();
+            // SoftReference's Name became name in Valheim 1.0.30: read it through GameCompat, which binds on both.
+            string? roomName = GameCompat.TryGetSoftReferenceName(roomData.m_prefab);
+            if (string.IsNullOrEmpty(roomName))
+            {
+                roomName = roomPrefab != null
+                    ? roomPrefab.name
+                    : "room#" + roomHash.ToString(CultureInfo.InvariantCulture);
+            }
+
             definition = new DungeonRoomDefinition(
-                roomData.m_prefab.Name,
+                roomName!,
                 room == null ? Vector3Int.zero : room.m_size);
             _roomDefinitions.Add(roomHash, definition);
             return definition;
