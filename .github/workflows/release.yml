@@ -52,12 +52,39 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Full history and every tag, for the previous-release check below.
+          fetch-depth: 0
 
       # Cheap gates first: a version or contract mistake should fail in seconds,
       # not after a 1.4 GB game install.
       - name: Assert tag matches PluginVersion
         shell: bash
         run: tools/ci/assert-version.sh --tag "${RELEASE_TAG}"
+
+      # A release must hold the release before it: refuse unless the newest lower
+      # vX.Y.Z tag (pre-releases included) is an ancestor of the commit being released,
+      # so a release cut from an older base can't take back fixes players already have.
+      - name: Assert the previous release is in this commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::release tag ${RELEASE_TAG} is not vX.Y.Z"
+            exit 1
+          }
+          prev="$( { git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; printf '%s\n' "${RELEASE_TAG}"; } \
+            | sort -V -u | awk -v t="${RELEASE_TAG}" '$0 == t { print p; exit } { p = $0 }')"
+          [[ -n "${prev}" ]] || {
+            echo "::error::no release tag below ${RELEASE_TAG}"
+            exit 1
+          }
+          head="$(git rev-parse HEAD)"
+          git merge-base --is-ancestor "${prev}" "${head}" || {
+            echo "::error::${prev} is not an ancestor of ${head}; releasing it would take back what ${prev} shipped"
+            exit 1
+          }
+          echo "previous release ${prev} is an ancestor of ${head}"
 
       - name: Assert a local CONTRACT PASS was recorded for this version
         shell: bash
