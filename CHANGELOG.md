@@ -4,7 +4,7 @@ All notable changes to ValheimOne will be documented in this file. This project 
 
 ## [Unreleased]
 
-## [0.13.32] - 2026-11-22
+## [0.13.32] - 2026-11-29
 
 ### Server
 
